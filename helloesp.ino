@@ -199,7 +199,7 @@ String HTML = R"rawliteral(
                     <div class='row'>
                         <center>
                             <div class='col-lg-8 col-lg-offset-2'>
-                                <h2 class='section-heading'><i class='fas fa-analytics'></i> Statistics (beta)</h2>
+                                <h2 class='section-heading'><i class='fas fa-analytics'></i> Statistics (updates every minute)</h2>
                                 <div class='grid_container'>
                                     <div class='stat_card'>
                                         <div class='stat_container'>
@@ -211,7 +211,7 @@ String HTML = R"rawliteral(
                                     <div class='stat_card'>
                                         <div class='stat_container'>
                                             <i class='fas fa-microchip fa-5x' id='stat_icon'></i>
-                                            <div class='stat_content' id='cpu_usage'>Loading...</div>
+                                            <div class='stat_content' id='cpu_usage'>In development</div>
                                             <div class='stat_title'>CPU Usage</div>
                                         </div>
                                     </div>
@@ -253,6 +253,33 @@ String HTML = R"rawliteral(
         </footer>
     </body>
     <script>
+        var xhttp = new XMLHttpRequest();
+        xhttp.onreadystatechange = function () {
+            if (this.readyState == 4 && this.status == 200) {
+                document.getElementById('uptime').innerHTML = this.responseText;
+            }
+        };
+        xhttp.open('GET', '/uptime', true);
+        xhttp.send();
+
+        /*var xhttp = new XMLHttpRequest();
+        xhttp.onreadystatechange = function () {
+            if (this.readyState == 4 && this.status == 200) {
+                document.getElementById('cpu_usage').innerHTML = this.responseText;
+            }
+        };
+        xhttp.open('GET', '/cpu_usage', true);
+        xhttp.send();*/
+
+        var xhttp = new XMLHttpRequest();
+        xhttp.onreadystatechange = function () {
+            if (this.readyState == 4 && this.status == 200) {
+                document.getElementById('memory_usage').innerHTML = this.responseText;
+            }
+        };
+        xhttp.open('GET', '/memory_usage', true);
+        xhttp.send();
+
         setInterval(function () {
             var xhttp = new XMLHttpRequest();
             xhttp.onreadystatechange = function () {
@@ -262,9 +289,9 @@ String HTML = R"rawliteral(
             };
             xhttp.open('GET', '/uptime', true);
             xhttp.send();
-        }, 1000);
+        }, 60000);
 
-        setInterval(function () {
+        /*setInterval(function () {
             var xhttp = new XMLHttpRequest();
             xhttp.onreadystatechange = function () {
                 if (this.readyState == 4 && this.status == 200) {
@@ -273,7 +300,7 @@ String HTML = R"rawliteral(
             };
             xhttp.open('GET', '/cpu_usage', true);
             xhttp.send();
-        }, 1000);
+        }, 60000);*/
 
         setInterval(function () {
             var xhttp = new XMLHttpRequest();
@@ -284,7 +311,7 @@ String HTML = R"rawliteral(
             };
             xhttp.open('GET', '/memory_usage', true);
             xhttp.send();
-        }, 1000);
+        }, 60000);
     </script>
 </html>
 )rawliteral";
@@ -311,11 +338,11 @@ void setup() {
 
   });
 
-  server.on("/cpu_usage", []() {   // CPU usage
+  //server.on("/cpu_usage", []() {   // TODO: CPU usage
  
-    server.send(200, "text/html", HTML);
+    //server.send(200, "text/html", HTML);
  
-  });
+  //});
 
   server.on("/memory_usage", []() {   // Memory usage
 

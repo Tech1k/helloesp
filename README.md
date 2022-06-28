@@ -12,7 +12,7 @@ A website hosted on an ESP8266.
 
 
 ## TODO
-- [ ] Add identifiers for ESP32 to allow cross-compatibility
+- [ ] Add identifiers for the ESP32 to allow cross-compatibility
 - [x] Add uptime
 - [ ] Add CPU usage
 - [x] Add memory usage
