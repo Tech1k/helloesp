@@ -20,6 +20,8 @@
 // TODO: add identifiers for ESP32
 #include "ESP8266WiFi.h"
 #include "ESP8266WebServer.h"
+
+#include "uptime_formatter.h"
  
 ESP8266WebServer server(80);
 
@@ -28,7 +30,7 @@ String HTML = R"rawliteral(
     <head>
         <meta charset='UTF-8' />
         <meta name='viewport' content='width=device-width, initial-scale=1' />
-        <link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.1.1/css/all.min.css' integrity='sha512-KfkfwYDsLkIlwQp6LFnl8zNdLGxu9YAA1QvwINks4PhcElQSvqcyVLLD9aMhXd13uQjoXtEKNosOWaZqXgel0g==' crossorigin='anonymous' referrerpolicy='no-referrer' />
+        <link rel='stylesheet' href='https://pro.fontawesome.com/releases/v5.10.0/css/all.css' integrity='sha384-AYmEC3Yw5cVb3ZcuHtOA93w35dYTsvhLPVnYs9eStHfGJvOvKxVfELGroGkvsg+p' crossorigin='anonymous' />
         <link href='https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css' rel='stylesheet' integrity='sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC' crossorigin='anonymous' />
         <link href='https://fonts.googleapis.com/css2?family=Cabin+Condensed:wght@600;700&display=swap' rel='stylesheet' />
         <title>HelloESP - Hosted on an ESP8266</title>
@@ -88,7 +90,6 @@ String HTML = R"rawliteral(
             }
             .box {
                 margin: 10px;
-                padding: 10px;
                 text-align: center;
             }
             .button:hover {
@@ -134,6 +135,50 @@ String HTML = R"rawliteral(
             .contact-details:hover {
                 transform: translateY(4px);
             }
+            .stats_section {
+                color: #fff;
+                text-align: center;
+            }
+            .stats_section b {
+                color: #cfa2cb;
+            }
+            .stats_container {
+                background-color: rgb(238, 238, 238);
+                padding: 1rem;
+                border-radius: 0.5rem;
+            }
+            .grid_container {
+                display: grid;
+                grid-template-columns: repeat(1, 1fr);
+                gap: 10px;
+            }
+            .stat_card {
+                padding: 1rem;
+                background-color: white;
+                border-radius: 0.5rem;
+                box-shadow: 0 0.2rem 0.5rem rgba(0, 0, 0, 0.15);
+            }
+            .stat_container {
+                display: flex;
+                flex-direction: column;
+            }
+            .stat_title {
+                color: #6c757d;
+            }
+            .stat_content {
+                font-size: 32px;
+                font-weight: 700;
+                color: black;
+            }
+            @media (min-width: 768px) {
+                .grid_container {
+                    grid-template-columns: repeat(3, 1fr);
+                }
+            }
+            #stat_icon {
+                color: grey;
+                padding-bottom: 5px;
+            }
         </style>
     </head>
     <body>
@@ -148,6 +193,42 @@ String HTML = R"rawliteral(
                     I am currently working on adding chip stats such as uptime and cpu usage and more as well as switching over to an ESP32 once it arrives.
                 </p>
             </blockquote>
+
+            <section class='stats_section'>
+                <div class='container'>
+                    <div class='row'>
+                        <center>
+                            <div class='col-lg-8 col-lg-offset-2'>
+                                <h2 class='section-heading'><i class='fas fa-analytics'></i> Statistics (beta)</h2>
+                                <div class='grid_container'>
+                                    <div class='stat_card'>
+                                        <div class='stat_container'>
+                                            <i class='fas fa-hourglass fa-5x' id='stat_icon'></i>
+                                            <div class='stat_content' id='uptime'>Loading...</div>
+                                            <div class='stat_title'>Uptime</div>
+                                        </div>
+                                    </div>
+                                    <div class='stat_card'>
+                                        <div class='stat_container'>
+                                            <i class='fas fa-microchip fa-5x' id='stat_icon'></i>
+                                            <div class='stat_content' id='cpu_usage'>Loading...</div>
+                                            <div class='stat_title'>CPU Usage</div>
+                                        </div>
+                                    </div>
+                                    <div class='stat_card'>
+                                        <div class='stat_container'>
+                                            <i class='fas fa-memory fa-5x' id='stat_icon'></i>
+                                            <div class='stat_content' id='memory_usage'>Loading...</div>
+                                            <div class='stat_title'>Memory Usage</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <!--<div class='stat_content'>Visitors: test</div>-->
+                            </div>
+                        </center>
+                    </div>
+                </div>
+            </section>
         </div>
         <br />
 
@@ -160,17 +241,51 @@ String HTML = R"rawliteral(
 
         <footer id='contact' class='contact-section'>
             <div class='contact-section-header'>
-                <p class='h5'>Made by <a href='https://kk.dev' target='_blank' style='text-decoration: none; color: lightgrey;'>Kristian</a></p>
+                <p class='h5'>Made with <i class='fas fa-heart'></i> by <a href='https://kk.dev' target='_blank' style='text-decoration: none; color: lightgrey;'>Kristian</a></p>
             </div>
             <div class='contact-links border-top'>
                 <a href='https://kk.dev' target='_blank' class='btn contact-details'><i class='fas fa-globe'></i> kk.dev</a>
-                <a href='https://kk.dev/donate' target='_blank' class='btn contact-details'><i class='fa-brands fa-codepen'></i> Donate</a>
+                <a href='https://kk.dev/donate' target='_blank' class='btn contact-details'><i class='fas fa-heart'></i> Donate</a>
                 <a href='https://github.com/Tech1k' target='_blank' class='btn contact-details'><i class='fab fa-github'></i> GitHub</a>
                 <a href='https://twitter.com/KristianJKramer' target='_blank' class='btn contact-details'><i class='fab fa-twitter'></i> Twitter</a>
-                <a href='mailto:hello@kk.dev' class='btn contact-details'><i class='fas fa-at'></i> Email</a>
+                <a href='https://github.com/Tech1k/helloesp' class='btn contact-details'><i class='fas fa-code'></i> Contribute</a>
             </div>
         </footer>
     </body>
+    <script>
+        setInterval(function () {
+            var xhttp = new XMLHttpRequest();
+            xhttp.onreadystatechange = function () {
+                if (this.readyState == 4 && this.status == 200) {
+                    document.getElementById('uptime').innerHTML = this.responseText;
+                }
+            };
+            xhttp.open('GET', '/uptime', true);
+            xhttp.send();
+        }, 1000);
+
+        setInterval(function () {
+            var xhttp = new XMLHttpRequest();
+            xhttp.onreadystatechange = function () {
+                if (this.readyState == 4 && this.status == 200) {
+                    document.getElementById('cpu_usage').innerHTML = this.responseText;
+                }
+            };
+            xhttp.open('GET', '/cpu_usage', true);
+            xhttp.send();
+        }, 1000);
+
+        setInterval(function () {
+            var xhttp = new XMLHttpRequest();
+            xhttp.onreadystatechange = function () {
+                if (this.readyState == 4 && this.status == 200) {
+                    document.getElementById('memory_usage').innerHTML = this.responseText;
+                }
+            };
+            xhttp.open('GET', '/memory_usage', true);
+            xhttp.send();
+        }, 1000);
+    </script>
 </html>
 )rawliteral";
 
@@ -189,11 +304,31 @@ void setup() {
   Serial.print("Local IP address: ");
   Serial.println(WiFi.localIP());
  
-  //server.on("/status", []() {   // Code for other paths
+
+  server.on("/uptime", []() {   // Uptime
+
+    server.send(200, "text/html", uptime_formatter::getUptime());
+
+  });
+
+  server.on("/cpu_usage", []() {   // CPU usage
  
-  //  server.send(200, "text/html", HTML);
+    server.send(200, "text/html", HTML);
  
-  //});
+  });
+
+  server.on("/memory_usage", []() {   // Memory usage
+
+    int used_memory = 80000 - ESP.getFreeHeap();
+    float memory_usage_float = (float)used_memory / 80000 * 100;
+    int memory_usage_int = memory_usage_float;
+
+    String memory_usage = String(memory_usage_int);
+    memory_usage.concat("%");
+
+    server.send(200, "text/html", String(memory_usage));
+
+  });
  
   server.on("/", handleRootPath);
   server.begin();

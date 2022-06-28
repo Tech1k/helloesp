@@ -13,11 +13,10 @@ A website hosted on an ESP8266.
 
 ## TODO
 - [ ] Add identifiers for ESP32 to allow cross-compatibility
-- [ ] Add uptime
+- [x] Add uptime
 - [ ] Add CPU usage
-- [ ] Add memory usage
+- [x] Add memory usage
 - [ ] Add visitor counter
-- [ ] Add network usage (e.g. bandwidth usage or incoming/outgoing network speeds)
 
 
 ## Contribute
