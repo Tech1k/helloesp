@@ -360,9 +360,6 @@ void setup() {
   server.on("/", handleRootPath);
   server.begin();
   Serial.println("Server listening");
-
-  pinMode(0, OUTPUT); 
-  pinMode(2, OUTPUT); 
 }
 
 
