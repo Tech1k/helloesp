@@ -421,3 +421,10 @@ void handleNotFound() {
   server.send(404, "text/plain", error_message);
 
 }
+
+void handleNotFound() {
+
+  String error_message = "404 Not Found\n\n";
+  server.send(404, "text/plain", error_message);
+
+}
