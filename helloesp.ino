@@ -17,22 +17,20 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-// TODO: add identifiers for ESP32
-
 #ifdef ESP32
-    #include "WiFi.h"
-    #include "WebServer.h"
+  #include "WiFi.h"
+  #include "WebServer.h"
 #else
-    #include "ESP8266WiFi.h"
-    #include "ESP8266WebServer.h"
+  #include "ESP8266WiFi.h"
+  #include "ESP8266WebServer.h"
 #endif
 
 #include "uptime_formatter.h"
 
 #ifdef ESP32
-    WiFiServer server(80);
+  WebServer server(80);
 #else
-    ESP8266WebServer server(80);
+  ESP8266WebServer server(80);
 #endif
 
 const char* ssid = "WIFI_SSID";
@@ -393,8 +391,12 @@ void setup() {
     server.send(200, "text/html", String(memory_usage));
 
   });
+  
  
   server.on("/", handleRootPath);
+
+  server.onNotFound(handleNotFound); // Serve 404 not found page on invalid paths
+
   server.begin();
   Serial.println("Server listening");
 }
@@ -411,4 +413,11 @@ void handleRootPath() {
  
   server.send(200, "text/html", HTML);
  
+}
+
+void handleNotFound() {
+
+  String error_message = "404 Not Found\n\n";
+  server.send(404, "text/plain", error_message);
+
 }
