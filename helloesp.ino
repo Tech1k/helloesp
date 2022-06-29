@@ -348,34 +348,34 @@ String HTML = R"rawliteral(
 )rawliteral";
 
 void setup() {
- 
+
   Serial.begin(115200);
   WiFi.begin(ssid, password);
- 
+
   while (WiFi.status() != WL_CONNECTED) {
- 
+
     delay(500);
     Serial.println("Waiting to connect…");
- 
+
   }
- 
+
+  Serial.print("Connected!");
   Serial.print("Local IP address: ");
   Serial.println(WiFi.localIP());
- 
 
-  server.on("/uptime", []() {   // Uptime
+  server.on("/uptime", []() { // Uptime
 
     server.send(200, "text/html", uptime_formatter::getUptime());
 
   });
 
   //server.on("/cpu_usage", []() {   // TODO: CPU usage
- 
+
     //server.send(200, "text/html", HTML);
- 
+
   //});
 
-  server.on("/memory_usage", []() {   // Memory usage
+  server.on("/memory_usage", []() { // Memory usage
 
     int used_memory = 80000 - ESP.getFreeHeap();
     float memory_usage_mb_float = (float)used_memory / 1000;
@@ -391,8 +391,7 @@ void setup() {
     server.send(200, "text/html", String(memory_usage));
 
   });
-  
- 
+
   server.on("/", handleRootPath);
 
   server.onNotFound(handleNotFound); // Serve 404 not found page on invalid paths
@@ -401,18 +400,16 @@ void setup() {
   Serial.println("Server listening");
 }
 
-
 void loop() {
- 
+
   server.handleClient();
 
 }
 
- 
 void handleRootPath() {
- 
+
   server.send(200, "text/html", HTML);
- 
+
 }
 
 void handleNotFound() {
