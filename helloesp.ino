@@ -378,15 +378,15 @@ void setup() {
   server.on("/memory_usage", []() { // Memory usage
 
     int used_memory = 80000 - ESP.getFreeHeap();
-    float memory_usage_mb_float = (float)used_memory / 1000;
+    float memory_usage_kb_float = (float)used_memory / 1000;
     float memory_usage_float = (float)used_memory / 80000 * 100;
     int memory_usage_int = memory_usage_float;
-    int memory_usage_mb_int = memory_usage_mb_float;
+    int memory_usage_kb_int = memory_usage_kb_float;
 
     String memory_usage = String(memory_usage_int);
     memory_usage.concat("% (");
-    memory_usage.concat(String(memory_usage_mb_int));
-    memory_usage.concat(" MB)");
+    memory_usage.concat(String(memory_usage_kb_int));
+    memory_usage.concat(" KB)");
 
     server.send(200, "text/html", String(memory_usage));
 
