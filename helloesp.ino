@@ -29,8 +29,10 @@
 
 #ifdef ESP32
   WebServer server(80);
+  int max_memory = 512000; // ESP32 max ram, change as necessary - value is in bytes
 #else
   ESP8266WebServer server(80);
+  int max_memory = 80000; // ESP8266 max ram, change as necessary - value is in bytes
 #endif
 
 const char* ssid = "WIFI_SSID";
@@ -359,7 +361,7 @@ void setup() {
 
   }
 
-  Serial.print("Connected!");
+  Serial.println("Connected!");
   Serial.print("Local IP address: ");
   Serial.println(WiFi.localIP());
 
@@ -377,9 +379,9 @@ void setup() {
 
   server.on("/memory_usage", []() { // Memory usage
 
-    int used_memory = 80000 - ESP.getFreeHeap();
+    int used_memory = max_memory - ESP.getFreeHeap();
     float memory_usage_kb_float = (float)used_memory / 1000;
-    float memory_usage_float = (float)used_memory / 80000 * 100;
+    float memory_usage_float = (float)used_memory / max_memory * 100;
     int memory_usage_int = memory_usage_float;
     int memory_usage_kb_int = memory_usage_kb_float;
 
