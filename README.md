@@ -1,4 +1,4 @@
-# <img src="https://github.com/Tech1k/helloesp/blob/master/images/helloesp-favicon.png" alt="HelloESP" width="64"/> HelloESP
+# <img src="https://github.com/Tech1k/helloesp/blob/master/images/helloesp-favicon.png" alt="HelloESP" width="64"/> HelloESP - A website hosted on an ESP32/8266
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Donate](https://img.shields.io/badge/Support%20me-Donate-blue)](https://kk.dev/donate)
 
