@@ -18,12 +18,25 @@
 */
 
 // TODO: add identifiers for ESP32
-#include "ESP8266WiFi.h"
-#include "ESP8266WebServer.h"
+
+#ifdef ESP32
+    #include "WiFi.h"
+    #include "WebServer.h"
+#else
+    #include "ESP8266WiFi.h"
+    #include "ESP8266WebServer.h"
+#endif
 
 #include "uptime_formatter.h"
- 
-ESP8266WebServer server(80);
+
+#ifdef ESP32
+    WiFiServer server(80);
+#else
+    ESP8266WebServer server(80);
+#endif
+
+const char* ssid = "WIFI_SSID";
+const char* password = "WIFI_PWD";
 
 String HTML = R"rawliteral(
 <html lang='en'>
@@ -199,7 +212,7 @@ String HTML = R"rawliteral(
                     <div class='row'>
                         <center>
                             <div class='col-lg-8 col-lg-offset-2'>
-                                <h2 class='section-heading'><i class='fas fa-analytics'></i> Statistics (updates every minute)</h2>
+                                <h2 class='section-heading'><i class='fas fa-analytics'></i> Statistics <label style='font-size: 18px;'>(updates every minute)</label></h2>
                                 <div class='grid_container'>
                                     <div class='stat_card'>
                                         <div class='stat_container'>
@@ -339,7 +352,7 @@ String HTML = R"rawliteral(
 void setup() {
  
   Serial.begin(115200);
-  WiFi.begin("WIFI_NETWORK", "WIFI_PWD");
+  WiFi.begin(ssid, password);
  
   while (WiFi.status() != WL_CONNECTED) {
  
@@ -367,11 +380,15 @@ void setup() {
   server.on("/memory_usage", []() {   // Memory usage
 
     int used_memory = 80000 - ESP.getFreeHeap();
+    float memory_usage_mb_float = (float)used_memory / 1000;
     float memory_usage_float = (float)used_memory / 80000 * 100;
     int memory_usage_int = memory_usage_float;
+    int memory_usage_mb_int = memory_usage_mb_float;
 
     String memory_usage = String(memory_usage_int);
-    memory_usage.concat("%");
+    memory_usage.concat("% (");
+    memory_usage.concat(String(memory_usage_mb_int));
+    memory_usage.concat(" MB)");
 
     server.send(200, "text/html", String(memory_usage));
 
