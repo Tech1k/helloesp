@@ -12,13 +12,16 @@ A website hosted on an ESP8266.
 
 
 ## TODO
-- [ ] Add identifiers for the ESP32 to allow cross-compatibility
+- [x] Add identifiers for the ESP32 to allow cross-compatibility
 - [x] Add uptime
 - [ ] Add CPU usage
 - [x] Add memory usage
 - [x] Add visitor counter
 - [ ] Make visitor counter locally hosted on the ESP either via a txt file or sqlite db stored in the onboard flash memory
 
+
+## External Libraries
+- Uptime Library by Yiannis Bourkelis
 
 ## Contribute
 I welcome contributions to this project; please feel free to contribute to this repository by providing documentation to code, submitting issue reports, enhancement requests and pull requests.
