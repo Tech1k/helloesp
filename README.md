@@ -16,7 +16,8 @@ A website hosted on an ESP8266.
 - [x] Add uptime
 - [ ] Add CPU usage
 - [x] Add memory usage
-- [ ] Add visitor counter
+- [x] Add visitor counter
+- [ ] Make visitor counter locally hosted on the ESP either via a txt file or sqlite db stored in the onboard flash memory
 
 
 ## Contribute

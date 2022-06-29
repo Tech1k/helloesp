@@ -223,7 +223,7 @@ String HTML = R"rawliteral(
                                         </div>
                                     </div>
                                 </div>
-                                <!--<div class='stat_content'>Visitors: test</div>-->
+                                <div class='stat_content' id='visitors'>Visitors: Loading...</div>
                             </div>
                         </center>
                     </div>
@@ -280,6 +280,15 @@ String HTML = R"rawliteral(
         xhttp.open('GET', '/memory_usage', true);
         xhttp.send();
 
+        var xhttp = new XMLHttpRequest();
+        xhttp.onreadystatechange = function () {
+            if (this.readyState == 4 && this.status == 200) {
+                document.getElementById('visitors').innerHTML = 'Visitors: ' + this.responseText;
+            }
+        };
+        xhttp.open('GET', 'https://kk.dev/helloesp_visitors', true);
+        xhttp.send();
+
         setInterval(function () {
             var xhttp = new XMLHttpRequest();
             xhttp.onreadystatechange = function () {
@@ -310,6 +319,17 @@ String HTML = R"rawliteral(
                 }
             };
             xhttp.open('GET', '/memory_usage', true);
+            xhttp.send();
+        }, 60000);
+
+        setInterval(function () {
+            var xhttp = new XMLHttpRequest();
+            xhttp.onreadystatechange = function () {
+                if (this.readyState == 4 && this.status == 200) {
+                    document.getElementById('visitors').innerHTML = 'Visitors: ' + this.responseText;
+                }
+            };
+            xhttp.open('GET', 'https://kk.dev/helloesp_visitors', true);
             xhttp.send();
         }, 60000);
     </script>
