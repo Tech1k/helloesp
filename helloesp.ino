@@ -394,6 +394,8 @@ void setup() {
 
   server.on("/", handleRootPath);
 
+  server.on("/robots.txt", handleRobots); // Serve robots.txt
+
   server.onNotFound(handleNotFound); // Serve 404 not found page on invalid paths
 
   server.begin();
@@ -412,16 +414,16 @@ void handleRootPath() {
 
 }
 
-void handleNotFound() {
+void handleRobots() {
 
-  String error_message = "404 Not Found\n\n";
+  String error_message = "User-agent: *\n\nDisallow: /uptime\nDisallow: /cpu_usage\nDisallow: /memory_usage";
   server.send(404, "text/plain", error_message);
 
 }
 
 void handleNotFound() {
 
-  String error_message = "404 Not Found\n\n";
+  String error_message = "404 Not Found";
   server.send(404, "text/plain", error_message);
 
 }
