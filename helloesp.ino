@@ -47,7 +47,7 @@ String HTML = R"rawliteral(
         <link href='https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css' rel='stylesheet' integrity='sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC' crossorigin='anonymous' />
         <link href='https://fonts.googleapis.com/css2?family=Cabin+Condensed:wght@600;700&display=swap' rel='stylesheet' />
         <title>HelloESP - Hosted on an ESP32</title>
-        <meta name='description' content='HelloESP is a website hosted on an ESP32 to demonstrate what you can do with an ESP32.' />
+        <meta name='description' content='HelloESP is a website that is hosted on an ESP32 to demonstrate what you can do with an ESP32.' />
         <link rel='shortcut icon' href='https://kk.dev/assets/images/helloesp-favicon.png' />
         <meta name='keywords' content='esp, esp32, esp8266, development, coding, programming' />
         <meta name='author' content='Kristian Kramer' />
@@ -57,7 +57,7 @@ String HTML = R"rawliteral(
 
         <meta name='twitter:card' content='summary_large_image' />
         <meta name='twitter:title' content='HelloESP' />
-        <meta name='twitter:description' content='HelloESP is a website hosted on an ESP32 to demonstrate what you can do with an ESP32.' />
+        <meta name='twitter:description' content='HelloESP is a website that is hosted on an ESP32 to demonstrate what you can do with an ESP32.' />
         <meta name='twitter:image' content='https://kk.dev/assets/images/helloesp-og-banner.png?v=2' />
         <meta name='twitter:site' content='@kristianjkramer' />
         <meta name='twitter:creator' content='@kristianjkramer' />
@@ -65,7 +65,7 @@ String HTML = R"rawliteral(
         <meta property='og:image' content='https://kk.dev/assets/images/helloesp-og-banner.png?v=2' />
         <meta property='og:image:width' content='955' />
         <meta property='og:image:height' content='500' />
-        <meta property='og:description' content='HelloESP is a website hosted on an ESP32 to demonstrate what you can do with an ESP32.' />
+        <meta property='og:description' content='HelloESP is a website that is hosted on an ESP32 to demonstrate what you can do with an ESP32.' />
         <meta property='og:title' content='HelloESP' />
         <meta property='og:site_name' content='HelloESP' />
         <meta property='og:url' content='https://helloesp.com/' />
