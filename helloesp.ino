@@ -84,6 +84,33 @@ String HTML = R"rawliteral(
             a {
                 text-decoration: none !important;
             }
+            /* Scroll bar */
+            * {
+                scrollbar-width: thin;
+                scrollbar-color: whitesmoke rgba(38,134,230,1);
+            }
+            *::-webkit-scrollbar {
+                width: 7px;
+            }
+            *::-webkit-scrollbar-track {
+                background: transparent;
+            }
+            *::-webkit-scrollbar-thumb {
+                background-color: rgba(38,134,230,1);
+                border-radius: 20px;
+            }
+            ::selection {
+                background: rgba(38,134,230,1);
+                color: #fff;
+            }
+            ::-moz-selection {
+                background: rgba(38,134,230,1);
+                color:#fff;
+            }
+            ::-webkit-selection {
+                background: rgba(38,134,230,1);
+                color:#fff;
+            }
             .HMP {
                 margin-top: 32px;
                 text-align: center;
@@ -112,7 +139,6 @@ String HTML = R"rawliteral(
                 position: relative;
                 top: 0.15em;
             }
-
             .button:focus {
                 outline-color: #dedfde;
             }
@@ -199,6 +225,14 @@ String HTML = R"rawliteral(
                 color: grey;
                 padding-bottom: 5px;
             }
+            .updates_container {
+                background-color: rgb(238, 238, 238, 0.8);
+                padding: 1rem;
+                border-radius: 0.5rem;
+            }
+            .updates_content {
+                padding-bottom: 15px;
+            }
         </style>
     </head>
     <body>
@@ -223,21 +257,21 @@ String HTML = R"rawliteral(
                                 <div class='grid_container'>
                                     <div class='stat_card'>
                                         <div class='stat_container'>
-                                            <i class='fas fa-hourglass fa-5x' id='stat_icon'></i>
+                                            <i class='fas fa-hourglass fa-3x' id='stat_icon'></i>
                                             <div class='stat_content' id='uptime'>Loading...</div>
                                             <div class='stat_title'>Uptime</div>
                                         </div>
                                     </div>
                                     <div class='stat_card'>
                                         <div class='stat_container'>
-                                            <i class='fas fa-microchip fa-5x' id='stat_icon'></i>
+                                            <i class='fas fa-microchip fa-3x' id='stat_icon'></i>
                                             <div class='stat_content' id='cpu_usage'>In development</div>
                                             <div class='stat_title'>CPU Usage</div>
                                         </div>
                                     </div>
                                     <div class='stat_card'>
                                         <div class='stat_container'>
-                                            <i class='fas fa-memory fa-5x' id='stat_icon'></i>
+                                            <i class='fas fa-memory fa-3x' id='stat_icon'></i>
                                             <div class='stat_content' id='memory_usage'>Loading...</div>
                                             <div class='stat_title'>Memory Usage</div>
                                         </div>
@@ -257,11 +291,30 @@ String HTML = R"rawliteral(
                 <img style='max-width: 100%; border-radius: 5px; overflow: hidden;' src='https://kk.dev/assets/images/esp8266-webserver.jpg' />
                 <p>A photo of the ESP8266 running this website, taken on 6/27/2022.</p>
             </div>
+
+            <p class='is-size-6' style='font-size: 24px; font-weight: 700; margin-bottom: 5px;'><i class='icon far fa-newspaper'></i> Updates</p>
+            <div style='height: 256px; max-width: 512px; overflow-x: hidden; overflow-y: auto;' class='updates_container'>
+                <div class='updates_content' align='left'>
+                    <strong>6/29/2022 - </strong>
+                    I have migrated the website over to an ESP32 for a performance boost and to add things such as a BMP388 for temperature, pressure and altitude readings when it arrives!
+                </div>
+
+                <div class='updates_content' align='left'>
+                    <strong>6/28/2022 - </strong>
+                    I have started adding some statistics about the chip onto the website. I am still working on the CPU Usage, feel free to help contribute the project on the <a href='https://github.com/Tech1k/helloesp' target='_blank'>Github repo</a>.
+                </div>
+
+                <div class='updates_content' align='left'>
+                    <strong>6/27/2022 - </strong>
+                    HelloESP has launched, this is a little project of mine to show what can be done with an ESP8266/32 and to showcase other cool things with it! I hope you all find this to be as intresting as I did when I made this!
+                </div>
+            </div>
         </center>
+        <br/>
 
         <footer id='contact' class='contact-section'>
             <div class='contact-section-header'>
-                <p class='h5'>Made with <i class='fas fa-heart'></i> by <a href='https://kk.dev' target='_blank' class="author_link">Kristian</a></p>
+                <p class='h5'>Made with <i class='fas fa-heart'></i> by <a href='https://kk.dev' target='_blank' class='author_link'>Kristian</a></p>
             </div>
             <div class='contact-links border-top'>
                 <a href='https://kk.dev' target='_blank' class='btn contact-details'><i class='fas fa-globe'></i> kk.dev</a>
