@@ -75,6 +75,13 @@
             .button:focus {
                 outline-color: #dedfde;
             }
+            .author_link {
+                color: lightgrey;
+            }
+            .author_link:hover {
+                color: grey;
+                transition: 0.3s;
+            }
             .contact-section {
                 display: flex;
                 flex-direction: column;
@@ -162,7 +169,7 @@
             <blockquote class='box'>
                 <p class='lead'>
                     This site is currently hosted on an ESP32 (used to be hosted on an ESP8266) with more things coming to this website soon!<br />
-                    I am currently working on adding chip stats such as uptime and cpu usage and more! Checkout the <a href='https://github.com/Tech1k/helloesp' target='_blank'>GitHub repo</a> for the code!
+                    I am currently working on adding chip stats such as uptime and cpu usage and more, checkout the <a href='https://github.com/Tech1k/helloesp' target='_blank'>GitHub repo</a> for the code and feel free to contribute!
                 </p>
             </blockquote>
 
@@ -213,7 +220,7 @@
 
         <footer id='contact' class='contact-section'>
             <div class='contact-section-header'>
-                <p class='h5'>Made with <i class='fas fa-heart'></i> by <a href='https://kk.dev' target='_blank' style='text-decoration: none; color: lightgrey;'>Kristian</a></p>
+                <p class='h5'>Made with <i class='fas fa-heart'></i> by <a href='https://kk.dev' target='_blank' class="author_link">Kristian</a></p>
             </div>
             <div class='contact-links border-top'>
                 <a href='https://kk.dev' target='_blank' class='btn contact-details'><i class='fas fa-globe'></i> kk.dev</a>
