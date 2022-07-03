@@ -24,7 +24,7 @@ A website hosted on an ESP8266.
 ## Branches
 ``master`` - Master branch compatible with the ESP32/8266 without any external hardware
 
-``bmp388`` - Code for the ESP32 with the BMP822 module for altitude and temperature readings
+``bme280`` - Code for the ESP32 with the BME280 module for altitude and temperature readings
 
 
 ## External Libraries
