@@ -26,6 +26,9 @@
 #endif
 
 #include "uptime_formatter.h"
+#include "Wire.h"
+#include "Adafruit_Sensor.h"
+#include "Adafruit_BME280.h"
 
 #ifdef ESP32
   WebServer server(80);
@@ -37,6 +40,12 @@
 
 const char* ssid = "WIFI_SSID";
 const char* password = "WIFI_PWD";
+
+#define SEALEVELPRESSURE_HPA (1013.25)
+
+Adafruit_BME280 bme;
+
+float temperature, humidity, pressure, altitude;
 
 String HTML = R"rawliteral(
 <html lang='en'>
@@ -262,13 +271,13 @@ String HTML = R"rawliteral(
                                             <div class='stat_title'>Uptime</div>
                                         </div>
                                     </div>
-                                    <div class='stat_card'>
+                                    <!--<div class='stat_card'>
                                         <div class='stat_container'>
                                             <i class='fas fa-microchip fa-3x stat_icon'></i>
                                             <div class='stat_content' id='cpu_usage'>coming soon</div>
                                             <div class='stat_title'>CPU Usage</div>
                                         </div>
-                                    </div>
+                                    </div>-->
                                     <div class='stat_card'>
                                         <div class='stat_container'>
                                             <i class='fas fa-memory fa-3x stat_icon'></i>
@@ -276,7 +285,6 @@ String HTML = R"rawliteral(
                                             <div class='stat_title'>Memory Usage</div>
                                         </div>
                                     </div>
-
                                     <div class='stat_card'>
                                         <div class='stat_container'>
                                             <i class='fas fa-users fa-3x stat_icon'></i>
@@ -284,18 +292,28 @@ String HTML = R"rawliteral(
                                             <div class='stat_title'>Visitors</div>
                                         </div>
                                     </div>
+
                                     <div class='stat_card'>
                                         <div class='stat_container'>
                                             <i class='far fa-thermometer-half fa-3x stat_icon'></i>
-                                            <div class='stat_content' id='temperature'>coming soon</div>
+                                            <div class='stat_content' id='temperature'>Loading...</div>
+                                            <div class='stat_content' style='font-size: 16px; margin-top: -10px;' id='temperature_celsius'>Loading...</div>
                                             <div class='stat_title'>Temperature</div>
                                         </div>
                                     </div>
                                     <div class='stat_card'>
                                         <div class='stat_container'>
                                             <i class='fas fa-clouds fa-3x stat_icon'></i>
-                                            <div class='stat_content' id='altitude'>coming soon</div>
+                                            <div class='stat_content' id='altitude'>Loading...</div>
+                                            <div class='stat_content' style='font-size: 16px; margin-top: -10px;' id='pressure'>Loading...</div>
                                             <div class='stat_title'>Altitude</div>
+                                        </div>
+                                    </div>
+                                    <div class='stat_card'>
+                                        <div class='stat_container'>
+                                            <i class='fas fa-tint fa-3x stat_icon'></i>
+                                            <div class='stat_content' id='humidity'>Loading...</div>
+                                            <div class='stat_title'>Humidity</div>
                                         </div>
                                     </div>
                                 </div>
@@ -313,12 +331,16 @@ String HTML = R"rawliteral(
                 <p>A photo of the ESP8266 running this website, taken on 6/27/2022.</p>
             </div>
 
-
             <p class='is-size-6' style='font-size: 24px; font-weight: 700; margin-bottom: 5px;'><i class='icon far fa-newspaper'></i> Updates</p>
             <div style='height: 256px; max-width: 512px; overflow-x: hidden; overflow-y: auto;' class='updates_container'>
                 <div class='updates_content' align='left'>
+                    <strong>7/2/2022 - </strong>
+                    I have added temperature, altitude and humidity stats with readings from a BME280 sensor and soon I plan on running the ESP32 powering this website fully off of solar!
+                </div>
+
+                <div class='updates_content' align='left'>
                     <strong>6/29/2022 - </strong>
-                    I have migrated the website over to an ESP32 for a performance boost and to add things such as a BMP388 for temperature, pressure and altitude readings when it arrives!
+                    I have migrated the website over to an ESP32 for a performance boost and to add things such as a BME280 for temperature, pressure and altitude readings when it arrives!
                 </div>
 
                 <div class='updates_content' align='left'>
@@ -383,7 +405,7 @@ String HTML = R"rawliteral(
         xhttp.open('GET', 'https://kk.dev/helloesp_visitors', true);
         xhttp.send();
 
-        /*var xhttp = new XMLHttpRequest();
+        var xhttp = new XMLHttpRequest();
         xhttp.onreadystatechange = function () {
             if (this.readyState == 4 && this.status == 200) {
                 document.getElementById('temperature').innerHTML = this.responseText;
@@ -395,11 +417,38 @@ String HTML = R"rawliteral(
         var xhttp = new XMLHttpRequest();
         xhttp.onreadystatechange = function () {
             if (this.readyState == 4 && this.status == 200) {
+                document.getElementById('temperature_celsius').innerHTML = this.responseText;
+            }
+        };
+        xhttp.open('GET', '/temperature_celsius', true);
+        xhttp.send();
+
+        var xhttp = new XMLHttpRequest();
+        xhttp.onreadystatechange = function () {
+            if (this.readyState == 4 && this.status == 200) {
+                document.getElementById('humidity').innerHTML = this.responseText;
+            }
+        };
+        xhttp.open('GET', '/humidity', true);
+        xhttp.send();
+
+        var xhttp = new XMLHttpRequest();
+        xhttp.onreadystatechange = function () {
+            if (this.readyState == 4 && this.status == 200) {
+                document.getElementById('pressure').innerHTML = this.responseText;
+            }
+        };
+        xhttp.open('GET', '/pressure', true);
+        xhttp.send();
+
+        var xhttp = new XMLHttpRequest();
+        xhttp.onreadystatechange = function () {
+            if (this.readyState == 4 && this.status == 200) {
                 document.getElementById('altitude').innerHTML = this.responseText;
             }
         };
         xhttp.open('GET', '/altitude', true);
-        xhttp.send();*/
+        xhttp.send();
 
         setInterval(function () {
             var xhttp = new XMLHttpRequest();
@@ -445,7 +494,7 @@ String HTML = R"rawliteral(
             xhttp.send();
         }, 60000);
 
-        /*setInterval(function () {
+        setInterval(function () {
             var xhttp = new XMLHttpRequest();
             xhttp.onreadystatechange = function () {
                 if (this.readyState == 4 && this.status == 200) {
@@ -454,9 +503,42 @@ String HTML = R"rawliteral(
             };
             xhttp.open('GET', '/temperature', true);
             xhttp.send();
-        }, 60000);*/
+        }, 60000);
 
-        /*setInterval(function () {
+        setInterval(function () {
+            var xhttp = new XMLHttpRequest();
+            xhttp.onreadystatechange = function () {
+                if (this.readyState == 4 && this.status == 200) {
+                    document.getElementById('humidity').innerHTML = this.responseText;
+                }
+            };
+            xhttp.open('GET', '/humidity', true);
+            xhttp.send();
+        }, 60000);
+
+        setInterval(function () {
+            var xhttp = new XMLHttpRequest();
+            xhttp.onreadystatechange = function () {
+                if (this.readyState == 4 && this.status == 200) {
+                    document.getElementById('temperature_celsius').innerHTML = this.responseText;
+                }
+            };
+            xhttp.open('GET', '/temperature_celsius', true);
+            xhttp.send();
+        }, 60000);
+
+        setInterval(function () {
+            var xhttp = new XMLHttpRequest();
+            xhttp.onreadystatechange = function () {
+                if (this.readyState == 4 && this.status == 200) {
+                    document.getElementById('pressure').innerHTML = this.responseText;
+                }
+            };
+            xhttp.open('GET', '/pressure', true);
+            xhttp.send();
+        }, 60000);
+
+        setInterval(function () {
             var xhttp = new XMLHttpRequest();
             xhttp.onreadystatechange = function () {
                 if (this.readyState == 4 && this.status == 200) {
@@ -465,7 +547,7 @@ String HTML = R"rawliteral(
             };
             xhttp.open('GET', '/altitude', true);
             xhttp.send();
-        }, 60000);*/
+        }, 60000);
     </script>
 </html>
 )rawliteral";
@@ -474,6 +556,8 @@ void setup() {
 
   Serial.begin(115200);
   WiFi.begin(ssid, password);
+
+  bme.begin(0x76);
 
   while (WiFi.status() != WL_CONNECTED) {
 
@@ -515,17 +599,41 @@ void setup() {
 
   });
 
-  //server.on("/temperature", []() {   // TODO: temperature from BMP388
+  server.on("/temperature", []() { // Temperature
 
-    //server.send(200, "text/html", HTML);
+    temperature = bme.readTemperature() * 9/5 + 32;
+    server.send(200, "text/html", String(temperature) + "°F");
 
-  //});
+  });
 
-  //server.on("/altitude", []() {   // TODO: altitude from BMP388
+   server.on("/temperature_celsius", []() { // Temperature in celsius
 
-    //server.send(200, "text/html", HTML);
+    temperature = bme.readTemperature();
+    server.send(200, "text/html", String(temperature) + "°C");
 
-  //});
+   });
+
+   server.on("/altitude", []() { // Altitude
+
+     altitude = bme.readAltitude(SEALEVELPRESSURE_HPA) * 3.28;
+     server.send(200, "text/html", String(altitude) + "ft");
+
+  });
+
+  server.on("/humidity", []() { // Humidity
+
+    humidity = bme.readHumidity();
+    server.send(200, "text/html", String(humidity) + "%");
+
+  });
+
+   server.on("/pressure", []() { // Atmospheric Pressure
+
+     pressure = bme.readPressure() / 100.0F;
+     server.send(200, "text/html", String(pressure) + "hPa");
+
+   });
+
 
   server.on("/", handleRootPath);
 
