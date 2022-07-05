@@ -402,48 +402,6 @@ String HTML = R"rawliteral(
 </html>
 )rawliteral";
 
-void handleRootPath() {
-
-    if(!SPIFFS.begin(true)){
-      Serial.println("An Error has occurred while mounting SPIFFS");
-      return;
-    }
-
-    File visitors_read = SPIFFS.open("/visitors.txt");
-
-    if(!visitors_read){
-        Serial.println("Failed to open file for reading");
-        return;
-    }
-
-    while(visitors_read.available()){
-
-        int visitor_count = visitors_read.readString().toInt() + 1;
-
-        //Serial.println(visitor_count);
-
-        File count_file = SPIFFS.open("/visitors.txt", FILE_WRITE);
-        if(!count_file){
-          Serial.println("Failed to open file for reading");
-          return;
-        }
-
-        if(count_file.println(visitor_count)){
-          //Serial.println("File updated");
-        } else {
-          Serial.println("File update failed");
-        }
-
-        count_file.close();
-
-        }
-
-    visitors_read.close();
-
-  server.send(200, "text/html", HTML);
-
-}
-
 void setup() {
 
   Serial.begin(115200);
