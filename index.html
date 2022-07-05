@@ -346,7 +346,7 @@
                 document.getElementById('visitors').innerHTML = this.responseText;
             }
         };
-        xhttp.open('GET', 'https://kk.dev/helloesp_visitors', true);
+        xhttp.open('GET', '/visitors', true);
         xhttp.send();
 
         var xhttp = new XMLHttpRequest();
@@ -434,7 +434,7 @@
                     document.getElementById('visitors').innerHTML = this.responseText;
                 }
             };
-            xhttp.open('GET', 'https://kk.dev/helloesp_visitors', true);
+            xhttp.open('GET', '/visitors', true);
             xhttp.send();
         }, 60000);
 

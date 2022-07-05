@@ -25,6 +25,7 @@
   #include "ESP8266WebServer.h"
 #endif
 
+#include "SPIFFS.h"
 #include "uptime_formatter.h"
 #include "Wire.h"
 #include "Adafruit_Sensor.h"
@@ -396,7 +397,7 @@ String HTML = R"rawliteral(
                 document.getElementById('visitors').innerHTML = this.responseText;
             }
         };
-        xhttp.open('GET', 'https://kk.dev/helloesp_visitors', true);
+        xhttp.open('GET', '/visitors', true);
         xhttp.send();
 
         var xhttp = new XMLHttpRequest();
@@ -484,7 +485,7 @@ String HTML = R"rawliteral(
                     document.getElementById('visitors').innerHTML = this.responseText;
                 }
             };
-            xhttp.open('GET', 'https://kk.dev/helloesp_visitors', true);
+            xhttp.open('GET', '/visitors', true);
             xhttp.send();
         }, 60000);
 
@@ -546,6 +547,63 @@ String HTML = R"rawliteral(
 </html>
 )rawliteral";
 
+void handleRootPath() {
+
+    if(!SPIFFS.begin(true)){
+      Serial.println("An Error has occurred while mounting SPIFFS");
+      return;
+    }
+
+    File visitors_read = SPIFFS.open("/visitors.txt");
+ 
+    if(!visitors_read){
+        Serial.println("Failed to open file for reading");
+        return;
+    }
+ 
+    while(visitors_read.available()){
+
+        int visitor_count = visitors_read.readString().toInt() + 1;
+
+        //Serial.println(visitor_count);
+
+        File count_file = SPIFFS.open("/visitors.txt", FILE_WRITE);
+        if(!count_file){
+          Serial.println("Failed to open file for reading");
+          return;
+        }
+
+        if(count_file.println(visitor_count)){
+          //Serial.println("File updated");
+        } else {
+          Serial.println("File update failed");
+        }
+
+        count_file.close();
+
+        }
+ 
+    visitors_read.close();
+
+  server.send(200, "text/html", HTML);
+
+}
+
+void handleRobots() {
+
+  String error_message = "User-agent: *\n\nDisallow: /uptime\nDisallow: /cpu_usage\nDisallow: /memory_usage";
+  server.send(404, "text/plain", error_message);
+
+}
+
+void handleNotFound() {
+
+  String error_message = "404 Not Found";
+  server.send(404, "text/plain", error_message);
+
+}
+
+
 void setup() {
 
   Serial.begin(115200);
@@ -590,6 +648,28 @@ void setup() {
     memory_usage.concat(" KB)");
 
     server.send(200, "text/html", String(memory_usage));
+
+  });
+
+  server.on("/visitors", []() { // Uptime
+
+    if(!SPIFFS.begin(true)){
+      Serial.println("An Error has occurred while mounting SPIFFS");
+      return;
+    }
+  
+    File count_file = SPIFFS.open("/visitors.txt", "r");
+    if(!count_file){
+      Serial.println("Failed to open file for reading");
+      return;
+    }
+
+    while(count_file.available()){
+
+      server.send(200, "text/plain", String(count_file.readString()));
+
+    }
+    count_file.close();
 
   });
 
@@ -642,25 +722,5 @@ void setup() {
 void loop() {
 
   server.handleClient();
-
-}
-
-void handleRootPath() {
-
-  server.send(200, "text/html", HTML);
-
-}
-
-void handleRobots() {
-
-  String error_message = "User-agent: *\n\nDisallow: /uptime\nDisallow: /cpu_usage\nDisallow: /memory_usage";
-  server.send(404, "text/plain", error_message);
-
-}
-
-void handleNotFound() {
-
-  String error_message = "404 Not Found";
-  server.send(404, "text/plain", error_message);
 
 }
