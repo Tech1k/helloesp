@@ -318,7 +318,7 @@
                 document.getElementById('visitors').innerHTML = 'Visitors: ' + this.responseText;
             }
         };
-        xhttp.open('GET', 'https://kk.dev/helloesp_visitors', true);
+        xhttp.open('GET', '/visitors', true);
         xhttp.send();
 
         setInterval(function () {
@@ -361,7 +361,7 @@
                     document.getElementById('visitors').innerHTML = 'Visitors: ' + this.responseText;
                 }
             };
-            xhttp.open('GET', 'https://kk.dev/helloesp_visitors', true);
+            xhttp.open('GET', '/visitors', true);
             xhttp.send();
         }, 60000);
     </script>
