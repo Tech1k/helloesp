@@ -31,6 +31,7 @@ A website hosted on an ESP8266.
 
 
 ## External Libraries
+- ESPAsyncWebServer by me-no-dev
 - Uptime Library by Yiannis Bourkelis
 
 
