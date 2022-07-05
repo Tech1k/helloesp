@@ -329,6 +329,11 @@ String HTML = R"rawliteral(
             <p class='is-size-6' style='font-size: 24px; font-weight: 700; margin-bottom: 5px;'><i class='icon far fa-newspaper'></i> Updates</p>
             <div style='height: 256px; max-width: 512px; overflow-x: hidden; overflow-y: auto;' class='updates_container'>
                 <div class='updates_content' align='left'>
+                    <strong>7/4/2022 - </strong>
+                    The visitor counter is now completely hosted off of the ESP32 using the SPIFFs filesystem!
+                </div>
+
+                <div class='updates_content' align='left'>
                     <strong>7/2/2022 - </strong>
                     I have added temperature, altitude and humidity stats with readings from a BME280 sensor and soon I plan on running the ESP32 powering this website fully off of solar!
                 </div>
@@ -591,7 +596,7 @@ void handleRootPath() {
 
 void handleRobots() {
 
-  String error_message = "User-agent: *\n\nDisallow: /uptime\nDisallow: /cpu_usage\nDisallow: /memory_usage";
+  String error_message = "User-agent: *\n\nDisallow: /uptime\nDisallow: /cpu_usage\nDisallow: /memory_usage\nDisallow: /visitors\nDisallow: /temperature\nDisallow: /temperature_celsius\nDisallow: /altitude\nDisallow: /humidity\nDisallow: /pressure";
   server.send(404, "text/plain", error_message);
 
 }
@@ -602,7 +607,6 @@ void handleNotFound() {
   server.send(404, "text/plain", error_message);
 
 }
-
 
 void setup() {
 
