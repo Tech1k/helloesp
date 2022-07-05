@@ -184,7 +184,7 @@ String HTML = R"rawliteral(
                 border-top: 1px solid #dee2e6 !important;
             }
             .contact-details:hover {
-                transform: translateY(4px);
+                transform: translateY(-4px);
             }
             .stats_section {
                 color: #fff;
