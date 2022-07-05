@@ -17,27 +17,22 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-#ifdef ESP32
-  #include "WiFi.h"
-  #include "WebServer.h"
-#else
-  #include "ESP8266WiFi.h"
-  #include "ESP8266WebServer.h"
-#endif
-
-#include "SPIFFS.h"
+#include "ESPAsyncWebServer.h"
 #include "uptime_formatter.h"
+#include "SPIFFS.h"
 #include "Wire.h"
 #include "Adafruit_Sensor.h"
 #include "Adafruit_BME280.h"
 
 #ifdef ESP32
-  WebServer server(80);
+  #include "WiFi.h"
   int max_memory = 512000; // ESP32 max ram, change as necessary - value is in bytes
 #else
-  ESP8266WebServer server(80);
+  #include "ESP8266WiFi.h"
   int max_memory = 80000; // ESP8266 max ram, change as necessary - value is in bytes
 #endif
+
+AsyncWebServer server(80);
 
 const char* ssid = "WIFI_SSID";
 const char* password = "WIFI_PWD";
@@ -553,7 +548,26 @@ String HTML = R"rawliteral(
 </html>
 )rawliteral";
 
-void handleRootPath() {
+void setup() {
+
+  Serial.begin(115200);
+  WiFi.begin(ssid, password);
+
+  bme.begin(0x76);
+
+  while (WiFi.status() != WL_CONNECTED) {
+
+    delay(500);
+    Serial.println("Waiting to connect…");
+
+  }
+
+  Serial.println("Connected!");
+  Serial.print("Local IP address: ");
+  Serial.println(WiFi.localIP());
+
+
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
 
     if(!SPIFFS.begin(true)){
       Serial.println("An Error has occurred while mounting SPIFFS");
@@ -591,55 +605,24 @@ void handleRootPath() {
  
     visitors_read.close();
 
-  server.send(200, "text/html", HTML);
-
-}
-
-void handleRobots() {
-
-  String error_message = "User-agent: *\n\nDisallow: /uptime\nDisallow: /cpu_usage\nDisallow: /memory_usage\nDisallow: /visitors\nDisallow: /temperature\nDisallow: /temperature_celsius\nDisallow: /altitude\nDisallow: /humidity\nDisallow: /pressure";
-  server.send(404, "text/plain", error_message);
-
-}
-
-void handleNotFound() {
-
-  String error_message = "404 Not Found";
-  server.send(404, "text/plain", error_message);
-
-}
-
-void setup() {
-
-  Serial.begin(115200);
-  WiFi.begin(ssid, password);
-
-  bme.begin(0x76);
-
-  while (WiFi.status() != WL_CONNECTED) {
-
-    delay(500);
-    Serial.println("Waiting to connect…");
-
-  }
-
-  Serial.println("Connected!");
-  Serial.print("Local IP address: ");
-  Serial.println(WiFi.localIP());
-
-  server.on("/uptime", []() { // Uptime
-
-    server.send(200, "text/html", uptime_formatter::getUptime());
+    request->send(200, "text/html", HTML);
 
   });
 
-  //server.on("/cpu_usage", []() {   // TODO: CPU usage
 
-    //server.send(200, "text/html", HTML);
+  server.on("/uptime", HTTP_GET, [](AsyncWebServerRequest *request) { // Uptime
+
+    request->send(200, "text/html", uptime_formatter::getUptime());
+
+  });
+
+  //server.on("/cpu_usage", HTTP_GET, [](AsyncWebServerRequest *request) {   // TODO: CPU usage
+
+    //request->send(200, "text/html", cpu_usage);
 
   //});
 
-  server.on("/memory_usage", []() { // Memory usage
+  server.on("/memory_usage", HTTP_GET, [](AsyncWebServerRequest *request) { // Memory usage
 
     int used_memory = max_memory - ESP.getFreeHeap();
     float memory_usage_kb_float = (float)used_memory / 1000;
@@ -652,11 +635,11 @@ void setup() {
     memory_usage.concat(String(memory_usage_kb_int));
     memory_usage.concat(" KB)");
 
-    server.send(200, "text/html", String(memory_usage));
+    request->send(200, "text/html", String(memory_usage));
 
   });
 
-  server.on("/visitors", []() { // Uptime
+  server.on("/visitors", HTTP_GET, [](AsyncWebServerRequest *request) { // Uptime
 
     if(!SPIFFS.begin(true)){
       Serial.println("An Error has occurred while mounting SPIFFS");
@@ -671,61 +654,64 @@ void setup() {
 
     while(count_file.available()){
 
-      server.send(200, "text/plain", String(count_file.readString()));
+      request->send(200, "text/plain", String(count_file.readString()));
 
     }
     count_file.close();
 
   });
 
-  server.on("/temperature", []() { // Temperature
+  server.on("/temperature", HTTP_GET, [](AsyncWebServerRequest *request) { // Temperature
 
     temperature = bme.readTemperature() * 9/5 + 32;
-    server.send(200, "text/html", String(temperature) + "°F");
+    request->send(200, "text/html", String(temperature) + "°F");
 
   });
 
-  server.on("/temperature_celsius", []() { // Temperature in celsius
+  server.on("/temperature_celsius", HTTP_GET, [](AsyncWebServerRequest *request) { // Temperature in celsius
 
     temperature = bme.readTemperature();
-    server.send(200, "text/html", String(temperature) + "°C");
+    request->send(200, "text/html", String(temperature) + "°C");
 
    });
 
-  server.on("/altitude", []() { // Altitude
+  server.on("/altitude", HTTP_GET, [](AsyncWebServerRequest *request) { // Altitude
 
     altitude = bme.readAltitude(SEALEVELPRESSURE_HPA) * 3.28;
-    server.send(200, "text/html", String(altitude) + "ft");
+    request->send(200, "text/html", String(altitude) + "ft");
 
   });
 
-  server.on("/humidity", []() { // Humidity
+  server.on("/humidity", HTTP_GET, [](AsyncWebServerRequest *request) { // Humidity
 
     humidity = bme.readHumidity();
-    server.send(200, "text/html", String(humidity) + "%");
+    request->send(200, "text/html", String(humidity) + "%");
 
   });
 
-  server.on("/pressure", []() { // Atmospheric Pressure
+  server.on("/pressure", HTTP_GET, [](AsyncWebServerRequest *request) { // Atmospheric Pressure
 
     pressure = bme.readPressure() / 100.0F;
-    server.send(200, "text/html", String(pressure) + "hPa");
+    request->send(200, "text/html", String(pressure) + "hPa");
 
   });
 
 
-  server.on("/", handleRootPath);
+  server.on("/robots.txt", HTTP_GET, [](AsyncWebServerRequest *request) { // Serve robots.txt
 
-  server.on("/robots.txt", handleRobots); // Serve robots.txt
+    String robots = "User-agent: *\n\nDisallow: /uptime\nDisallow: /cpu_usage\nDisallow: /memory_usage\nDisallow: /visitors\nDisallow: /temperature\nDisallow: /temperature_celsius\nDisallow: /altitude\nDisallow: /humidity\nDisallow: /pressure";
+    request->send(200, "text/plain", robots);
 
-  server.onNotFound(handleNotFound); // Serve 404 not found page on invalid paths
+  });
+
+  server.onNotFound([](AsyncWebServerRequest *request) { // Serve 404 not found page on invalid paths
+    request->send(404, "text/plain", "404 Not Found");
+  });
 
   server.begin();
   Serial.println("Server listening");
 }
 
 void loop() {
-
-  server.handleClient();
 
 }
