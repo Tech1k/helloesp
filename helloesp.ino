@@ -134,7 +134,7 @@ String HTML = R"rawliteral(
                 text-align: center;
             }
             .button:hover {
-                transform: translateY(4px);
+                transform: translateY(-4px);
             }
             .button:active {
                 position: relative;
@@ -230,6 +230,7 @@ String HTML = R"rawliteral(
                 background-color: rgb(238, 238, 238, 0.8);
                 padding: 1rem;
                 border-radius: 0.5rem;
+                box-shadow: 0 0.2rem 0.5rem rgba(0, 0, 0, 0.1);
             }
             .updates_content {
                 padding-bottom: 15px;
@@ -286,7 +287,7 @@ String HTML = R"rawliteral(
 
         <center>
             <div style='max-width: 512px;'>
-                <img style='max-width: 100%; border-radius: 5px; overflow: hidden;' src='https://kk.dev/assets/images/esp8266-webserver.jpg' />
+                <img style='max-width: 100%; border-radius: 0.5rem; overflow: hidden; box-shadow: 0 0.2rem 0.5rem rgba(0, 0, 0, 0.05);' src='https://kk.dev/assets/images/esp8266-webserver.jpg' />
                 <p>A photo of the ESP8266 running this website, taken on 6/27/2022.</p>
             </div>
 
