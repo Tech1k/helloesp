@@ -216,27 +216,24 @@
                                 <div class='grid_container'>
                                     <div class='stat_card'>
                                         <div class='stat_container'>
-                                            <i class='fas fa-hourglass fa-3x stat_icon'></i>
+                                            <div class='stat_title'><i class='fas fa-hourglass stat_icon'></i> Uptime</div>
                                             <div class='stat_content' id='uptime'>Loading...</div>
-                                            <div class='stat_title'>Uptime</div>
                                         </div>
                                     </div>
                                     <div class='stat_card'>
                                         <div class='stat_container'>
-                                            <i class='fas fa-microchip fa-3x stat_icon' ></i>
-                                            <div class='stat_content' id='cpu_usage'>In development</div>
-                                            <div class='stat_title'>CPU Usage</div>
+                                            <div class='stat_title'><i class='fas fa-microchip stat_icon'></i> CPU Usage</div>
+                                            <div class='stat_content' id='cpu_usage'>coming soon</div>
                                         </div>
                                     </div>
                                     <div class='stat_card'>
                                         <div class='stat_container'>
-                                            <i class='fas fa-memory fa-3x stat_icon'></i>
+                                            <div class='stat_title'><i class='fas fa-memory stat_icon'></i> Memory Usage</div>
                                             <div class='stat_content' id='memory_usage'>Loading...</div>
-                                            <div class='stat_title'>Memory Usage</div>
                                         </div>
                                     </div>
                                 </div>
-                                <div class='stat_content' id='visitors'>Visitors: Loading...</div>
+                                <div class='stat_content' id='visitors'><i class='fas fa-users'></i> Visitors: Loading...</div>
                             </div>
                         </center>
                     </div>
@@ -253,6 +250,12 @@
 
             <p class='is-size-6' style='font-size: 24px; font-weight: 700; margin-bottom: 5px;'><i class='icon far fa-newspaper'></i> Updates</p>
             <div style='height: 256px; max-width: 512px; overflow-x: hidden; overflow-y: auto;' class='updates_container'>
+
+                <div class='updates_content' align='left'>
+                    <strong>7/2/2022 - </strong>
+                    I have added temperature, altitude and humidity stats with readings from a BME280 sensor and soon I plan on running the ESP32 powering this website fully off of solar!
+                </div>
+
                 <div class='updates_content' align='left'>
                     <strong>6/29/2022 - </strong>
                     I have migrated the website over to an ESP32 for a performance boost and to add things such as a BMP388 for temperature, pressure and altitude readings when it arrives!
