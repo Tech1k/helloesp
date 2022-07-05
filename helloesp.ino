@@ -143,7 +143,7 @@ String HTML = R"rawliteral(
                 text-align: center;
             }
             .button:hover {
-                transform: translateY(4px);
+                transform: translateY(-4px);
             }
             .button:active {
                 position: relative;
@@ -239,6 +239,7 @@ String HTML = R"rawliteral(
                 background-color: rgb(238, 238, 238, 0.8);
                 padding: 1rem;
                 border-radius: 0.5rem;
+                box-shadow: 0 0.2rem 0.5rem rgba(0, 0, 0, 0.1);
             }
             .updates_content {
                 padding-bottom: 15px;
@@ -322,7 +323,7 @@ String HTML = R"rawliteral(
 
         <center>
             <div style='max-width: 512px;'>
-                <img style='max-width: 100%; border-radius: 5px; overflow: hidden;' src='https://kk.dev/assets/images/esp8266-webserver.jpg' />
+                <img style='max-width: 100%; border-radius: 0.5rem; overflow: hidden; box-shadow: 0 0.2rem 0.5rem rgba(0, 0, 0, 0.05);' src='https://kk.dev/assets/images/esp8266-webserver.jpg' />
                 <p>A photo of the ESP8266 running this website, taken on 6/27/2022.</p>
             </div>
 
@@ -684,17 +685,17 @@ void setup() {
 
   });
 
-   server.on("/temperature_celsius", []() { // Temperature in celsius
+  server.on("/temperature_celsius", []() { // Temperature in celsius
 
     temperature = bme.readTemperature();
     server.send(200, "text/html", String(temperature) + "°C");
 
    });
 
-   server.on("/altitude", []() { // Altitude
+  server.on("/altitude", []() { // Altitude
 
-     altitude = bme.readAltitude(SEALEVELPRESSURE_HPA) * 3.28;
-     server.send(200, "text/html", String(altitude) + "ft");
+    altitude = bme.readAltitude(SEALEVELPRESSURE_HPA) * 3.28;
+    server.send(200, "text/html", String(altitude) + "ft");
 
   });
 
@@ -705,12 +706,12 @@ void setup() {
 
   });
 
-   server.on("/pressure", []() { // Atmospheric Pressure
+  server.on("/pressure", []() { // Atmospheric Pressure
 
-     pressure = bme.readPressure() / 100.0F;
-     server.send(200, "text/html", String(pressure) + "hPa");
+    pressure = bme.readPressure() / 100.0F;
+    server.send(200, "text/html", String(pressure) + "hPa");
 
-   });
+  });
 
 
   server.on("/", handleRootPath);
