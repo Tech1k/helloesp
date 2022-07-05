@@ -53,7 +53,7 @@ String HTML = R"rawliteral(
         <link href='https://fonts.googleapis.com/css2?family=Cabin+Condensed:wght@600;700&display=swap' rel='stylesheet' />
         <title>HelloESP - Hosted on an ESP32</title>
         <meta name='description' content='HelloESP is a website that is hosted on an ESP32 to demonstrate what you can do with an ESP32.' />
-        <link rel='shortcut icon' href='https://kk.dev/assets/images/helloesp-favicon.png' />
+        <link rel='shortcut icon' href='https://helloesp.com/favicon.png' />
         <meta name='keywords' content='esp, esp32, esp8266, development, coding, programming' />
         <meta name='author' content='Kristian Kramer' />
         <meta name='theme-color' content='#2686e6' />
@@ -63,11 +63,11 @@ String HTML = R"rawliteral(
         <meta name='twitter:card' content='summary_large_image' />
         <meta name='twitter:title' content='HelloESP' />
         <meta name='twitter:description' content='HelloESP is a website that is hosted on an ESP32 to demonstrate what you can do with an ESP32.' />
-        <meta name='twitter:image' content='https://kk.dev/assets/images/helloesp-og-banner.png?v=2' />
+        <meta name='twitter:image' content='https://helloesp.com/helloesp-og-banner.png' />
         <meta name='twitter:site' content='@kristianjkramer' />
         <meta name='twitter:creator' content='@kristianjkramer' />
 
-        <meta property='og:image' content='https://kk.dev/assets/images/helloesp-og-banner.png?v=2' />
+        <meta property='og:image' content='https://helloesp.com/helloesp-og-banner.png' />
         <meta property='og:image:width' content='955' />
         <meta property='og:image:height' content='500' />
         <meta property='og:description' content='HelloESP is a website that is hosted on an ESP32 to demonstrate what you can do with an ESP32.' />
@@ -318,12 +318,17 @@ String HTML = R"rawliteral(
 
         <center>
             <div style='max-width: 512px;'>
-                <img style='max-width: 100%; border-radius: 0.5rem; overflow: hidden; box-shadow: 0 0.2rem 0.5rem rgba(0, 0, 0, 0.05);' src='https://kk.dev/assets/images/esp8266-webserver.jpg' />
+                <img style='max-width: 100%; border-radius: 0.5rem; overflow: hidden; box-shadow: 0 0.2rem 0.5rem rgba(0, 0, 0, 0.05);' src='/esp8266-webserver.jpg' />
                 <p>A photo of the ESP8266 running this website, taken on 6/27/2022.</p>
             </div>
 
             <p class='is-size-6' style='font-size: 24px; font-weight: 700; margin-bottom: 5px;'><i class='icon far fa-newspaper'></i> Updates</p>
             <div style='height: 256px; max-width: 512px; overflow-x: hidden; overflow-y: auto;' class='updates_container'>
+                <div class='updates_content' align='left'>
+                    <strong>7/5/2022 - </strong>
+                    All images on this website are now hosted on the ESP32 and I have migrated to ESPAsyncWebServer!
+                </div>
+
                 <div class='updates_content' align='left'>
                     <strong>7/4/2022 - </strong>
                     The visitor counter is now completely hosted off of the ESP32 using the SPIFFs filesystem!
@@ -476,17 +481,6 @@ String HTML = R"rawliteral(
                 }
             };
             xhttp.open('GET', '/memory_usage', true);
-            xhttp.send();
-        }, 60000);
-
-        setInterval(function () {
-            var xhttp = new XMLHttpRequest();
-            xhttp.onreadystatechange = function () {
-                if (this.readyState == 4 && this.status == 200) {
-                    document.getElementById('visitors').innerHTML = this.responseText;
-                }
-            };
-            xhttp.open('GET', '/visitors', true);
             xhttp.send();
         }, 60000);
 
