@@ -697,6 +697,18 @@ void setup() {
   });
 
 
+  // Images
+  server.on("/favicon.png", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(SPIFFS, "/favicon.png", "image/png");
+  });
+  server.on("/og-banner.png", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(SPIFFS, "/og-banner.png", "image/png");
+  });
+  server.on("/esp8266-webserver.jpg", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(SPIFFS, "/esp8266-webserver.jpg", "image/jpg");
+  });
+
+
   server.on("/robots.txt", HTTP_GET, [](AsyncWebServerRequest *request) { // Serve robots.txt
 
     String robots = "User-agent: *\n\nDisallow: /uptime\nDisallow: /cpu_usage\nDisallow: /memory_usage\nDisallow: /visitors\nDisallow: /temperature\nDisallow: /temperature_celsius\nDisallow: /altitude\nDisallow: /humidity\nDisallow: /pressure";

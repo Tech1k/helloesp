@@ -21,7 +21,6 @@ A website hosted on an ESP8266.
 - [x] Make visitor counter locally hosted on the ESP either via a txt file or sqlite db stored in the onboard flash memory
 - [ ] Format uptime better - only display if number is above 0 (e.g. if 0 days, hide days)
 - [x] Add BME280 for temperature, pressure and altitude
-- [ ] Automatically create visitors.txt file if file not found
 
 
 ## Branches
