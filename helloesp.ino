@@ -17,24 +17,19 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+#include "ESPAsyncWebServer.h"
+#include "uptime_formatter.h"
+#include "SPIFFS.h"
+
 #ifdef ESP32
   #include "WiFi.h"
-  #include "WebServer.h"
-#else
-  #include "ESP8266WiFi.h"
-  #include "ESP8266WebServer.h"
-#endif
-
-#include "SPIFFS.h"
-#include "uptime_formatter.h"
-
-#ifdef ESP32
-  WebServer server(80);
   int max_memory = 512000; // ESP32 max ram, change as necessary - value is in bytes
 #else
-  ESP8266WebServer server(80);
+  #include "ESP8266WiFi.h"
   int max_memory = 80000; // ESP8266 max ram, change as necessary - value is in bytes
 #endif
+
+AsyncWebServer server(80);
 
 const char* ssid = "WIFI_SSID";
 const char* password = "WIFI_PWD";
@@ -49,7 +44,7 @@ String HTML = R"rawliteral(
         <link href='https://fonts.googleapis.com/css2?family=Cabin+Condensed:wght@600;700&display=swap' rel='stylesheet' />
         <title>HelloESP - Hosted on an ESP32</title>
         <meta name='description' content='HelloESP is a website that is hosted on an ESP32 to demonstrate what you can do with an ESP32.' />
-        <link rel='shortcut icon' href='https://kk.dev/assets/images/helloesp-favicon.png' />
+        <link rel='shortcut icon' href='https://helloesp.com/favicon.png' />
         <meta name='keywords' content='esp, esp32, esp8266, development, coding, programming' />
         <meta name='author' content='Kristian Kramer' />
         <meta name='theme-color' content='#2686e6' />
@@ -59,11 +54,11 @@ String HTML = R"rawliteral(
         <meta name='twitter:card' content='summary_large_image' />
         <meta name='twitter:title' content='HelloESP' />
         <meta name='twitter:description' content='HelloESP is a website that is hosted on an ESP32 to demonstrate what you can do with an ESP32.' />
-        <meta name='twitter:image' content='https://kk.dev/assets/images/helloesp-og-banner.png?v=2' />
+        <meta name='twitter:image' content='https://helloesp.com/og-banner.png' />
         <meta name='twitter:site' content='@kristianjkramer' />
         <meta name='twitter:creator' content='@kristianjkramer' />
 
-        <meta property='og:image' content='https://kk.dev/assets/images/helloesp-og-banner.png?v=2' />
+        <meta property='og:image' content='https://helloesp.com/og-banner.png' />
         <meta property='og:image:width' content='955' />
         <meta property='og:image:height' content='500' />
         <meta property='og:description' content='HelloESP is a website that is hosted on an ESP32 to demonstrate what you can do with an ESP32.' />
@@ -180,7 +175,7 @@ String HTML = R"rawliteral(
                 border-top: 1px solid #dee2e6 !important;
             }
             .contact-details:hover {
-                transform: translateY(4px);
+                transform: translateY(-4px);
             }
             .stats_section {
                 color: #fff;
@@ -287,7 +282,7 @@ String HTML = R"rawliteral(
 
         <center>
             <div style='max-width: 512px;'>
-                <img style='max-width: 100%; border-radius: 0.5rem; overflow: hidden; box-shadow: 0 0.2rem 0.5rem rgba(0, 0, 0, 0.05);' src='https://kk.dev/assets/images/esp8266-webserver.jpg' />
+                <img style='max-width: 100%; border-radius: 0.5rem; overflow: hidden; box-shadow: 0 0.2rem 0.5rem rgba(0, 0, 0, 0.05);' src='/esp8266-webserver.jpg' />
                 <p>A photo of the ESP8266 running this website, taken on 6/27/2022.</p>
             </div>
 
@@ -403,17 +398,6 @@ String HTML = R"rawliteral(
             xhttp.open('GET', '/memory_usage', true);
             xhttp.send();
         }, 60000);
-
-        setInterval(function () {
-            var xhttp = new XMLHttpRequest();
-            xhttp.onreadystatechange = function () {
-                if (this.readyState == 4 && this.status == 200) {
-                    document.getElementById('visitors').innerHTML = 'Visitors: ' + this.responseText;
-                }
-            };
-            xhttp.open('GET', '/visitors', true);
-            xhttp.send();
-        }, 60000);
     </script>
 </html>
 )rawliteral";
@@ -460,20 +444,6 @@ void handleRootPath() {
 
 }
 
-void handleRobots() {
-
-  String error_message = "User-agent: *\n\nDisallow: /uptime\nDisallow: /cpu_usage\nDisallow: /memory_usage\nDisallow: /visitors";
-  server.send(404, "text/plain", error_message);
-
-}
-
-void handleNotFound() {
-
-  String error_message = "404 Not Found";
-  server.send(404, "text/plain", error_message);
-
-}
-
 void setup() {
 
   Serial.begin(115200);
@@ -490,19 +460,63 @@ void setup() {
   Serial.print("Local IP address: ");
   Serial.println(WiFi.localIP());
 
-  server.on("/uptime", []() { // Uptime
 
-    server.send(200, "text/html", uptime_formatter::getUptime());
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+
+    if(!SPIFFS.begin(true)){
+      Serial.println("An Error has occurred while mounting SPIFFS");
+      return;
+    }
+
+    File visitors_read = SPIFFS.open("/visitors.txt");
+ 
+    if(!visitors_read){
+        Serial.println("Failed to open file for reading");
+        return;
+    }
+ 
+    while(visitors_read.available()){
+
+        int visitor_count = visitors_read.readString().toInt() + 1;
+
+        //Serial.println(visitor_count);
+
+        File count_file = SPIFFS.open("/visitors.txt", FILE_WRITE);
+        if(!count_file){
+          Serial.println("Failed to open file for reading");
+          return;
+        }
+
+        if(count_file.println(visitor_count)){
+          //Serial.println("File updated");
+        } else {
+          Serial.println("File update failed");
+        }
+
+        count_file.close();
+
+        }
+ 
+    visitors_read.close();
+
+    request->send(200, "text/html", HTML);
 
   });
 
-  //server.on("/cpu_usage", []() {   // TODO: CPU usage
 
-    //server.send(200, "text/html", HTML);
+  server.on("/uptime", HTTP_GET, [](AsyncWebServerRequest *request) { // Uptime
+
+    request->send(200, "text/html", uptime_formatter::getUptime());
+
+  });
+
+  //server.on("/cpu_usage", HTTP_GET, [](AsyncWebServerRequest *request) {   // TODO: CPU usage
+
+    //request->send(200, "text/html", cpu_usage);
 
   //});
 
-  server.on("/memory_usage", []() { // Memory usage
+  server.on("/memory_usage", HTTP_GET, [](AsyncWebServerRequest *request) { // Memory usage
 
     int used_memory = max_memory - ESP.getFreeHeap();
     float memory_usage_kb_float = (float)used_memory / 1000;
@@ -515,17 +529,17 @@ void setup() {
     memory_usage.concat(String(memory_usage_kb_int));
     memory_usage.concat(" KB)");
 
-    server.send(200, "text/html", String(memory_usage));
+    request->send(200, "text/html", String(memory_usage));
 
   });
 
-  server.on("/visitors", []() { // Uptime
+  server.on("/visitors", HTTP_GET, [](AsyncWebServerRequest *request) { // Uptime
 
     if(!SPIFFS.begin(true)){
       Serial.println("An Error has occurred while mounting SPIFFS");
       return;
     }
-
+  
     File count_file = SPIFFS.open("/visitors.txt", "r");
     if(!count_file){
       Serial.println("Failed to open file for reading");
@@ -534,25 +548,41 @@ void setup() {
 
     while(count_file.available()){
 
-      server.send(200, "text/plain", String(count_file.readString()));
+      request->send(200, "text/plain", String(count_file.readString()));
 
     }
     count_file.close();
 
   });
 
-  server.on("/", handleRootPath);
 
-  server.on("/robots.txt", handleRobots); // Serve robots.txt
+  // Images
+  server.on("/favicon.png", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(SPIFFS, "/favicon.png", "image/png");
+  });
+  server.on("/og-banner.png", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(SPIFFS, "/og-banner.png", "image/png");
+  });
+  server.on("/esp8266-webserver.jpg", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(SPIFFS, "/esp8266-webserver.jpg", "image/jpg");
+  });
 
-  server.onNotFound(handleNotFound); // Serve 404 not found page on invalid paths
+
+  server.on("/robots.txt", HTTP_GET, [](AsyncWebServerRequest *request) { // Serve robots.txt
+
+    String robots = "User-agent: *\n\nDisallow: /uptime\nDisallow: /cpu_usage\nDisallow: /memory_usage\nDisallow: /visitors\nDisallow: /temperature\nDisallow: /temperature_celsius\nDisallow: /altitude\nDisallow: /humidity\nDisallow: /pressure";
+    request->send(200, "text/plain", robots);
+
+  });
+
+  server.onNotFound([](AsyncWebServerRequest *request) { // Serve 404 not found page on invalid paths
+    request->send(404, "text/plain", "404 Not Found");
+  });
 
   server.begin();
   Serial.println("Server listening");
 }
 
 void loop() {
-
-  server.handleClient();
 
 }
