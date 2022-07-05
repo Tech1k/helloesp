@@ -289,6 +289,11 @@ String HTML = R"rawliteral(
             <p class='is-size-6' style='font-size: 24px; font-weight: 700; margin-bottom: 5px;'><i class='icon far fa-newspaper'></i> Updates</p>
             <div style='height: 256px; max-width: 512px; overflow-x: hidden; overflow-y: auto;' class='updates_container'>
                 <div class='updates_content' align='left'>
+                    <strong>7/5/2022 - </strong>
+                    All images on this website are now hosted on the ESP32 and I have migrated to ESPAsyncWebServer!
+                </div>
+
+                <div class='updates_content' align='left'>
                     <strong>7/4/2022 - </strong>
                     The visitor counter is now completely hosted off of the ESP32 using the SPIFFs filesystem!
                 </div>
