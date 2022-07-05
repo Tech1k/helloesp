@@ -266,9 +266,8 @@ String HTML = R"rawliteral(
                                 <div class='grid_container'>
                                     <div class='stat_card'>
                                         <div class='stat_container'>
-                                            <i class='fas fa-hourglass fa-3x stat_icon'></i>
+                                            <div class='stat_title'><i class='fas fa-hourglass stat_icon'></i> Uptime</div>
                                             <div class='stat_content' id='uptime'>Loading...</div>
-                                            <div class='stat_title'>Uptime</div>
                                         </div>
                                     </div>
                                     <!--<div class='stat_card'>
@@ -280,40 +279,35 @@ String HTML = R"rawliteral(
                                     </div>-->
                                     <div class='stat_card'>
                                         <div class='stat_container'>
-                                            <i class='fas fa-memory fa-3x stat_icon'></i>
+                                            <div class='stat_title'><i class='fas fa-memory stat_icon'></i> Memory Usage</div>
                                             <div class='stat_content' id='memory_usage'>Loading...</div>
-                                            <div class='stat_title'>Memory Usage</div>
                                         </div>
                                     </div>
                                     <div class='stat_card'>
                                         <div class='stat_container'>
-                                            <i class='fas fa-users fa-3x stat_icon'></i>
+                                            <div class='stat_title'><i class='fas fa-users stat_icon'></i> Visitors</div>
                                             <div class='stat_content' id='visitors'>Loading...</div>
-                                            <div class='stat_title'>Visitors</div>
                                         </div>
                                     </div>
 
                                     <div class='stat_card'>
                                         <div class='stat_container'>
-                                            <i class='far fa-thermometer-half fa-3x stat_icon'></i>
+                                            <div class='stat_title'><i class='far fa-thermometer-half stat_icon'></i> Temperature (±2°F)</div>
                                             <div class='stat_content' id='temperature'>Loading...</div>
                                             <div class='stat_content' style='font-size: 16px; margin-top: -10px;' id='temperature_celsius'>Loading...</div>
-                                            <div class='stat_title'>Temperature</div>
                                         </div>
                                     </div>
                                     <div class='stat_card'>
                                         <div class='stat_container'>
-                                            <i class='fas fa-clouds fa-3x stat_icon'></i>
+                                            <div class='stat_title'><i class='fas fa-clouds stat_icon'></i> Altitude (±1 hPa or 3.3 ft)</div>
                                             <div class='stat_content' id='altitude'>Loading...</div>
                                             <div class='stat_content' style='font-size: 16px; margin-top: -10px;' id='pressure'>Loading...</div>
-                                            <div class='stat_title'>Altitude</div>
                                         </div>
                                     </div>
                                     <div class='stat_card'>
                                         <div class='stat_container'>
-                                            <i class='fas fa-tint fa-3x stat_icon'></i>
+                                            <div class='stat_title'><i class='fas fa-tint stat_icon'></i> Humidity (±3%)</div>
                                             <div class='stat_content' id='humidity'>Loading...</div>
-                                            <div class='stat_title'>Humidity</div>
                                         </div>
                                     </div>
                                 </div>
