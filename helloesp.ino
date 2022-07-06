@@ -231,6 +231,9 @@ String HTML = R"rawliteral(
                 padding-bottom: 15px;
             }
         </style>
+
+        <!-- Chatbro chat box -->
+        <script id="chatBroEmbedCode">/* Chatbro Widget Embed Code Start */function ChatbroLoader(chats,async){async=!1!==async;var params={embedChatsParameters:chats instanceof Array?chats:[chats],lang:navigator.language||navigator.userLanguage,needLoadCode:'undefined'==typeof Chatbro,embedParamsVersion:localStorage.embedParamsVersion,chatbroScriptVersion:localStorage.chatbroScriptVersion},xhr=new XMLHttpRequest;xhr.withCredentials=!0,xhr.onload=function(){eval(xhr.responseText)},xhr.onerror=function(){console.error('Chatbro loading error')},xhr.open('GET','//www.chatbro.com/embed.js?'+btoa(unescape(encodeURIComponent(JSON.stringify(params)))),async),xhr.send()}/* Chatbro Widget Embed Code End */ChatbroLoader({encodedChatId: '68VRf'});</script>
     </head>
     <body>
         <div class='HMP'>
@@ -311,7 +314,6 @@ String HTML = R"rawliteral(
                 </button>
             </div>
             <br/>
-
             <p class='is-size-6' style='font-size: 24px; font-weight: 700; margin-bottom: 5px;'><i class='icon far fa-newspaper'></i> Updates</p>
             <div style='height: 256px; max-width: 512px; overflow-x: hidden; overflow-y: auto;' class='updates_container'>
                 <div class='updates_content' align='left'>
@@ -346,6 +348,7 @@ String HTML = R"rawliteral(
             </div>
         </center>
         <br/>
+
         <footer id='contact' class='contact-section'>
             <div class='contact-section-header'>
                 <p class='h5'>Made with <i class='fas fa-heart'></i> by <a href='https://kk.dev' target='_blank' class='author_link'>Kristian</a></p>
