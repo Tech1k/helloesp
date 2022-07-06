@@ -346,7 +346,6 @@ String HTML = R"rawliteral(
             </div>
         </center>
         <br/>
-
         <footer id='contact' class='contact-section'>
             <div class='contact-section-header'>
                 <p class='h5'>Made with <i class='fas fa-heart'></i> by <a href='https://kk.dev' target='_blank' class='author_link'>Kristian</a></p>
