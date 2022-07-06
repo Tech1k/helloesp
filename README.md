@@ -4,7 +4,7 @@
 
 <img src="https://github.com/Tech1k/helloesp/blob/master/images/esp32-webserver.jpg" alt="ESP32 Webserver" max-width="100%"/>
 
-A website hosted on an ESP8266.
+A website hosted on an ESP32.
 
 
 ## Notes
