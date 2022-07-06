@@ -325,13 +325,13 @@ String HTML = R"rawliteral(
                 </div>
                 <div class='carousel-inner'>
                     <div class='carousel-item active'>
-                        <img src='data/esp32-webserver.jpg' class='d-block w-100' alt='ESP32 Webserver' style='max-width: 512px; height: 280px;'>
+                        <img src='/esp32-webserver.jpg' class='d-block w-100' alt='ESP32 Webserver' style='max-width: 512px; height: 280px;'>
                         <div class='carousel-caption d-none d-md-block'>
                             <p style='font-size: 16px; color: black;'>The ESP32 that is hosting this website, taken on 7/5/2022.</p>
                         </div>
                     </div>
                     <div class='carousel-item'>
-                        <img src='data/esp8266-webserver.jpg' class='d-block w-100' alt='ESP8266 Webserver' style='max-width: 512px; height: 280px;'>
+                        <img src='/esp8266-webserver.jpg' class='d-block w-100' alt='ESP8266 Webserver' style='max-width: 512px; height: 280px;'>
                         <div class='carousel-caption '>
                             <p style='font-size: 16px; color: white;'>The ESP8266 that once hosted this website, taken on 6/27/2022.</p>
                         </div>
@@ -720,6 +720,9 @@ void setup() {
   // Images
   server.on("/og-banner.png", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(SPIFFS, "/og-banner.png", "image/png");
+  });
+  server.on("/esp32-webserver.jpg", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(SPIFFS, "/esp32-webserver.jpg", "image/jpg");
   });
   server.on("/esp8266-webserver.jpg", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(SPIFFS, "/esp8266-webserver.jpg", "image/jpg");
