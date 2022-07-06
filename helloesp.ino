@@ -242,7 +242,7 @@ String HTML = R"rawliteral(
         </style>
 
         <!-- Chatbro chat box -->
-        <script id="chatBroEmbedCode">/* Chatbro Widget Embed Code Start */function ChatbroLoader(chats,async){async=!1!==async;var params={embedChatsParameters:chats instanceof Array?chats:[chats],lang:navigator.language||navigator.userLanguage,needLoadCode:'undefined'==typeof Chatbro,embedParamsVersion:localStorage.embedParamsVersion,chatbroScriptVersion:localStorage.chatbroScriptVersion},xhr=new XMLHttpRequest;xhr.withCredentials=!0,xhr.onload=function(){eval(xhr.responseText)},xhr.onerror=function(){console.error('Chatbro loading error')},xhr.open('GET','//www.chatbro.com/embed.js?'+btoa(unescape(encodeURIComponent(JSON.stringify(params)))),async),xhr.send()}/* Chatbro Widget Embed Code End */ChatbroLoader({encodedChatId: '68VRf'});</script>
+        <script id="chatBroEmbedCode">function ChatbroLoader(chats,async){async=!1!==async;var params={embedChatsParameters:chats instanceof Array?chats:[chats],lang:navigator.language||navigator.userLanguage,needLoadCode:'undefined'==typeof Chatbro,embedParamsVersion:localStorage.embedParamsVersion,chatbroScriptVersion:localStorage.chatbroScriptVersion},xhr=new XMLHttpRequest;xhr.withCredentials=!0,xhr.onload=function(){eval(xhr.responseText)},xhr.onerror=function(){console.error('Chatbro loading error')},xhr.open('GET','//www.chatbro.com/embed.js?'+btoa(unescape(encodeURIComponent(JSON.stringify(params)))),async),xhr.send()}ChatbroLoader({encodedChatId: '68VRf'});</script>
     </head>
     <body>
         <div class='HMP'>
@@ -270,13 +270,6 @@ String HTML = R"rawliteral(
                                             <div class='stat_content' id='uptime'>Loading...</div>
                                         </div>
                                     </div>
-                                    <!--<div class='stat_card'>
-                                        <div class='stat_container'>
-                                            <i class='fas fa-microchip fa-3x stat_icon'></i>
-                                            <div class='stat_content' id='cpu_usage'>coming soon</div>
-                                            <div class='stat_title'>CPU Usage</div>
-                                        </div>
-                                    </div>-->
                                     <div class='stat_card'>
                                         <div class='stat_container'>
                                             <div class='stat_title'><i class='fas fa-memory stat_icon'></i> Memory Usage</div>
@@ -299,7 +292,7 @@ String HTML = R"rawliteral(
                                     </div>
                                     <div class='stat_card'>
                                         <div class='stat_container'>
-                                            <div class='stat_title'><i class='fas fa-clouds stat_icon'></i> Altitude (±1 hPa or 3.3 ft)</div>
+                                            <div class='stat_title'><i class='fas fa-mountains stat_icon'></i> Altitude (±1 hPa or 3.3 ft)</div>
                                             <div class='stat_content' id='altitude'>Loading...</div>
                                             <div class='stat_content' style='font-size: 16px; margin-top: -10px;' id='pressure'>Loading...</div>
                                         </div>
@@ -407,15 +400,6 @@ String HTML = R"rawliteral(
         xhttp.open('GET', '/uptime', true);
         xhttp.send();
 
-        /*var xhttp = new XMLHttpRequest();
-        xhttp.onreadystatechange = function () {
-            if (this.readyState == 4 && this.status == 200) {
-                document.getElementById('cpu_usage').innerHTML = this.responseText;
-            }
-        };
-        xhttp.open('GET', '/cpu_usage', true);
-        xhttp.send();*/
-
         var xhttp = new XMLHttpRequest();
         xhttp.onreadystatechange = function () {
             if (this.readyState == 4 && this.status == 200) {
@@ -489,17 +473,6 @@ String HTML = R"rawliteral(
             xhttp.open('GET', '/uptime', true);
             xhttp.send();
         }, 60000);
-
-        /*setInterval(function () {
-            var xhttp = new XMLHttpRequest();
-            xhttp.onreadystatechange = function () {
-                if (this.readyState == 4 && this.status == 200) {
-                    document.getElementById('cpu_usage').innerHTML = this.responseText;
-                }
-            };
-            xhttp.open('GET', '/cpu_usage', true);
-            xhttp.send();
-        }, 60000);*/
 
         setInterval(function () {
             var xhttp = new XMLHttpRequest();
@@ -638,12 +611,6 @@ void setup() {
     request->send(200, "text/html", uptime_formatter::getUptime());
 
   });
-
-  //server.on("/cpu_usage", HTTP_GET, [](AsyncWebServerRequest *request) {   // TODO: CPU usage
-
-    //request->send(200, "text/html", cpu_usage);
-
-  //});
 
   server.on("/memory_usage", HTTP_GET, [](AsyncWebServerRequest *request) { // Memory usage
 
