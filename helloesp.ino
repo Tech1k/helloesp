@@ -281,10 +281,36 @@ String HTML = R"rawliteral(
         <br />
 
         <center>
-            <div style='max-width: 512px;'>
-                <img style='max-width: 100%; border-radius: 0.5rem; overflow: hidden; box-shadow: 0 0.2rem 0.5rem rgba(0, 0, 0, 0.05);' src='/esp8266-webserver.jpg' />
-                <p>A photo of the ESP8266 running this website, taken on 6/27/2022.</p>
+            <p class='is-size-6' style='font-size: 24px; font-weight: 700; margin-bottom: 5px;'><i class='icon far fa-images'></i> Photos</p>
+            <div id='carouselExampleCaptions' class='carousel slide' data-bs-ride='carousel' style='max-width: 512px; border-radius: 0.5rem; overflow: hidden; box-shadow: 0 0.2rem 0.5rem rgba(0, 0, 0, 0.05);'>
+                <div class='carousel-indicators'>
+                    <button type='button' data-bs-target='#carouselExampleCaptions' data-bs-slide-to='0' class='active' aria-current='true' aria-label='Slide 1'></button>
+                    <button type='button' data-bs-target='#carouselExampleCaptions' data-bs-slide-to='1' aria-label='Slide 2'></button>
+                </div>
+                <div class='carousel-inner'>
+                    <div class='carousel-item active'>
+                        <img src='/esp32-webserver.jpg' class='d-block w-100' alt='ESP32 Webserver' style='max-width: 512px; height: 280px;'>
+                        <div class='carousel-caption d-none d-md-block'>
+                            <p style='font-size: 16px; color: black;'>The ESP32 that is hosting this website, taken on 7/5/2022.</p>
+                        </div>
+                    </div>
+                    <div class='carousel-item'>
+                        <img src='/esp8266-webserver.jpg' class='d-block w-100' alt='ESP8266 Webserver' style='max-width: 512px; height: 280px;'>
+                        <div class='carousel-caption '>
+                            <p style='font-size: 16px; color: white;'>The ESP8266 that once hosted this website, taken on 6/27/2022.</p>
+                        </div>
+                    </div>
+                </div>
+                <button class='carousel-control-prev' type='button' data-bs-target='#carouselExampleCaptions' data-bs-slide='prev'>
+                <span class='carousel-control-prev-icon' aria-hidden='true'></span>
+                <span class='visually-hidden'>Previous</span>
+                </button>
+                <button class='carousel-control-next' type='button' data-bs-target='#carouselExampleCaptions' data-bs-slide='next'>
+                <span class='carousel-control-next-icon' aria-hidden='true'></span>
+                <span class='visually-hidden'>Next</span>
+                </button>
             </div>
+            <br/>
 
             <p class='is-size-6' style='font-size: 24px; font-weight: 700; margin-bottom: 5px;'><i class='icon far fa-newspaper'></i> Updates</p>
             <div style='height: 256px; max-width: 512px; overflow-x: hidden; overflow-y: auto;' class='updates_container'>
@@ -404,6 +430,7 @@ String HTML = R"rawliteral(
             xhttp.send();
         }, 60000);
     </script>
+    <script src='https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js' integrity='sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM' crossorigin='anonymous'></script>
 </html>
 )rawliteral";
 
@@ -522,6 +549,9 @@ void setup() {
   // Images
   server.on("/og-banner.png", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(SPIFFS, "/og-banner.png", "image/png");
+  });
+  server.on("/esp32-webserver.jpg", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(SPIFFS, "/esp32-webserver.jpg", "image/jpg");
   });
   server.on("/esp8266-webserver.jpg", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(SPIFFS, "/esp8266-webserver.jpg", "image/jpg");
