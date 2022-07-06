@@ -299,7 +299,7 @@ String HTML = R"rawliteral(
                                     </div>
                                     <div class='stat_card'>
                                         <div class='stat_container'>
-                                            <div class='stat_title'><i class='fas fa-tint stat_icon'></i> Humidity (±3%)</div>
+                                            <div class='stat_title'><i class='fas fa-humidity stat_icon'></i> Humidity (±3%)</div>
                                             <div class='stat_content' id='humidity'>Loading...</div>
                                         </div>
                                     </div>
@@ -345,6 +345,11 @@ String HTML = R"rawliteral(
             <br/>
             <p class='is-size-6' style='font-size: 24px; font-weight: 700; margin-bottom: 5px;'><i class='icon far fa-newspaper'></i> Updates</p>
             <div style='height: 256px; max-width: 512px; overflow-x: hidden; overflow-y: auto;' class='updates_container'>
+                <div class='updates_content' align='left'>
+                    <strong>7/6/2022 - </strong>
+                    I have added a chat box on the site via Chatbro and an image of the ESP32 with the BME280 sensor.
+                </div>
+
                 <div class='updates_content' align='left'>
                     <strong>7/5/2022 - </strong>
                     All images on this website are now hosted on the ESP32 and I have migrated to ESPAsyncWebServer!
