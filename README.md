@@ -2,7 +2,7 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Donate](https://img.shields.io/badge/Support%20me-Donate-blue)](https://kk.dev/donate)
 
-<img src="https://github.com/Tech1k/helloesp/blob/master/images/esp8266-webserver.jpg" alt="ESP8266 Webserver" max-width="100%"/>
+<img src="https://github.com/Tech1k/helloesp/blob/master/images/esp32-webserver.jpg" alt="ESP32 Webserver" max-width="100%"/>
 
 A website hosted on an ESP8266.
 
