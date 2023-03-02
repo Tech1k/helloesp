@@ -40,7 +40,7 @@ String HTML = R"rawliteral(
         <meta charset='UTF-8' />
         <meta name='viewport' content='width=device-width, initial-scale=1' />
         <link rel='stylesheet' href='https://pro.fontawesome.com/releases/v5.10.0/css/all.css' integrity='sha384-AYmEC3Yw5cVb3ZcuHtOA93w35dYTsvhLPVnYs9eStHfGJvOvKxVfELGroGkvsg+p' crossorigin='anonymous' />
-        <link href='https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css' rel='stylesheet' integrity='sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC' crossorigin='anonymous' />
+        <link href='https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css' rel='stylesheet' integrity='sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC' crossorigin='anonymous'>
         <link href='https://fonts.googleapis.com/css2?family=Cabin+Condensed:wght@600;700&display=swap' rel='stylesheet' />
         <title>HelloESP - Hosted on an ESP32</title>
         <meta name='description' content='HelloESP is a website that is hosted on an ESP32 to demonstrate what you can do with an ESP32.' />
@@ -54,11 +54,11 @@ String HTML = R"rawliteral(
         <meta name='twitter:card' content='summary_large_image' />
         <meta name='twitter:title' content='HelloESP' />
         <meta name='twitter:description' content='HelloESP is a website that is hosted on an ESP32 to demonstrate what you can do with an ESP32.' />
-        <meta name='twitter:image' content='https://helloesp.com/og-banner.png' />
+        <meta name='twitter:image' content='https://helloesp.com/helloesp-og-banner.png' />
         <meta name='twitter:site' content='@kristianjkramer' />
         <meta name='twitter:creator' content='@kristianjkramer' />
 
-        <meta property='og:image' content='https://helloesp.com/og-banner.png' />
+        <meta property='og:image' content='https://helloesp.com/helloesp-og-banner.png' />
         <meta property='og:image:width' content='955' />
         <meta property='og:image:height' content='500' />
         <meta property='og:description' content='HelloESP is a website that is hosted on an ESP32 to demonstrate what you can do with an ESP32.' />
@@ -231,9 +231,6 @@ String HTML = R"rawliteral(
                 padding-bottom: 15px;
             }
         </style>
-
-        <!-- Chatbro chat box -->
-        <script id="chatBroEmbedCode">function ChatbroLoader(chats,async){async=!1!==async;var params={embedChatsParameters:chats instanceof Array?chats:[chats],lang:navigator.language||navigator.userLanguage,needLoadCode:'undefined'==typeof Chatbro,embedParamsVersion:localStorage.embedParamsVersion,chatbroScriptVersion:localStorage.chatbroScriptVersion},xhr=new XMLHttpRequest;xhr.withCredentials=!0,xhr.onload=function(){eval(xhr.responseText)},xhr.onerror=function(){console.error('Chatbro loading error')},xhr.open('GET','//www.chatbro.com/embed.js?'+btoa(unescape(encodeURIComponent(JSON.stringify(params)))),async),xhr.send()}ChatbroLoader({encodedChatId: '68VRf'});</script>
     </head>
     <body>
         <div class='HMP'>
@@ -243,8 +240,8 @@ String HTML = R"rawliteral(
             <br />
             <blockquote class='box'>
                 <p class='lead'>
-                    This site is currently hosted on an ESP32 (used to be hosted on an ESP8266) with more things coming to this website soon!<br />
-                    I am currently working on adding chip stats such as uptime and cpu usage and more, checkout the <a href='https://github.com/Tech1k/helloesp' target='_blank'>GitHub repo</a> for the code and feel free to contribute!
+                    This website is hosted on an ESP32 and used to be hosted on an ESP8266 to demonstrate what you can do with them!<br/>
+                    Checkout the <a href='https://github.com/Tech1k/helloesp' target='_blank'>GitHub repo</a> for the code and feel free to contribute!
                 </p>
             </blockquote>
 
@@ -316,8 +313,18 @@ String HTML = R"rawliteral(
             <p class='is-size-6' style='font-size: 24px; font-weight: 700; margin-bottom: 5px;'><i class='icon far fa-newspaper'></i> Updates</p>
             <div style='height: 256px; max-width: 512px; overflow-x: hidden; overflow-y: auto;' class='updates_container'>
                 <div class='updates_content' align='left'>
+                    <strong>2/16/2023 - </strong>
+                    Checkout my other project <a href='https://hellopico.net'>HelloPico</a> which is a similar website hosted on a Raspberry Pi Pico W!
+                </div>
+
+                <div class='updates_content' align='left'>
+                    <strong>1/30/2023 - </strong>
+                    I have published the final version of the site (I might add more stuff later), I hope you all enjoy this project!
+                </div>
+
+                <div class='updates_content' align='left'>
                     <strong>7/6/2022 - </strong>
-                    I have added a chat box on the site via Chatbro and an image of the ESP32 with the BME280 sensor.
+                    I have added an image of the ESP32 with the BME280 sensor.
                 </div>
 
                 <div class='updates_content' align='left'>
@@ -337,7 +344,7 @@ String HTML = R"rawliteral(
 
                 <div class='updates_content' align='left'>
                     <strong>6/29/2022 - </strong>
-                    I have migrated the website over to an ESP32 for a performance boost and to add things such as a BMP388 for temperature, pressure and altitude readings when it arrives!
+                    I have migrated the website over to an ESP32 for a performance boost and to add things such as a BME280 for temperature, pressure and altitude readings when it arrives!
                 </div>
 
                 <div class='updates_content' align='left'>
@@ -352,7 +359,6 @@ String HTML = R"rawliteral(
             </div>
         </center>
         <br/>
-
         <footer id='contact' class='contact-section'>
             <div class='contact-section-header'>
                 <p class='h5'>Made with <i class='fas fa-heart'></i> by <a href='https://kk.dev' target='_blank' class='author_link'>Kristian</a></p>
@@ -388,7 +394,7 @@ String HTML = R"rawliteral(
         var xhttp = new XMLHttpRequest();
         xhttp.onreadystatechange = function () {
             if (this.readyState == 4 && this.status == 200) {
-                document.getElementById('visitors').innerHTML = 'Visitors: ' + this.responseText;
+                document.getElementById('visitors').innerHTML = this.responseText;
             }
         };
         xhttp.open('GET', '/visitors', true);
