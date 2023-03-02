@@ -23,6 +23,8 @@
 #include "Wire.h"
 #include "Adafruit_Sensor.h"
 #include "Adafruit_BME280.h"
+#include "Adafruit_GFX.h"
+#include "Adafruit_SSD1306.h"
 
 #ifdef ESP32
   #include "WiFi.h"
@@ -40,6 +42,7 @@ const char* password = "WIFI_PWD";
 #define SEALEVELPRESSURE_HPA (1013.25)
 
 Adafruit_BME280 bme;
+Adafruit_SSD1306 display = Adafruit_SSD1306(128, 32, &Wire);
 
 float temperature, humidity, pressure, altitude;
 
@@ -561,6 +564,16 @@ void setup() {
   Serial.begin(115200);
   WiFi.begin(ssid, password);
 
+
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  display.display();
+  delay(100);
+  display.clearDisplay();
+  display.display();
+  display.setTextSize(1.2);
+  display.setTextColor(WHITE);
+
+
   bme.begin(0x76);
 
   while (WiFi.status() != WL_CONNECTED) {
@@ -727,5 +740,15 @@ void setup() {
 }
 
 void loop() {
+
+  display.setCursor(0,0);
+  display.clearDisplay();
+  temperature = bme.readTemperature() * 9/5 + 32;
+  display.println("HelloESP.com");
+  display.print("Temperature: "); display.print(String(temperature, 0)); display.println(" *F");
+  display.print("Pressure: "); display.print(bme.readPressure() / 100.0F); display.println(" hPa");
+  display.print("Humidity: "); display.print(bme.readHumidity()); display.println("%");
+  display.display();
+  delay(5000);
 
 }
