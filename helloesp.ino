@@ -318,10 +318,17 @@ String HTML = R"rawliteral(
                 <div class='carousel-indicators'>
                     <button type='button' data-bs-target='#carouselExampleCaptions' data-bs-slide-to='0' class='active' aria-current='true' aria-label='Slide 1'></button>
                     <button type='button' data-bs-target='#carouselExampleCaptions' data-bs-slide-to='1' aria-label='Slide 2'></button>
+                    <button type='button' data-bs-target='#carouselExampleCaptions' data-bs-slide-to='2' aria-label='Slide 3'></button>
                 </div>
                 <div class='carousel-inner'>
                     <div class='carousel-item active'>
                         <img src='/esp32-webserver.jpg' class='d-block w-100' alt='ESP32 Webserver' style='max-width: 512px; height: 280px;'>
+                        <div class='carousel-caption d-none d-md-block'>
+                            <p style='font-size: 16px; color: white;'>The ESP32 that is hosting this website, taken on 3/1/2023.</p>
+                        </div>
+                    </div>
+                    <div class='carousel-item'>
+                        <img src='/esp32-webserver-bme280.jpg' class='d-block w-100' alt='ESP32 Webserver' style='max-width: 512px; height: 280px;'>
                         <div class='carousel-caption d-none d-md-block'>
                             <p style='font-size: 16px; color: black;'>The ESP32 that is hosting this website, taken on 7/5/2022.</p>
                         </div>
