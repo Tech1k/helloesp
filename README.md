@@ -12,17 +12,6 @@ A website hosted on an ESP32.
 - You have to upload the ``visitors.txt`` file located under ``data/visitors.txt`` for the visitor counter to work. I used PlatformIO to achieve this.
 
 
-## TODO
-- [x] Add identifiers for the ESP32 to allow cross-compatibility
-- [x] Add uptime
-- [ ] Add CPU usage
-- [x] Add memory usage
-- [x] Add visitor counter
-- [x] Make visitor counter locally hosted on the ESP either via a txt file or sqlite db stored in the onboard flash memory
-- [ ] Format uptime better - only display if number is above 0 (e.g. if 0 days, hide days)
-- [x] Add BME280 for temperature, pressure and altitude
-
-
 ## Branches
 ``master`` - Master branch compatible with the ESP32/8266 without any external hardware
 

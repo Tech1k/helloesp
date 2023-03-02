@@ -240,9 +240,6 @@ String HTML = R"rawliteral(
                 padding-bottom: 15px;
             }
         </style>
-
-        <!-- Chatbro chat box -->
-        <script id="chatBroEmbedCode">function ChatbroLoader(chats,async){async=!1!==async;var params={embedChatsParameters:chats instanceof Array?chats:[chats],lang:navigator.language||navigator.userLanguage,needLoadCode:'undefined'==typeof Chatbro,embedParamsVersion:localStorage.embedParamsVersion,chatbroScriptVersion:localStorage.chatbroScriptVersion},xhr=new XMLHttpRequest;xhr.withCredentials=!0,xhr.onload=function(){eval(xhr.responseText)},xhr.onerror=function(){console.error('Chatbro loading error')},xhr.open('GET','//www.chatbro.com/embed.js?'+btoa(unescape(encodeURIComponent(JSON.stringify(params)))),async),xhr.send()}ChatbroLoader({encodedChatId: '68VRf'});</script>
     </head>
     <body>
         <div class='HMP'>
@@ -252,8 +249,8 @@ String HTML = R"rawliteral(
             <br />
             <blockquote class='box'>
                 <p class='lead'>
-                    This site is currently hosted on an ESP32 (used to be hosted on an ESP8266) with more things coming to this website soon!<br />
-                    I am currently working on adding chip stats such as uptime and cpu usage and more, checkout the <a href='https://github.com/Tech1k/helloesp' target='_blank'>GitHub repo</a> for the code and feel free to contribute!
+                    This website is hosted on an ESP32 and used to be hosted on an ESP8266 to demonstrate what you can do with them!<br/>
+                    Checkout the <a href='https://github.com/Tech1k/helloesp' target='_blank'>GitHub repo</a> for the code and feel free to contribute!
                 </p>
             </blockquote>
 
@@ -346,8 +343,18 @@ String HTML = R"rawliteral(
             <p class='is-size-6' style='font-size: 24px; font-weight: 700; margin-bottom: 5px;'><i class='icon far fa-newspaper'></i> Updates</p>
             <div style='height: 256px; max-width: 512px; overflow-x: hidden; overflow-y: auto;' class='updates_container'>
                 <div class='updates_content' align='left'>
+                    <strong>2/16/2023 - </strong>
+                    Checkout my other project <a href='https://hellopico.net'>HelloPico</a> which is a similar website hosted on a Raspberry Pi Pico W!
+                </div>
+
+                <div class='updates_content' align='left'>
+                    <strong>1/30/2023 - </strong>
+                    I have published the final version of the site (I might add more stuff later), I hope you all enjoy this project!
+                </div>
+
+                <div class='updates_content' align='left'>
                     <strong>7/6/2022 - </strong>
-                    I have added a chat box on the site via Chatbro and an image of the ESP32 with the BME280 sensor.
+                    I have added an image of the ESP32 with the BME280 sensor.
                 </div>
 
                 <div class='updates_content' align='left'>
