@@ -727,7 +727,7 @@ void setup() {
     request->send(SPIFFS, "/esp32-webserver.jpg", "image/jpg");
   });
   server.on("/esp32-webserver-bme280.jpg", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(SPIFFS, "/esp32-webserver.jpg", "image/jpg");
+    request->send(SPIFFS, "/esp32-webserver-bme280.jpg", "image/jpg");
   });
   server.on("/esp8266-webserver.jpg", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(SPIFFS, "/esp8266-webserver.jpg", "image/jpg");
