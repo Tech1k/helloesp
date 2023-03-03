@@ -17,7 +17,7 @@ A website hosted on an ESP32.
 
 ``bme280`` - Code for the ESP32 with the BME280 module for altitude and temperature readings
 
-``oled`` - Code for the ESP32 with the BME280 and OLED module for altitude and temperature readings and displaying them on and oled display
+``oled`` - Code for the ESP32 with the BME280 and OLED module for altitude and temperature readings and displaying them on an oled display
 
 
 ## External Libraries
