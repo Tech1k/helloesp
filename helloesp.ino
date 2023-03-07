@@ -648,7 +648,7 @@ void setup() {
 
   });
 
-  server.on("/visitors", HTTP_GET, [](AsyncWebServerRequest *request) { // Uptime
+  server.on("/visitors", HTTP_GET, [](AsyncWebServerRequest *request) { // Visitors
 
     if(!SPIFFS.begin(true)){
       Serial.println("An Error has occurred while mounting SPIFFS");
