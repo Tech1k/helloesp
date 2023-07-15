@@ -734,6 +734,11 @@ void setup() {
 
   server.begin();
   Serial.println("Server listening");
+
+  // Restart every 30 minutes
+  Serial.println("Restarting in 30 minutes");
+  delay(1800000);
+  ESP.restart();
 }
 
 void loop() {
