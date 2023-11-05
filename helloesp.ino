@@ -48,23 +48,7 @@ String HTML = R"rawliteral(
         <meta name='keywords' content='esp, esp32, esp8266, development, coding, programming' />
         <meta name='author' content='Kristian Kramer' />
         <meta name='theme-color' content='#2686e6' />
-        <link rel='canonical' href='https://helloesp.com' />
         <meta name='robots' content='index, follow' />
-
-        <meta name='twitter:card' content='summary_large_image' />
-        <meta name='twitter:title' content='HelloESP' />
-        <meta name='twitter:description' content='HelloESP is a website that is hosted on an ESP32 to demonstrate what you can do with an ESP32.' />
-        <meta name='twitter:image' content='https://helloesp.com/helloesp-og-banner.png' />
-        <meta name='twitter:site' content='@kristianjkramer' />
-        <meta name='twitter:creator' content='@kristianjkramer' />
-
-        <meta property='og:image' content='https://helloesp.com/helloesp-og-banner.png' />
-        <meta property='og:image:width' content='955' />
-        <meta property='og:image:height' content='500' />
-        <meta property='og:description' content='HelloESP is a website that is hosted on an ESP32 to demonstrate what you can do with an ESP32.' />
-        <meta property='og:title' content='HelloESP' />
-        <meta property='og:site_name' content='HelloESP' />
-        <meta property='og:url' content='https://helloesp.com/' />
 
         <style>
             body {
