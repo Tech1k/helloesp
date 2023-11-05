@@ -1,7 +1,7 @@
 /*
   helloesp.ino - Code for the ESP webserver
 
-  Copyright (C) 2022 Kristian Kramer. All rights reserved.
+  Copyright (C) 2022-2023 Kristian Kramer. All rights reserved.
 
   This program is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -60,23 +60,7 @@ String HTML = R"rawliteral(
         <meta name='keywords' content='esp, esp32, esp8266, development, coding, programming' />
         <meta name='author' content='Kristian Kramer' />
         <meta name='theme-color' content='#2686e6' />
-        <link rel='canonical' href='https://helloesp.com' />
         <meta name='robots' content='index, follow' />
-
-        <meta name='twitter:card' content='summary_large_image' />
-        <meta name='twitter:title' content='HelloESP' />
-        <meta name='twitter:description' content='HelloESP is a website that is hosted on an ESP32 to demonstrate what you can do with an ESP32.' />
-        <meta name='twitter:image' content='https://helloesp.com/helloesp-og-banner.png' />
-        <meta name='twitter:site' content='@kristianjkramer' />
-        <meta name='twitter:creator' content='@kristianjkramer' />
-
-        <meta property='og:image' content='https://helloesp.com/helloesp-og-banner.png' />
-        <meta property='og:image:width' content='955' />
-        <meta property='og:image:height' content='500' />
-        <meta property='og:description' content='HelloESP is a website that is hosted on an ESP32 to demonstrate what you can do with an ESP32.' />
-        <meta property='og:title' content='HelloESP' />
-        <meta property='og:site_name' content='HelloESP' />
-        <meta property='og:url' content='https://helloesp.com/' />
 
         <style>
             body {
@@ -754,7 +738,7 @@ void loop() {
   display.setCursor(0,0);
   display.clearDisplay();
   temperature = bme.readTemperature() * 9/5 + 32;
-  display.println("HelloESP.com");
+  display.println(WiFi.localIP());
   display.print("Temperature: "); display.print(String(temperature, 0)); display.println(" *F");
   display.print("Pressure: "); display.print(bme.readPressure() / 100.0F); display.println(" hPa");
   display.print("Humidity: "); display.print(bme.readHumidity()); display.println("%");
