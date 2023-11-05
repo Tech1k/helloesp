@@ -343,54 +343,54 @@
         </footer>
     </body>
     <script>
-        var xhttp = new XMLHttpRequest();
-        xhttp.onreadystatechange = function () {
-            if (this.readyState == 4 && this.status == 200) {
+        var xhttpUptime = new XMLHttpRequest();
+        xhttpUptime.onload = function () {
+            if (this.status === 200) {
                 document.getElementById('uptime').innerHTML = this.responseText;
             }
         };
-        xhttp.open('GET', '/uptime', true);
-        xhttp.send();
+        xhttpUptime.open('GET', '/uptime', true);
+        xhttpUptime.send();
 
-        var xhttp = new XMLHttpRequest();
-        xhttp.onreadystatechange = function () {
-            if (this.readyState == 4 && this.status == 200) {
+        var xhttpMemoryUsage = new XMLHttpRequest();
+        xhttpMemoryUsage.onload = function () {
+            if (this.status === 200) {
                 document.getElementById('memory_usage').innerHTML = this.responseText;
             }
         };
-        xhttp.open('GET', '/memory_usage', true);
-        xhttp.send();
+        xhttpMemoryUsage.open('GET', '/memory_usage', true);
+        xhttpMemoryUsage.send();
 
-        var xhttp = new XMLHttpRequest();
-        xhttp.onreadystatechange = function () {
-            if (this.readyState == 4 && this.status == 200) {
+        var xhttpVisitors = new XMLHttpRequest();
+        xhttpVisitors.onload = function () {
+            if (this.status === 200) {
                 document.getElementById('visitors').innerHTML = this.responseText;
             }
         };
-        xhttp.open('GET', '/visitors', true);
-        xhttp.send();
+        xhttpVisitors.open('GET', '/visitors', true);
+        xhttpVisitors.send();
 
         setInterval(function () {
-            var xhttp = new XMLHttpRequest();
-            xhttp.onreadystatechange = function () {
-                if (this.readyState == 4 && this.status == 200) {
+            var xhttpUptimeAR = new XMLHttpRequest();
+            xhttpUptimeAR.onload = function () {
+                if (this.status === 200) {
                     document.getElementById('uptime').innerHTML = this.responseText;
                 }
             };
-            xhttp.open('GET', '/uptime', true);
-            xhttp.send();
+            xhttpUptimeAR.open('GET', '/uptime', true);
+            xhttpUptimeAR.send();
         }, 60000);
 
         setInterval(function () {
-            var xhttp = new XMLHttpRequest();
-            xhttp.onreadystatechange = function () {
-                if (this.readyState == 4 && this.status == 200) {
+            var xhttpMemoryUsageAR = new XMLHttpRequest();
+            xhttpMemoryUsageAR.onload = function () {
+                if (this.status === 200) {
                     document.getElementById('memory_usage').innerHTML = this.responseText;
                 }
             };
-            xhttp.open('GET', '/memory_usage', true);
-            xhttp.send();
-        }, 60000);
+            xhttpMemoryUsageAR.open('GET', '/memory_usage', true);
+            xhttpMemoryUsageAR.send();
+        }, 59500);
     </script>
     <script src='https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js' integrity='sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM' crossorigin='anonymous'></script>
 </html>
