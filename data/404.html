@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>404 / HelloESP</title>
+    <meta name="robots" content="noindex">
+    <meta name="theme-color" content="#2686e6">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg: #f8f7f4;
+            --ink: #1a1a1a;
+            --mid: #888;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--ink);
+            font-family: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", monospace;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 24px;
+        }
+
+        h1 {
+            font-size: clamp(48px, 10vw, 80px);
+            font-weight: 400;
+            letter-spacing: -0.02em;
+            line-height: 1;
+            margin-bottom: 16px;
+        }
+
+        p {
+            font-size: 13px;
+            color: var(--mid);
+            line-height: 1.8;
+            margin-bottom: 32px;
+        }
+
+        a {
+            color: var(--ink);
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            text-underline-offset: 3px;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #111110;
+                --ink: #e8e6e1;
+                --mid: #666;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div>
+        <h1>404</h1>
+        <p>Nothing here, but the ESP32 is still running.</p>
+        <a href="/">Back to HelloESP</a>
+    </div>
+</body>
+</html>

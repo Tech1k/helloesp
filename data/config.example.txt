@@ -1,0 +1,23 @@
+# HelloESP Configuration
+# Field max lengths (characters): wifi_ssid=63, wifi_pass=63, admin_user=31,
+# admin_pass=63, worker_url=127, worker_key=127, device_key=127, timezone=47
+wifi_ssid=YOUR_SSID
+wifi_pass=YOUR_PASSWORD
+admin_user=admin
+admin_pass=CHANGE_ME
+
+# Cloudflare Worker relay (optional, leave blank to skip)
+worker_url=your-worker.workers.dev
+worker_key=your-secret-key
+
+# Optional: second secret for HMAC challenge-response on /_ws.
+# Generate with: openssl rand -hex 32
+# Also set matching HMAC_SECRET on the worker. If either side is blank, falls back to worker_key auth only.
+device_key=
+
+# Timezone (POSIX TZ format, default UTC). Examples:
+#   EST5EDT,M3.2.0,M11.1.0  (US Eastern)
+#   CST6CDT,M3.2.0,M11.1.0  (US Central)
+#   MST7MDT,M3.2.0,M11.1.0  (US Mountain)
+#   PST8PDT,M3.2.0,M11.1.0  (US Pacific)
+timezone=UTC0

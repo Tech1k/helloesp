@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Guestbook / HelloESP</title>
+    <meta name="description" content="Leave a message on a website hosted by a microcontroller.">
+    <meta name="author" content="Tech1k">
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#2686e6">
+    <meta property="og:title" content="Guestbook / HelloESP">
+    <meta property="og:site_name" content="HelloESP">
+    <meta property="og:description" content="Leave a message on a website hosted by a microcontroller.">
+    <meta property="og:image" content="https://helloesp.com/og-banner.jpg">
+    <meta property="og:image:type" content="image/jpeg">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="HelloESP: a website running on an ESP32">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://helloesp.com/guestbook">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Guestbook / HelloESP">
+    <meta name="twitter:description" content="Leave a message on a website hosted by a microcontroller.">
+    <meta name="twitter:image" content="https://helloesp.com/og-banner.jpg">
+    <meta name="twitter:image:alt" content="HelloESP: a website running on an ESP32">
+    <link rel="canonical" href="https://helloesp.com/guestbook">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <link rel="alternate" type="application/rss+xml" title="HelloESP Guestbook" href="/guestbook.rss">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
+          integrity="sha384-/o6I2CkkWC//PSjvWC/eYN7l3xM3tJm8ZzVkCOfp//W05QcE3mlGskpoHB6XqI+B"
+          crossorigin="anonymous" referrerpolicy="no-referrer">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg: #f8f7f4;
+            --ink: #1a1a1a;
+            --mid: #888;
+            --faint: #ccc;
+        }
+
+        html { font-size: 16px; }
+
+        body {
+            background: var(--bg);
+            color: var(--ink);
+            font-family: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", monospace;
+            min-height: 100vh;
+            display: grid;
+            grid-template-rows: 1fr auto;
+        }
+
+        a:focus-visible,
+        button:focus-visible,
+        input:focus-visible,
+        textarea:focus-visible {
+            outline: 2px solid var(--ink);
+            outline-offset: 2px;
+            border-radius: 2px;
+        }
+
+        main {
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 80px 24px 64px;
+            width: 100%;
+        }
+
+        .top-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            row-gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+        }
+        @media (max-width: 480px) {
+            .top-links { gap: 14px; font-size: 10px; }
+        }
+        .site-name {
+            font-size: 13px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--mid);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+        .site-name:hover { color: var(--ink); }
+        .top-links {
+            display: flex;
+            gap: 16px;
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+        .top-links a {
+            color: var(--mid);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+        .top-links a:hover { color: var(--ink); }
+
+        .site-name a:hover { color: var(--ink); }
+
+        h1 {
+            font-size: clamp(28px, 5vw, 42px);
+            font-weight: 400;
+            letter-spacing: -0.02em;
+            line-height: 1.1;
+            margin-bottom: 16px;
+        }
+
+        .desc {
+            font-size: 13px;
+            line-height: 1.8;
+            color: var(--mid);
+            margin-bottom: 48px;
+            max-width: 540px;
+        }
+
+        /* form */
+
+        .form-section { margin-bottom: 48px; }
+
+        .section-label {
+            font-size: 10px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--mid);
+            margin-bottom: 12px;
+        }
+
+        .form-card {
+            border: 1px solid var(--faint);
+            padding: 20px;
+        }
+
+        .form-field {
+            margin-bottom: 12px;
+        }
+
+        .form-field label {
+            display: block;
+            font-size: 10px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--mid);
+            margin-bottom: 4px;
+        }
+
+        .form-field input,
+        .form-field textarea {
+            width: 100%;
+            background: var(--bg);
+            border: 1px solid var(--faint);
+            color: var(--ink);
+            font-family: inherit;
+            font-size: 13px;
+            padding: 10px;
+            resize: vertical;
+        }
+
+        .form-field input:focus,
+        .form-field textarea:focus {
+            outline: none;
+            border-color: var(--mid);
+        }
+
+        .char-count {
+            font-size: 10px;
+            color: var(--mid);
+            text-align: right;
+            margin-top: 2px;
+        }
+
+        .btn {
+            background: var(--ink);
+            color: var(--bg);
+            border: none;
+            font-family: inherit;
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            padding: 10px 20px;
+            cursor: pointer;
+            transition: opacity 0.15s;
+        }
+
+        .btn:hover { opacity: 0.8; }
+        .btn:disabled { opacity: 0.4; cursor: default; }
+
+        .status {
+            font-size: 11px;
+            color: var(--mid);
+            margin-top: 10px;
+            min-height: 16px;
+        }
+
+        .status.ok { color: #27ae60; }
+        .status.err { color: #c0392b; }
+
+        /* entries */
+
+        .entries-section { margin-bottom: 48px; }
+
+        .entry {
+            border-top: 1px solid var(--faint);
+            padding: 16px 0;
+        }
+
+        .entry:last-child { border-bottom: 1px solid var(--faint); }
+
+        .entry-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 6px;
+        }
+
+        .entry-name {
+            font-size: 14px;
+            font-weight: 600;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .entry-country {
+            font-weight: 400;
+            font-size: 11px;
+            color: var(--mid);
+        }
+
+        .entry-meta {
+            font-size: 10px;
+            color: var(--mid);
+            display: flex;
+            gap: 8px;
+        }
+
+        .entry-message {
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--ink);
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .entry-empty {
+            font-size: 13px;
+            color: var(--mid);
+            padding: 20px 0;
+        }
+
+        /* footer */
+
+        footer {
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 24px;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px solid var(--faint);
+            font-size: 11px;
+            color: var(--mid);
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        footer a {
+            color: var(--mid);
+            text-decoration: none;
+            letter-spacing: 0.08em;
+            transition: color 0.15s;
+        }
+
+        footer a:hover { color: var(--ink); }
+
+        .footer-links {
+            display: flex;
+            gap: 20px;
+            list-style: none;
+        }
+
+        .served {
+            color: var(--mid);
+            opacity: 0.7;
+        }
+        .served:not(:empty)::before {
+            content: ' \2022 ';
+            margin: 0 2px;
+        }
+        @media (max-width: 480px) {
+            .served { display: none; }
+        }
+
+        /* dark mode */
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #111110;
+                --ink: #e8e6e1;
+                --mid: #666;
+                --faint: #2a2a28;
+            }
+
+            .form-card { background: #1a1918; }
+            .form-field input,
+            .form-field textarea { background: #111110; }
+        }
+
+        @media (max-width: 480px) {
+            .entry-header { flex-direction: column; gap: 4px; }
+        }
+    </style>
+</head>
+<body>
+
+<main>
+    <nav class="top-nav" aria-label="Primary">
+        <a class="site-name" href="/"><img src="/favicon.png" alt="" style="height:14px;vertical-align:-1px;margin-right:4px;">HelloESP</a>
+        <ul class="top-links">
+            <li><a href="/history">History</a></li>
+            <li><a href="/console">Console</a></li>
+        </ul>
+    </nav>
+
+    <h1>Guestbook</h1>
+
+    <p class="desc">
+        You visited a website running on a microcontroller.
+        Leave your mark. Messages appear after review.
+    </p>
+
+    <!-- form -->
+    <div class="form-section">
+        <div class="section-label"><i class="fa-solid fa-pen"></i> Sign the guestbook</div>
+        <div class="form-card">
+            <div class="form-field">
+                <label for="gb-name">Name</label>
+                <input type="text" id="gb-name" maxlength="32" placeholder="Your name">
+                <div class="char-count"><span id="name-count">0</span>/32</div>
+            </div>
+            <div class="form-field">
+                <label for="gb-message">Message</label>
+                <textarea id="gb-message" rows="3" maxlength="200" placeholder="Say something nice to the microcontroller"></textarea>
+                <div class="char-count"><span id="msg-count">0</span>/200</div>
+            </div>
+            <button class="btn" id="gb-submit" onclick="submitEntry()">Submit</button>
+            <div class="status" id="gb-status"></div>
+            <div style="font-size:11px;color:var(--mid);margin-top:14px;line-height:1.6;">
+                Keep it civil. Spam, harassment, and advertising won't be approved.
+            </div>
+        </div>
+    </div>
+
+    <!-- entries -->
+    <div class="entries-section">
+        <div class="section-label"><i class="fa-solid fa-comment-dots"></i> Messages</div>
+        <div id="entries">
+            <div class="entry-empty">Loading...</div>
+        </div>
+        <button class="btn" id="load-more" style="display:none;margin-top:16px;" onclick="loadMore()">Load more</button>
+    </div>
+</main>
+
+<footer>
+    <span>Made by <a href="https://tech1k.com" target="_blank" rel="noopener">Tech1k</a><span class="served" id="served-time"></span></span>
+    <ul class="footer-links">
+        <li><a href="/"><i class="fa-solid fa-house"></i> Home</a></li>
+        <li><a href="/history"><i class="fa-solid fa-clock-rotate-left"></i> History</a></li>
+        <li><a href="/console"><i class="fa-solid fa-terminal"></i> Console</a></li>
+        <li><a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener"><i class="fa-brands fa-github"></i> GitHub</a></li>
+    </ul>
+</footer>
+
+<script>
+    // char counters
+    document.getElementById('gb-name').addEventListener('input', function() {
+        document.getElementById('name-count').textContent = this.value.length;
+    });
+    document.getElementById('gb-message').addEventListener('input', function() {
+        document.getElementById('msg-count').textContent = this.value.length;
+    });
+
+    function submitEntry() {
+        var name = document.getElementById('gb-name').value.trim();
+        var message = document.getElementById('gb-message').value.trim();
+        var status = document.getElementById('gb-status');
+        var btn = document.getElementById('gb-submit');
+
+        if (!name || !message) {
+            status.textContent = 'Name and message are required.';
+            status.className = 'status err';
+            return;
+        }
+
+        btn.disabled = true;
+        status.textContent = 'Submitting...';
+        status.className = 'status';
+
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status === 200) {
+                status.textContent = this.responseText;
+                status.className = 'status ok';
+                document.getElementById('gb-name').value = '';
+                document.getElementById('gb-message').value = '';
+                document.getElementById('name-count').textContent = '0';
+                document.getElementById('msg-count').textContent = '0';
+            } else if (this.status === 429) {
+                status.textContent = this.responseText;
+                status.className = 'status err';
+            } else {
+                status.textContent = 'Something went wrong.';
+                status.className = 'status err';
+            }
+            btn.disabled = false;
+        };
+        xhr.onerror = function() {
+            status.textContent = 'Network error. Check your connection and try again.';
+            status.className = 'status err';
+            btn.disabled = false;
+        };
+        xhr.open('POST', '/guestbook/submit', true);
+        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+        xhr.send('name=' + encodeURIComponent(name) + '&message=' + encodeURIComponent(message));
+    }
+
+    function esc(str) {
+        var d = document.createElement('div');
+        d.textContent = str == null ? '' : String(str);
+        return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function formatDate(iso) {
+        try {
+            var d = new Date(iso);
+            return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+        } catch(e) { return iso; }
+    }
+
+    var currentPage = 1;
+
+    function renderEntries(entries, append) {
+        var el = document.getElementById('entries');
+        var html = append ? el.innerHTML : '';
+        if (entries.length === 0 && !append) {
+            el.innerHTML = '<div class="entry-empty">No messages yet. Be the first!</div>';
+            return;
+        }
+        for (var i = 0; i < entries.length; i++) {
+            var e = entries[i];
+            html += '<div class="entry">';
+            html += '<div class="entry-header">';
+            html += '<span class="entry-name">' + esc(e.name);
+            if (e.country && e.country !== '??') html += ' <span class="entry-country">' + esc(e.country) + '</span>';
+            html += '</span>';
+            html += '<span class="entry-meta">' + formatDate(e.time) + '</span>';
+            html += '</div>';
+            html += '<div class="entry-message">' + esc(e.message) + '</div>';
+            html += '</div>';
+        }
+        el.innerHTML = html;
+    }
+
+    function loadEntries(page, append) {
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            var el = document.getElementById('entries');
+            var btn = document.getElementById('load-more');
+            if (this.status !== 200) {
+                if (!append) el.innerHTML = '<div class="entry-empty">Failed to load messages.</div>';
+                return;
+            }
+            try {
+                var data = JSON.parse(this.responseText);
+                renderEntries(data.entries, append);
+                btn.style.display = data.hasMore ? 'block' : 'none';
+            } catch(e) {
+                if (!append) el.innerHTML = '<div class="entry-empty">Failed to load messages.</div>';
+            }
+        };
+        xhr.open('GET', '/guestbook/entries?page=' + page, true);
+        xhr.send();
+    }
+
+    function loadMore() {
+        currentPage++;
+        loadEntries(currentPage, true);
+    }
+
+    loadEntries(1, false);
+
+    // smooth cross-page navigation when supported
+    if (document.startViewTransition) {
+        document.addEventListener('click', function(e) {
+            var a = e.target.closest('a[href^="/"]');
+            if (!a) return;
+            if (a.target || a.hasAttribute('download')) return;
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            var href = a.getAttribute('href');
+            if (!href || href.startsWith('//') || href.startsWith('#')) return;
+            e.preventDefault();
+            document.startViewTransition(function() { location.href = href; });
+        });
+    }
+
+    window.addEventListener('load', function() {
+        try {
+            var nav = performance.getEntriesByType('navigation')[0];
+            if (!nav) return;
+            var ms = Math.round(nav.responseEnd - nav.requestStart);
+            if (ms < 0 || ms > 60000) return;
+            var el = document.getElementById('served-time');
+            if (el) el.textContent = ms + ' ms';
+        } catch (e) {}
+    });
+</script>
+
+</body>
+</html>

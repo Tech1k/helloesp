@@ -1,0 +1,1741 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HelloESP Admin</title>
+    <meta name="robots" content="noindex, nofollow">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
+            integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG"
+            crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg: #f8f7f4;
+            --ink: #1a1a1a;
+            --mid: #888;
+            --faint: #ccc;
+            --danger: #c0392b;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--ink);
+            font-family: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", monospace;
+            min-height: 100vh;
+            padding: 40px 24px;
+        }
+
+        a:focus-visible,
+        button:focus-visible,
+        input:focus-visible,
+        textarea:focus-visible,
+        select:focus-visible {
+            outline: 2px solid var(--ink);
+            outline-offset: 2px;
+            border-radius: 2px;
+        }
+
+        .container {
+            max-width: 640px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            font-size: 24px;
+            font-weight: 400;
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            font-size: 11px;
+            color: var(--mid);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-bottom: 40px;
+        }
+
+        .section {
+            margin-bottom: 40px;
+        }
+
+        .section-title {
+            font-size: 10px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--mid);
+            margin-bottom: 12px;
+        }
+
+        .card {
+            border: 1px solid var(--faint);
+            padding: 20px;
+        }
+
+        .card + .card {
+            margin-top: 12px;
+        }
+
+        .btn {
+            background: var(--ink);
+            color: var(--bg);
+            border: none;
+            font-family: inherit;
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            padding: 10px 20px;
+            cursor: pointer;
+            transition: opacity 0.15s;
+        }
+
+        .btn:hover { opacity: 0.8; }
+        .btn:disabled { opacity: 0.4; cursor: default; }
+
+        .btn-danger {
+            background: var(--danger);
+        }
+
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 10px;
+        }
+
+        .log-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 10px;
+        }
+        .log-table th, .log-table td {
+            padding: 4px 6px;
+            border-bottom: 1px solid var(--faint);
+            text-align: left;
+            white-space: nowrap;
+        }
+        .log-table th {
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--mid);
+            position: sticky;
+            top: 0;
+            background: var(--bg);
+        }
+
+        input[type="file"] {
+            font-family: inherit;
+            font-size: 12px;
+            color: var(--mid);
+            margin-bottom: 12px;
+            display: block;
+        }
+
+        .status {
+            font-size: 11px;
+            color: var(--mid);
+            margin-top: 10px;
+            min-height: 16px;
+        }
+
+        .status.ok { color: #27ae60; }
+        .status.err { color: var(--danger); }
+
+        .file-list {
+            list-style: none;
+        }
+
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--faint);
+            font-size: 12px;
+        }
+
+        .file-item:last-child { border-bottom: none; }
+
+        .file-name {
+            color: var(--ink);
+            cursor: pointer;
+        }
+
+        .file-name.dir { font-weight: 600; }
+        .file-name.dir::before { content: "/ "; color: var(--mid); }
+
+        .file-size {
+            color: var(--mid);
+            font-size: 11px;
+            margin-right: 12px;
+        }
+
+        .file-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .breadcrumb {
+            font-size: 11px;
+            color: var(--mid);
+            margin-bottom: 12px;
+        }
+
+        .breadcrumb a {
+            color: var(--ink);
+            text-decoration: none;
+        }
+
+        .breadcrumb a:hover { text-decoration: underline; }
+
+        .progress {
+            width: 100%;
+            height: 4px;
+            background: var(--faint);
+            margin-top: 8px;
+            display: none;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: var(--ink);
+            width: 0%;
+            transition: width 0.2s;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0;
+        }
+
+        .info-item {
+            padding: 8px 0;
+            border-bottom: 1px solid var(--faint);
+            font-size: 11px;
+        }
+
+        .info-item:nth-last-child(-n+2) { border-bottom: none; }
+
+        .info-label {
+            color: var(--mid);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-size: 9px;
+            margin-bottom: 2px;
+        }
+
+        .info-value {
+            color: var(--ink);
+        }
+
+        .gb-entry {
+            padding: 10px 0;
+            border-bottom: 1px solid var(--faint);
+            font-size: 12px;
+        }
+
+        .gb-entry:last-child { border-bottom: none; }
+
+        .gb-meta {
+            font-size: 10px;
+            color: var(--mid);
+            margin-bottom: 4px;
+        }
+
+        .gb-message {
+            margin-bottom: 8px;
+            line-height: 1.5;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .gb-name { font-weight: 600; }
+
+        .gb-actions { display: flex; gap: 6px; }
+
+        .btn-approve {
+            background: #27ae60;
+            color: #fff;
+        }
+
+        @media (max-width: 480px) {
+            .info-grid { grid-template-columns: 1fr; }
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #111110;
+                --ink: #e8e6e1;
+                --mid: #666;
+                --faint: #2a2a28;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Admin</h1>
+    <div class="subtitle" id="admin-version">HelloESP Admin</div>
+
+    <!-- device info -->
+    <div class="section">
+        <div class="section-title">Device Info</div>
+        <div class="card">
+            <div class="info-grid" id="device-info">
+                <div class="status">Loading...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- device health -->
+    <div class="section">
+        <div class="section-title">Device Health</div>
+        <div class="card">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+                <div>
+                    <div class="info-label">Free Heap &middot; last hour</div>
+                    <svg id="heap-spark" width="100%" height="42" style="display:block;margin:6px 0 4px;" preserveAspectRatio="none"></svg>
+                    <div class="info-value" id="heap-current" style="font-size:13px;">...</div>
+                </div>
+                <div>
+                    <div class="info-label">RSSI &middot; last hour</div>
+                    <svg id="rssi-spark" width="100%" height="42" style="display:block;margin:6px 0 4px;" preserveAspectRatio="none"></svg>
+                    <div class="info-value" id="rssi-current" style="font-size:13px;">...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- worker link -->
+    <div class="section">
+        <div class="section-title">Worker Link</div>
+        <div class="card" id="worker-status"><div class="status">Loading...</div></div>
+    </div>
+
+    <!-- guestbook -->
+    <div class="section">
+        <div class="section-title">Guestbook Moderation</div>
+        <div class="card">
+            <div id="guestbook-entries"><div class="status">Loading...</div></div>
+            <button class="btn btn-small" id="gb-load-more" style="display:none;margin-top:12px;" onclick="loadMoreGuestbook()">Load more</button>
+        </div>
+    </div>
+
+    <!-- log viewer -->
+    <div class="section">
+        <div class="section-title">Today's Sensor Log</div>
+        <div class="card">
+            <button class="btn btn-small" id="log-viewer-btn" onclick="loadLogViewer()">Load</button>
+            <div class="status" id="log-viewer-status"></div>
+            <div id="log-viewer-wrap" style="overflow-x:auto;margin-top:12px;display:none;"></div>
+        </div>
+    </div>
+
+    <!-- error log -->
+    <div class="section">
+        <div class="section-title">Error Log</div>
+        <div class="card">
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+                <button class="btn btn-small" onclick="loadErrorLog()">Load tail</button>
+                <a class="btn btn-small" href="/admin/errors.log" download="errors.log">Download current</a>
+                <a class="btn btn-small" href="/admin/errors.log.old" download="errors.log.old">Download rotated</a>
+                <button class="btn btn-small btn-danger" onclick="clearErrorLog()">Clear</button>
+            </div>
+            <div class="status" id="errlog-status"></div>
+            <pre id="errlog-tail" style="display:none;margin-top:10px;padding:12px;background:var(--faint);font-size:10px;line-height:1.6;max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-word;"></pre>
+        </div>
+    </div>
+
+    <!-- self-test -->
+    <div class="section">
+        <div class="section-title">Self-Test</div>
+        <div class="card">
+            <div style="font-size:12px;color:var(--mid);margin-bottom:12px;">
+                Runs through every subsystem. Good to check before a vacation or right after an OTA flash.
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+                <button class="btn btn-small" onclick="runSelfTest()">Run self-test</button>
+                <button class="btn btn-small" id="test-email-btn" onclick="sendTestEmail()">Send test email</button>
+            </div>
+            <div class="status" id="selftest-status"></div>
+            <div id="selftest-results" style="margin-top:12px;display:none;font-size:12px;"></div>
+            <div class="status" id="test-email-status"></div>
+        </div>
+    </div>
+
+    <!-- files -->
+    <div class="section">
+        <div class="section-title">SD Card Files</div>
+        <div class="card">
+            <div class="breadcrumb" id="breadcrumb"></div>
+            <ul class="file-list" id="file-list"></ul>
+            <div class="status" id="files-status">Loading...</div>
+            <button class="btn btn-small" style="margin-top:12px" onclick="createFolder()">New Folder</button>
+        </div>
+        <div class="card">
+            <input type="file" id="upload-file" multiple>
+            <button class="btn" onclick="uploadFiles()">Upload to Current Directory</button>
+            <div class="progress" id="upload-progress"><div class="progress-bar" id="upload-bar"></div></div>
+            <div class="status" id="upload-status"></div>
+        </div>
+    </div>
+
+    <!-- backup / restore -->
+    <div class="section">
+        <div class="section-title">SD Card Backup & Restore</div>
+        <div class="card">
+            <button class="btn" id="backup-btn" onclick="startBackup()">Download Full Backup (.zip)</button>
+            <div class="progress" id="backup-progress" style="display:none"><div class="progress-bar" id="backup-bar"></div></div>
+            <div class="status" id="backup-status"></div>
+            <div style="border-top:1px solid var(--faint);margin:16px 0;"></div>
+            <input type="file" id="restore-file" accept=".zip">
+            <button class="btn" id="restore-btn" onclick="startRestore()">Restore from Backup</button>
+            <div class="progress" id="restore-progress" style="display:none"><div class="progress-bar" id="restore-bar"></div></div>
+            <div class="status" id="restore-status"></div>
+            <div id="r2-backup-section">
+            <div style="border-top:1px solid var(--faint);margin:16px 0;"></div>
+            <div style="font-weight:500;margin-bottom:8px;">Off-site backup (R2)</div>
+            <div style="font-size:12px;color:var(--mid);margin-bottom:10px;">
+                Fires daily at 4 AM local. Stores the full SD card under <code>state/YYYY-MM-DD/</code> on Cloudflare R2, excluding <code>config.txt</code>, <code>*.tmp</code>/<code>*.bak</code>, and <code>/logs</code>. Rotation: 7 daily + 4 weekly + 12 monthly + yearly forever. Falls back to email attachment if R2 isn't bound.
+            </div>
+            <div id="r2-status" style="font-size:12px;color:var(--mid);margin-bottom:10px;padding:10px;background:var(--faint);border-radius:4px;">Loading backup status...</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+                <button class="btn btn-small" onclick="sendBackupEmail()">Run backup now</button>
+                <button class="btn btn-small" onclick="runR2Healthcheck()">Test R2 liveness</button>
+                <button class="btn btn-small" onclick="loadBackupStatus()">Refresh status</button>
+                <a class="btn btn-small" href="https://dash.cloudflare.com/?to=/:account/r2/overview" target="_blank" rel="noopener">Browse R2 bucket &rarr;</a>
+            </div>
+            <div class="status" id="email-backup-status"></div>
+            <div class="status" id="r2-healthcheck-status"></div>
+            <details style="margin-top:10px;font-size:12px;">
+                <summary style="cursor:pointer;color:var(--mid);">How to restore from R2</summary>
+                <div style="margin-top:8px;color:var(--mid);line-height:1.6;">
+                    If the SD card fails and you need to rebuild:
+                    <ol style="margin:6px 0 6px 20px;">
+                        <li>Format a new FAT32 SD card (&le;32 GB)</li>
+                        <li>Copy the <code>data/</code> folder from the git repo to the SD root (HTML, images, etc.)</li>
+                        <li>Open the Cloudflare R2 dashboard, find the <code>helloesp-backup</code> bucket</li>
+                        <li>Read <code>state/latest.json</code> to see the most recent snapshot date</li>
+                        <li>Download every object under <code>state/{date}/</code> and place it on the SD card, preserving paths (e.g. <code>stats/weekly/2026-W16.json</code>)</li>
+                        <li>Recreate <code>config.txt</code> from your own records (not backed up)</li>
+                        <li>Insert the SD card and boot</li>
+                    </ol>
+                    For partial fixes (just one corrupted file), download the single object from R2 and drop it through this admin panel's file upload.
+                </div>
+            </details>
+            </div>
+        </div>
+    </div>
+
+    <!-- ota -->
+    <div class="section">
+        <div class="section-title">Firmware Update (OTA)</div>
+        <div class="card">
+            <input type="file" id="ota-file" accept=".bin">
+            <button class="btn" id="ota-btn" onclick="uploadOTA()">Upload Firmware</button>
+            <div class="progress" id="ota-progress"><div class="progress-bar" id="ota-bar"></div></div>
+            <div class="status" id="ota-status"></div>
+        </div>
+    </div>
+
+    <!-- data management -->
+    <div class="section">
+        <div class="section-title">Data Management</div>
+        <div class="card">
+            <div style="margin-bottom:16px;">
+                <a href="/admin/export" download="helloesp-state.json" class="btn btn-small">Export state (JSON)</a>
+            </div>
+            <div style="font-size:12px;color:var(--mid);margin-bottom:10px;">Reset counters (destructive, no undo):</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                <button class="btn btn-small btn-danger" onclick="resetCounter('visitors')">Visitors</button>
+                <button class="btn btn-small btn-danger" onclick="resetCounter('countries')">Countries</button>
+                <button class="btn btn-small btn-danger" onclick="resetCounter('periods')">Periods</button>
+                <button class="btn btn-small btn-danger" onclick="resetCounter('all')">All</button>
+            </div>
+            <div class="status" id="reset-status"></div>
+        </div>
+    </div>
+
+    <!-- maintenance -->
+    <div class="section" id="maintenance-section" style="display:none;">
+        <div class="section-title">Maintenance Mode</div>
+        <div class="card">
+            <div style="font-size:12px;color:var(--mid);line-height:1.7;margin-bottom:14px;">
+                Shows a maintenance page to public visitors via the Cloudflare Worker.
+                Auto-expires when the window ends.
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+                <button class="btn btn-small" onclick="setMaintenance(15)">15 min</button>
+                <button class="btn btn-small" onclick="setMaintenance(30)">30 min</button>
+                <button class="btn btn-small" onclick="setMaintenance(60)">60 min</button>
+                <button class="btn btn-small" onclick="setMaintenance(120)">2 hours</button>
+                <button class="btn btn-small btn-danger" onclick="setMaintenance(0)">Cancel</button>
+            </div>
+            <input type="text" id="maintenance-msg" placeholder="Optional message (e.g. Updating firmware)"
+                   maxlength="200"
+                   style="width:100%;padding:8px;font-family:inherit;font-size:12px;border:1px solid var(--faint);background:var(--bg);color:var(--ink);margin-bottom:4px;">
+            <div class="status" id="maintenance-status"></div>
+        </div>
+    </div>
+
+    <!-- reboot -->
+    <div class="section">
+        <div class="section-title">Device</div>
+        <div class="card">
+            <button class="btn btn-danger" onclick="reboot()">Reboot ESP32</button>
+            <div class="status" id="reboot-status"></div>
+        </div>
+    </div>
+</div>
+
+<div id="editor-overlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:100;padding:24px;overflow:auto;">
+    <div style="max-width:720px;margin:0 auto;background:var(--bg);border:1px solid var(--faint);padding:20px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <span style="font-size:12px;font-weight:600;" id="editor-filename"></span>
+            <button class="btn btn-small" onclick="closeEditor()">Close</button>
+        </div>
+        <textarea id="editor-textarea" style="width:100%;height:60vh;font-family:inherit;font-size:12px;background:var(--bg);color:var(--ink);border:1px solid var(--faint);padding:10px;resize:vertical;tab-size:4;"></textarea>
+        <div style="margin-top:12px;display:flex;gap:8px;align-items:center;">
+            <button class="btn" id="editor-save" onclick="saveEditor()">Save</button>
+            <div class="status" id="editor-status"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    var currentPath = '/';
+
+    function formatSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function buildBreadcrumb(path) {
+        var el = document.getElementById('breadcrumb');
+        var parts = path.split('/').filter(Boolean);
+        // data-path + delegated handler so file names with quotes/backslashes can't break out
+        var html = '<a href="#" class="crumb" data-path="/">root</a>';
+        var built = '';
+        for (var i = 0; i < parts.length; i++) {
+            built += '/' + parts[i];
+            html += ' / <a href="#" class="crumb" data-path="' + esc(built) + '">' + esc(parts[i]) + '</a>';
+        }
+        el.innerHTML = html;
+        var links = el.querySelectorAll('.crumb');
+        for (var j = 0; j < links.length; j++) {
+            links[j].addEventListener('click', function(ev) {
+                ev.preventDefault();
+                navigate(this.getAttribute('data-path'));
+            });
+        }
+    }
+
+    function navigate(path) {
+        currentPath = path;
+        loadFiles(path);
+    }
+
+    function loadFiles(path) {
+        var status = document.getElementById('files-status');
+        var list = document.getElementById('file-list');
+        status.textContent = 'Loading...';
+        status.className = 'status';
+        list.innerHTML = '';
+
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status === 200) {
+                var files = JSON.parse(this.responseText);
+                buildBreadcrumb(path);
+
+                if (files.length === 0) {
+                    status.textContent = 'Empty directory.';
+                    return;
+                }
+                status.textContent = '';
+
+                // Sort: directories first, then alphabetical
+                files.sort(function(a, b) {
+                    if (a.dir && !b.dir) return -1;
+                    if (!a.dir && b.dir) return 1;
+                    return a.name.localeCompare(b.name);
+                });
+
+                for (var i = 0; i < files.length; i++) {
+                    var f = files[i];
+                    var li = document.createElement('li');
+                    li.className = 'file-item';
+
+                    var nameSpan = document.createElement('span');
+                    nameSpan.className = 'file-name' + (f.dir ? ' dir' : '');
+                    nameSpan.textContent = f.name;
+
+                    if (f.dir) {
+                        (function(name) {
+                            var dirPath = (path === '/' ? '/' : path + '/') + name;
+                            nameSpan.onclick = function() { navigate(dirPath); };
+                        })(f.name);
+                    }
+
+                    var actions = document.createElement('div');
+                    actions.className = 'file-actions';
+
+                    if (!f.dir) {
+                        var sizeSpan = document.createElement('span');
+                        sizeSpan.className = 'file-size';
+                        sizeSpan.textContent = formatSize(f.size);
+                        actions.appendChild(sizeSpan);
+                    }
+
+                    if (!f.dir) {
+                        var dlBtn = document.createElement('a');
+                        dlBtn.className = 'btn btn-small';
+                        dlBtn.textContent = 'Download';
+                        dlBtn.style.textDecoration = 'none';
+                        (function(name) {
+                            var filePath = (path === '/' ? '/' : path + '/') + name;
+                            dlBtn.href = '/admin/download?path=' + encodeURIComponent(filePath);
+                        })(f.name);
+                        actions.appendChild(dlBtn);
+
+                        var textExts = ['.txt','.csv','.html','.json','.js','.xml','.css','.md'];
+                        var nameLower = f.name.toLowerCase();
+                        var isText = textExts.some(function(ext) { return nameLower.endsWith(ext); });
+                        if (isText && f.size < 512000) {
+                            var editBtn = document.createElement('button');
+                            editBtn.className = 'btn btn-small';
+                            editBtn.textContent = 'Edit';
+                            (function(name) {
+                                var filePath = (path === '/' ? '/' : path + '/') + name;
+                                editBtn.onclick = function() { openEditor(filePath); };
+                            })(f.name);
+                            actions.appendChild(editBtn);
+                        }
+                    }
+
+                    var delBtn = document.createElement('button');
+                    delBtn.className = 'btn btn-danger btn-small';
+                    delBtn.textContent = 'Delete';
+                    (function(name, isDir) {
+                        var itemPath = (path === '/' ? '/' : path + '/') + name;
+                        delBtn.onclick = function() { isDir ? deleteFolder(itemPath) : deleteFile(itemPath); };
+                    })(f.name, f.dir);
+                    actions.appendChild(delBtn);
+
+                    li.appendChild(nameSpan);
+                    li.appendChild(actions);
+                    list.appendChild(li);
+                }
+            } else {
+                status.textContent = 'Failed to load files.';
+                status.className = 'status err';
+            }
+        };
+        xhr.open('GET', '/admin/files?path=' + encodeURIComponent(path), true);
+        xhr.send();
+    }
+
+    function deleteFile(path) {
+        if (!confirm('Delete ' + path + '?')) return;
+
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status === 200) {
+                loadFiles(currentPath);
+            } else {
+                alert('Delete failed');
+            }
+        };
+        xhr.open('POST', '/admin/delete', true);
+        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+        xhr.send('path=' + encodeURIComponent(path));
+    }
+
+    function deleteFolder(path) {
+        if (!confirm('Delete folder ' + path + '? It must be empty.')) return;
+
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status === 200) {
+                loadFiles(currentPath);
+            } else {
+                alert('Delete failed. Make sure the folder is empty.');
+            }
+        };
+        xhr.open('POST', '/admin/delete', true);
+        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+        xhr.send('path=' + encodeURIComponent(path));
+    }
+
+    function createFolder() {
+        var name = prompt('Folder name:');
+        if (!name) return;
+
+        var path = (currentPath === '/' ? '/' : currentPath + '/') + name;
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status === 200) {
+                loadFiles(currentPath);
+            } else {
+                alert('Failed to create folder');
+            }
+        };
+        xhr.open('POST', '/admin/mkdir', true);
+        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+        xhr.send('path=' + encodeURIComponent(path));
+    }
+
+    function uploadFiles() {
+        var input = document.getElementById('upload-file');
+        var status = document.getElementById('upload-status');
+        var progress = document.getElementById('upload-progress');
+        var bar = document.getElementById('upload-bar');
+
+        if (!input.files.length) {
+            status.textContent = 'No file selected.';
+            status.className = 'status err';
+            return;
+        }
+
+        var totalFiles = input.files.length;
+        var completed = 0;
+        progress.style.display = 'block';
+        status.textContent = 'Uploading 1/' + totalFiles + '...';
+        status.className = 'status';
+
+        function uploadNext() {
+            if (completed >= totalFiles) {
+                status.textContent = totalFiles + ' file(s) uploaded.';
+                status.className = 'status ok';
+                input.value = '';
+                loadFiles(currentPath);
+                return;
+            }
+
+            var file = input.files[completed];
+            var formData = new FormData();
+            formData.append('path', currentPath);
+            formData.append('file', file);
+
+            var xhr = new XMLHttpRequest();
+            xhr.upload.onprogress = function(e) {
+                if (e.lengthComputable) {
+                    var fileProgress = e.loaded / e.total;
+                    var totalProgress = (completed + fileProgress) / totalFiles;
+                    bar.style.width = Math.round(totalProgress * 100) + '%';
+                }
+            };
+            xhr.onreadystatechange = function() {
+                if (this.readyState !== 4) return;
+                completed++;
+                status.textContent = 'Uploading ' + Math.min(completed + 1, totalFiles) + '/' + totalFiles + '...';
+                uploadNext();
+            };
+            xhr.open('POST', '/_upload', true);
+            xhr.send(formData);
+        }
+
+        uploadNext();
+    }
+
+    function uploadOTA() {
+        var input = document.getElementById('ota-file');
+        var status = document.getElementById('ota-status');
+        var progress = document.getElementById('ota-progress');
+        var bar = document.getElementById('ota-bar');
+        var btn = document.getElementById('ota-btn');
+
+        if (!input.files.length) {
+            status.textContent = 'No file selected.';
+            status.className = 'status err';
+            return;
+        }
+
+        var formData = new FormData();
+        formData.append('file', input.files[0]);
+
+        btn.disabled = true;
+        progress.style.display = 'block';
+        status.textContent = 'Uploading firmware...';
+        status.className = 'status';
+
+        var xhr = new XMLHttpRequest();
+        xhr.upload.onprogress = function(e) {
+            if (e.lengthComputable) {
+                bar.style.width = Math.round(e.loaded / e.total * 100) + '%';
+            }
+        };
+        xhr.upload.onload = function() {
+            status.textContent = 'Upload complete. Rebooting...';
+            status.className = 'status ok';
+        };
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status === 200 && this.responseText.indexOf('success') !== -1) {
+                status.textContent = 'Firmware uploaded. Rebooting...';
+                status.className = 'status ok';
+            } else if (this.status === 0) {
+                status.textContent = 'Rebooting with new firmware...';
+                status.className = 'status ok';
+            } else {
+                status.textContent = 'OTA failed: ' + this.responseText;
+                status.className = 'status err';
+                btn.disabled = false;
+            }
+        };
+        xhr.open('POST', '/_ota', true);
+        xhr.send(formData);
+    }
+
+    function reboot() {
+        if (!confirm('Reboot the ESP32?')) return;
+        var status = document.getElementById('reboot-status');
+
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            status.textContent = 'Rebooting...';
+            status.className = 'status ok';
+        };
+        xhr.open('POST', '/admin/reboot', true);
+        xhr.send();
+    }
+
+    function setMaintenance(minutes) {
+        var msg = document.getElementById('maintenance-msg').value.trim();
+        var status = document.getElementById('maintenance-status');
+        var confirmMsg = minutes === 0
+            ? 'Cancel maintenance mode?'
+            : 'Enable maintenance mode for ' + minutes + ' min?';
+        if (!confirm(confirmMsg)) return;
+
+        status.textContent = 'Sending...';
+        status.className = 'status';
+
+        var body = 'minutes=' + encodeURIComponent(minutes) + '&message=' + encodeURIComponent(msg);
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status === 200) {
+                status.textContent = this.responseText;
+                status.className = 'status ok';
+                // Clear the message so the next invocation starts fresh rather than re-using the last message.
+                document.getElementById('maintenance-msg').value = '';
+            } else {
+                status.textContent = this.responseText || 'Failed (HTTP ' + this.status + ')';
+                status.className = 'status err';
+            }
+        };
+        xhr.open('POST', '/admin/maintenance', true);
+        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+        xhr.send(body);
+    }
+
+    function loadDeviceInfo() {
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            var el = document.getElementById('device-info');
+            if (this.status !== 200) {
+                el.innerHTML = '<div class="status err">Failed to load device info.</div>';
+                return;
+            }
+            var d = JSON.parse(this.responseText);
+            var items = [
+                ['Firmware', 'v' + d.firmware],
+                ['Uptime', d.uptime],
+                ['Last Reset', d.last_reset],
+                ['Chip', d.chip_model + ' rev ' + d.chip_revision],
+                ['CPU', d.cpu_freq_mhz + ' MHz'],
+                ['Flash', d.flash_size_mb + ' MB'],
+                ['Free Heap', formatSize(d.free_heap)],
+                ['Min Free Heap', formatSize(d.min_free_heap)],
+                ['Heap Size', formatSize(d.heap_size)],
+                ['SDK', d.sdk_version],
+                ['IP', d.local_ip],
+                ['MAC', d.mac_address],
+                ['Gateway', d.gateway],
+                ['Subnet', d.subnet],
+                ['DNS', d.dns],
+                ['TX Power', d.tx_power + ' dBm']
+            ];
+            var html = '';
+            for (var i = 0; i < items.length; i++) {
+                html += '<div class="info-item"><div class="info-label">' + esc(items[i][0]) + '</div><div class="info-value">' + esc(items[i][1]) + '</div></div>';
+            }
+            el.innerHTML = html;
+            var ver = document.getElementById('admin-version');
+            if (ver) ver.textContent = 'HelloESP v' + d.firmware;
+
+            // Worker-dependent features hide on LAN-only installs so the admin UI doesn't
+            // advertise buttons that would just error out.
+            var mSection = document.getElementById('maintenance-section');
+            if (mSection) mSection.style.display = d.worker_configured ? '' : 'none';
+            var mStatus = document.getElementById('maintenance-status');
+            if (mStatus && d.worker_configured && !d.worker_connected) {
+                mStatus.textContent = 'Worker link is down right now. Try again in a few seconds.';
+                mStatus.className = 'status err';
+            }
+            var r2Section = document.getElementById('r2-backup-section');
+            if (r2Section) r2Section.style.display = d.worker_configured ? '' : 'none';
+            var testEmailBtn = document.getElementById('test-email-btn');
+            if (testEmailBtn) testEmailBtn.style.display = d.worker_configured ? '' : 'none';
+
+            renderSparkline('heap-spark', d.health_heap || []);
+            renderSparkline('rssi-spark', d.health_rssi || []);
+            document.getElementById('heap-current').textContent = 'Now: ' + formatSize(d.free_heap);
+            document.getElementById('rssi-current').textContent = 'Now: ' + d.rssi + ' dBm';
+            renderWorkerStatus(d);
+        };
+        xhr.open('GET', '/admin/info', true);
+        xhr.send();
+    }
+
+    function renderSparkline(svgId, data) {
+        var svg = document.getElementById(svgId);
+        if (!svg) return;
+        if (!data || data.length < 2) {
+            svg.innerHTML = '<text x="50%" y="55%" text-anchor="middle" fill="currentColor" font-size="9" opacity="0.5" font-family="ui-monospace, monospace">collecting samples...</text>';
+            return;
+        }
+        var W = svg.clientWidth || 200;
+        var H = 42;
+        var min = Math.min.apply(null, data);
+        var max = Math.max.apply(null, data);
+        if (max === min) { max = min + 1; }
+        var pts = data.map(function(v, i) {
+            var x = (i / (data.length - 1)) * W;
+            var y = H - 4 - ((v - min) / (max - min)) * (H - 8);
+            return x.toFixed(1) + ',' + y.toFixed(1);
+        }).join(' ');
+        svg.innerHTML = '<polyline points="' + pts + '" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>';
+    }
+
+    function renderWorkerStatus(d) {
+        var el = document.getElementById('worker-status');
+        if (!el) return;
+        if (!d.worker_configured) {
+            el.innerHTML = '<div style="font-size:12px;color:var(--mid);">Not configured (LAN-only install).</div>';
+            return;
+        }
+        var ok = d.worker_connected;
+        var dot = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px;vertical-align:1px;background:' + (ok ? '#0a8b4a' : '#c06b00') + ';"></span>';
+        var html = '';
+        html += '<div style="font-size:13px;">' + dot + (ok ? 'Connected' : 'Reconnecting...') + '</div>';
+        html += '<div class="info-grid" style="margin-top:14px;">';
+        html += '<div class="info-item"><div class="info-label">Last activity</div><div class="info-value">' +
+                (ok ? Math.max(0, Math.round(d.worker_last_activity_ms / 1000)) + 's ago' : '\u2014') + '</div></div>';
+        html += '<div class="info-item"><div class="info-label">Reconnects since boot</div><div class="info-value">' +
+                esc(d.worker_reconnects) + '</div></div>';
+        html += '</div>';
+        el.innerHTML = html;
+    }
+
+    function runSelfTest() {
+        var btn = event && event.target;
+        if (btn) btn.disabled = true;
+        var status = document.getElementById('selftest-status');
+        var out = document.getElementById('selftest-results');
+        status.textContent = 'Running...';
+        status.className = 'status';
+        out.style.display = 'none';
+        out.innerHTML = '';
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (btn) btn.disabled = false;
+            if (this.status !== 200) {
+                status.textContent = 'Self-test failed to run (HTTP ' + this.status + ')';
+                status.className = 'status err';
+                return;
+            }
+            try {
+                var r = JSON.parse(this.responseText);
+                var overallLabel = r.overall === 'pass' ? 'All good'
+                                 : r.overall === 'warn' ? (r.warns + ' warning' + (r.warns === 1 ? '' : 's'))
+                                 : (r.fails + ' failure' + (r.fails === 1 ? '' : 's'));
+                status.textContent = overallLabel + ' \u00b7 ' + r.at;
+                status.className = 'status ' + (r.overall === 'pass' ? 'ok' : r.overall === 'warn' ? '' : 'err');
+                var html = '<table style="width:100%;border-collapse:collapse;">';
+                for (var i = 0; i < r.tests.length; i++) {
+                    var t = r.tests[i];
+                    var dot = '\u25cf';
+                    var color = t.status === 'pass' ? '#0a8b4a' : t.status === 'warn' ? '#c06b00' : '#b02030';
+                    html += '<tr>';
+                    html += '<td style="padding:4px 8px 4px 0;color:' + color + ';font-size:14px;">' + dot + '</td>';
+                    html += '<td style="padding:4px 12px 4px 0;font-weight:500;">' + esc(t.name) + '</td>';
+                    html += '<td style="padding:4px 0;color:var(--mid);">' + esc(t.detail) + '</td>';
+                    html += '</tr>';
+                }
+                html += '</table>';
+                out.innerHTML = html;
+                out.style.display = 'block';
+            } catch (e) {
+                status.textContent = 'Self-test response was invalid';
+                status.className = 'status err';
+            }
+        };
+        xhr.open('GET', '/admin/selftest', true);
+        xhr.send();
+    }
+
+    function sendBackupEmail() {
+        var btn = event && event.target;
+        var status = document.getElementById('email-backup-status');
+        status.textContent = 'Queuing...';
+        status.className = 'status';
+        if (btn) btn.disabled = true;
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (btn) btn.disabled = false;
+            if (this.status === 200) {
+                status.textContent = this.responseText || 'Queued';
+                status.className = 'status ok';
+                setTimeout(loadBackupStatus, 2000); // refresh card after R2 commit
+            } else {
+                status.textContent = 'Failed (HTTP ' + this.status + '): ' + this.responseText;
+                status.className = 'status err';
+            }
+        };
+        xhr.open('POST', '/admin/backup-now', true);
+        xhr.send();
+    }
+
+    function fmtAgoSecs(s) {
+        if (s == null || s < 0) return 'never';
+        if (s < 60)    return s + 's ago';
+        if (s < 3600)  return Math.floor(s / 60) + 'm ago';
+        if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+        return Math.floor(s / 86400) + 'd ago';
+    }
+
+    function fmtKB(bytes) {
+        if (!bytes) return '0 B';
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024*1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024*1024)).toFixed(2) + ' MB';
+    }
+
+    function sendTestEmail() {
+        var btn = event && event.target;
+        var status = document.getElementById('test-email-status');
+        status.textContent = 'Sending test email via Worker...';
+        status.className = 'status';
+        if (btn) btn.disabled = true;
+
+        var baseline = 0;
+        var poll = function(attempt) {
+            var xhr = new XMLHttpRequest();
+            xhr.onreadystatechange = function() {
+                if (this.readyState !== 4) return;
+                if (this.status !== 200) {
+                    status.textContent = 'Result fetch failed (HTTP ' + this.status + ')';
+                    status.className = 'status err';
+                    if (btn) btn.disabled = false;
+                    return;
+                }
+                try {
+                    var r = JSON.parse(this.responseText);
+                    if (r.at_unix && r.at_unix > baseline) {
+                        if (r.pass) {
+                            status.textContent = 'Sent - ' + esc(r.detail) + ' (check your inbox)';
+                            status.className = 'status ok';
+                        } else {
+                            status.textContent = 'FAILED - ' + esc(r.detail);
+                            status.className = 'status err';
+                        }
+                        if (btn) btn.disabled = false;
+                        return;
+                    }
+                } catch (e) {}
+                if (attempt < 20) setTimeout(function() { poll(attempt + 1); }, 500);
+                else {
+                    status.textContent = 'Timed out waiting for Worker response';
+                    status.className = 'status err';
+                    if (btn) btn.disabled = false;
+                }
+            };
+            xhr.open('GET', '/admin/test-email-result', true);
+            xhr.send();
+        };
+
+        var baseXhr = new XMLHttpRequest();
+        baseXhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status === 200) {
+                try { baseline = (JSON.parse(this.responseText).at_unix) || 0; } catch (e) {}
+            }
+            var triggerXhr = new XMLHttpRequest();
+            triggerXhr.onreadystatechange = function() {
+                if (this.readyState !== 4) return;
+                if (this.status !== 200) {
+                    status.textContent = 'Trigger failed (HTTP ' + this.status + '): ' + this.responseText;
+                    status.className = 'status err';
+                    if (btn) btn.disabled = false;
+                    return;
+                }
+                setTimeout(function() { poll(0); }, 500);
+            };
+            triggerXhr.open('POST', '/admin/test-email', true);
+            triggerXhr.send();
+        };
+        baseXhr.open('GET', '/admin/test-email-result', true);
+        baseXhr.send();
+    }
+
+    function runR2Healthcheck() {
+        var btn = event && event.target;
+        var status = document.getElementById('r2-healthcheck-status');
+        status.textContent = 'Running PUT/GET/DELETE against R2...';
+        status.className = 'status';
+        if (btn) btn.disabled = true;
+
+        // baseline: remember prior result timestamp so we can detect when a new one lands
+        var baseline = 0;
+        var poll = function(attempt) {
+            var xhr = new XMLHttpRequest();
+            xhr.onreadystatechange = function() {
+                if (this.readyState !== 4) return;
+                if (this.status !== 200) {
+                    status.textContent = 'Result fetch failed (HTTP ' + this.status + ')';
+                    status.className = 'status err';
+                    if (btn) btn.disabled = false;
+                    return;
+                }
+                try {
+                    var r = JSON.parse(this.responseText);
+                    // Fresh result has a newer at_unix than baseline
+                    if (r.at_unix && r.at_unix > baseline) {
+                        if (r.pass) {
+                            status.textContent = 'R2 healthy - ' + esc(r.detail);
+                            status.className = 'status ok';
+                        } else {
+                            status.textContent = 'R2 FAIL - ' + esc(r.detail);
+                            status.className = 'status err';
+                        }
+                        if (btn) btn.disabled = false;
+                        return;
+                    }
+                } catch (e) {}
+                if (attempt < 20) setTimeout(function() { poll(attempt + 1); }, 500);
+                else {
+                    status.textContent = 'Timed out waiting for Worker response';
+                    status.className = 'status err';
+                    if (btn) btn.disabled = false;
+                }
+            };
+            xhr.open('GET', '/admin/r2-healthcheck-result', true);
+            xhr.send();
+        };
+
+        // read baseline first, then trigger
+        var baseXhr = new XMLHttpRequest();
+        baseXhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status === 200) {
+                try { baseline = (JSON.parse(this.responseText).at_unix) || 0; } catch (e) {}
+            }
+            var triggerXhr = new XMLHttpRequest();
+            triggerXhr.onreadystatechange = function() {
+                if (this.readyState !== 4) return;
+                if (this.status !== 200) {
+                    status.textContent = 'Trigger failed (HTTP ' + this.status + '): ' + this.responseText;
+                    status.className = 'status err';
+                    if (btn) btn.disabled = false;
+                    return;
+                }
+                setTimeout(function() { poll(0); }, 500);
+            };
+            triggerXhr.open('POST', '/admin/r2-healthcheck', true);
+            triggerXhr.send();
+        };
+        baseXhr.open('GET', '/admin/r2-healthcheck-result', true);
+        baseXhr.send();
+    }
+
+    function loadBackupStatus() {
+        var el = document.getElementById('r2-status');
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status !== 200) { el.textContent = 'Backup status unavailable'; return; }
+            try {
+                var s = JSON.parse(this.responseText);
+                var html = '';
+                var link = s.worker_linked;
+                var committed = s.r2_committed_date && s.r2_committed_date.length === 10;
+                html += '<div><strong>Worker link:</strong> ' + (link ? '<span style="color:#0a8b4a">up</span>' : '<span style="color:#b02030">down</span>') + '</div>';
+                if (committed) {
+                    html += '<div><strong>Last R2 commit:</strong> ' + esc(s.r2_committed_date) + ' &middot; ' + fmtAgoSecs(s.r2_committed_ago_s) + ' &middot; ' + s.r2_committed_files + ' files, ' + fmtKB(s.r2_committed_bytes) + '</div>';
+                } else {
+                    html += '<div><strong>Last R2 commit:</strong> <span style="color:#c06b00">none yet</span></div>';
+                }
+                if (s.last_sent_date && s.last_sent_date !== s.r2_committed_date) {
+                    html += '<div style="color:#c06b00"><strong>Last sent:</strong> ' + esc(s.last_sent_date) + ' &middot; ' + fmtAgoSecs(s.last_sent_ago_s) + ' (Worker has not confirmed yet)</div>';
+                }
+                el.innerHTML = html;
+            } catch (e) {
+                el.textContent = 'Backup status parse error';
+            }
+        };
+        xhr.open('GET', '/admin/backup-status', true);
+        xhr.send();
+    }
+
+    function resetCounter(target) {
+        var status = document.getElementById('reset-status');
+        status.textContent = 'Checking current state...';
+        status.className = 'status';
+
+        // dry-run: fetch actual counts first so the confirm dialog shows what you'd lose
+        var probe = new XMLHttpRequest();
+        probe.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status !== 200) {
+                status.textContent = 'Could not fetch current state; aborting.';
+                status.className = 'status err';
+                return;
+            }
+            var d;
+            try { d = JSON.parse(this.responseText); }
+            catch (e) {
+                status.textContent = 'State response was invalid; aborting.';
+                status.className = 'status err';
+                return;
+            }
+            var confirmMsg = 'Reset ' + target + '?\n\nThis will clear:\n';
+            if (target === 'visitors') {
+                confirmMsg += '  \u2022 ' + (d.visitors_total || 0) + ' total visitors\n';
+                confirmMsg += '  \u2022 ' + (d.visitors_today || 0) + ' today\n';
+            } else if (target === 'countries') {
+                confirmMsg += '  \u2022 ' + ((d.countries && d.countries.length) || 0) + ' tracked countries\n';
+            } else if (target === 'periods') {
+                confirmMsg += '  \u2022 Current week (' + (d.week_samples || 0) + ' samples)\n';
+                confirmMsg += '  \u2022 Current month (' + (d.month_samples || 0) + ' samples)\n';
+                confirmMsg += '  \u2022 Current year (' + (d.year_samples || 0) + ' samples)\n';
+            } else if (target === 'all') {
+                confirmMsg += '  \u2022 ' + (d.visitors_total || 0) + ' total visitors (' + (d.visitors_today || 0) + ' today)\n';
+                confirmMsg += '  \u2022 ' + ((d.countries && d.countries.length) || 0) + ' tracked countries\n';
+                confirmMsg += '  \u2022 Current week/month/year period aggregates\n';
+            }
+            confirmMsg += '\nCannot be undone. Archived stats files are not touched.';
+
+            if (!confirm(confirmMsg)) {
+                status.textContent = '';
+                status.className = 'status';
+                return;
+            }
+            status.textContent = 'Working...';
+            status.className = 'status';
+
+            var xhr = new XMLHttpRequest();
+            xhr.onreadystatechange = function() {
+                if (this.readyState !== 4) return;
+                status.textContent = this.responseText || ('HTTP ' + this.status);
+                status.className = this.status === 200 ? 'status ok' : 'status err';
+                if (this.status === 200) loadDeviceInfo();
+            };
+            xhr.open('POST', '/admin/reset', true);
+            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+            xhr.send('target=' + encodeURIComponent(target));
+        };
+        probe.open('GET', '/admin/export', true);
+        probe.send();
+    }
+
+    function esc(str) {
+        var d = document.createElement('div');
+        d.textContent = str == null ? '' : String(str);
+        return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    var gbPage = 1;
+
+    function renderGuestbookEntries(entries, append) {
+        var el = document.getElementById('guestbook-entries');
+        var html = append ? el.innerHTML : '';
+        if (entries.length === 0 && !append) {
+            el.innerHTML = '<div class="status">No entries yet.</div>';
+            return;
+        }
+        for (var i = 0; i < entries.length; i++) {
+            var e = entries[i];
+            var statusText = e.approved === 1 ? 'approved' : (e.approved === 0 ? 'pending' : 'denied');
+            html += '<div class="gb-entry">';
+            var idx = parseInt(e.idx, 10) || 0;
+            html += '<div class="gb-meta">' + esc(e.time) + ' / ' + esc(e.country) + ' / ' + statusText + '</div>';
+            html += '<div class="gb-message"><span class="gb-name">' + esc(e.name) + ':</span> ' + esc(e.message) + '</div>';
+            html += '<div class="gb-actions">';
+            if (e.approved !== 1) {
+                html += '<button class="btn btn-approve btn-small" onclick="moderate(' + idx + ',1)">Approve</button>';
+            }
+            if (e.approved === 0) {
+                html += '<button class="btn btn-danger btn-small" onclick="moderate(' + idx + ',2)">Deny</button>';
+            }
+            if (e.approved === 1) {
+                html += '<button class="btn btn-danger btn-small" onclick="moderate(' + idx + ',2)">Remove</button>';
+            }
+            html += '<button class="btn btn-small" style="background:var(--mid)" onclick="if(confirm(\'Delete permanently?\'))moderate(' + idx + ',3)">Delete</button>';
+            html += '</div></div>';
+        }
+        el.innerHTML = html;
+    }
+
+    function loadGuestbook(page, append) {
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            var el = document.getElementById('guestbook-entries');
+            var btn = document.getElementById('gb-load-more');
+            if (this.status !== 200) {
+                if (!append) el.innerHTML = '<div class="status err">Failed to load.</div>';
+                return;
+            }
+            try {
+                var data = JSON.parse(this.responseText);
+                renderGuestbookEntries(data.entries, append);
+                btn.style.display = data.hasMore ? 'block' : 'none';
+            } catch(e) {
+                if (!append) el.innerHTML = '<div class="status err">Failed to parse.</div>';
+            }
+        };
+        xhr.open('GET', '/guestbook/pending?page=' + page, true);
+        xhr.send();
+    }
+
+    function loadMoreGuestbook() {
+        gbPage++;
+        loadGuestbook(gbPage, true);
+    }
+
+    function moderate(idx, status) {
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status !== 200) {
+                alert('Moderation failed: ' + (this.responseText || ('HTTP ' + this.status)));
+                return;
+            }
+            gbPage = 1;
+            loadGuestbook(1, false);
+        };
+        xhr.onerror = function() {
+            alert('Moderation failed: network error');
+        };
+        xhr.open('POST', '/guestbook/moderate', true);
+        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+        xhr.send('idx=' + idx + '&status=' + status);
+    }
+
+    function loadErrorLog() {
+        var pre = document.getElementById('errlog-tail');
+        var status = document.getElementById('errlog-status');
+        status.textContent = 'Loading...';
+        status.className = 'status';
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status === 200) {
+                var body = this.responseText || '';
+                var lines = body.split('\n').filter(function(l) { return l.length > 0; });
+                var tail = lines.slice(-50);
+                if (tail.length === 0) {
+                    pre.style.display = 'none';
+                    status.textContent = 'Log is empty';
+                    status.className = 'status ok';
+                } else {
+                    pre.textContent = tail.join('\n');
+                    pre.style.display = 'block';
+                    pre.scrollTop = pre.scrollHeight;
+                    var bytes = body.length;
+                    var kb = (bytes / 1024).toFixed(1);
+                    status.textContent = tail.length + ' lines shown · ' + kb + ' KB of 64 KB';
+                    status.className = 'status ok';
+                }
+            } else {
+                status.textContent = 'Failed (HTTP ' + this.status + ')';
+                status.className = 'status err';
+            }
+        };
+        xhr.open('GET', '/admin/errors.log', true);
+        xhr.send();
+    }
+
+    function clearErrorLog() {
+        if (!confirm('Clear all error logs? This cannot be undone.')) return;
+        var status = document.getElementById('errlog-status');
+        var pre = document.getElementById('errlog-tail');
+        status.textContent = 'Clearing...';
+        status.className = 'status';
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            status.textContent = this.responseText || ('HTTP ' + this.status);
+            status.className = this.status === 200 ? 'status ok' : 'status err';
+            if (this.status === 200) { pre.textContent = ''; pre.style.display = 'none'; }
+        };
+        xhr.open('POST', '/admin/errors/clear', true);
+        xhr.send();
+    }
+
+    function loadLogViewer() {
+        var wrap = document.getElementById('log-viewer-wrap');
+        var status = document.getElementById('log-viewer-status');
+        var btn = document.getElementById('log-viewer-btn');
+        btn.disabled = true;
+        status.textContent = 'Loading...';
+        status.className = 'status';
+
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            btn.disabled = false;
+            if (this.status !== 200) {
+                status.textContent = 'No log for today yet.';
+                status.className = 'status err';
+                wrap.style.display = 'none';
+                return;
+            }
+            var lines = this.responseText.trim().split('\n');
+            if (lines.length < 2) {
+                status.textContent = 'Log is empty.';
+                status.className = 'status';
+                wrap.style.display = 'none';
+                return;
+            }
+            var headers = lines[0].split(',');
+            var html = '<table class="log-table"><thead><tr>';
+            for (var i = 0; i < headers.length; i++) {
+                html += '<th>' + esc(headers[i]) + '</th>';
+            }
+            html += '</tr></thead><tbody>';
+            for (var r = lines.length - 1; r >= 1; r--) {
+                var cols = lines[r].split(',');
+                html += '<tr>';
+                for (var c = 0; c < cols.length; c++) {
+                    html += '<td>' + esc(cols[c]) + '</td>';
+                }
+                html += '</tr>';
+            }
+            html += '</tbody></table>';
+            wrap.innerHTML = html;
+            wrap.style.display = 'block';
+            status.textContent = (lines.length - 1) + ' rows (newest first)';
+            status.className = 'status ok';
+        };
+        xhr.open('GET', '/logs/today', true);
+        xhr.send();
+    }
+
+    var editorPath = '';
+    var editorOriginal = '';
+
+    function openEditor(path) {
+        var status = document.getElementById('editor-status');
+        status.textContent = 'Loading...';
+        status.className = 'status';
+        document.getElementById('editor-filename').textContent = path;
+        document.getElementById('editor-textarea').value = '';
+        document.getElementById('editor-overlay').style.display = 'block';
+        editorPath = path;
+
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status === 200) {
+                editorOriginal = this.responseText;
+                document.getElementById('editor-textarea').value = this.responseText;
+                status.textContent = '';
+            } else {
+                status.textContent = 'Failed to load file.';
+                status.className = 'status err';
+            }
+        };
+        xhr.open('GET', '/admin/download?path=' + encodeURIComponent(path), true);
+        xhr.send();
+    }
+
+    function closeEditor() {
+        var textarea = document.getElementById('editor-textarea');
+        if (textarea.value !== editorOriginal && !confirm('Discard unsaved changes?')) return;
+        document.getElementById('editor-overlay').style.display = 'none';
+        editorPath = '';
+        editorOriginal = '';
+    }
+
+    function saveEditor() {
+        var textarea = document.getElementById('editor-textarea');
+        var status = document.getElementById('editor-status');
+        var content = textarea.value;
+
+        if (content.length === 0 && !confirm('File is empty. Save anyway?')) return;
+
+        // ensure trailing newline so ESP-side readStringUntil doesn't hit timeout at EOF
+        if (content.length > 0 && !content.endsWith('\n')) content += '\n';
+
+        var dir = editorPath.substring(0, editorPath.lastIndexOf('/'));
+        if (dir === '') dir = '/';
+        var fileName = editorPath.substring(editorPath.lastIndexOf('/') + 1);
+
+        status.textContent = 'Saving...';
+        status.className = 'status';
+
+        var form = new FormData();
+        form.append('path', dir);
+        form.append('file', new Blob([content], { type: 'text/plain' }), fileName);
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status === 200) {
+                editorOriginal = content;
+                status.textContent = 'Saved.';
+                status.className = 'status ok';
+                loadFiles(currentPath);
+            } else {
+                status.textContent = 'Save failed.';
+                status.className = 'status err';
+            }
+        };
+        xhr.open('POST', '/_upload', true);
+        xhr.send(form);
+    }
+
+    function startBackup() {
+        var btn = document.getElementById('backup-btn');
+        var bar = document.getElementById('backup-bar');
+        var prog = document.getElementById('backup-progress');
+        var status = document.getElementById('backup-status');
+        if (typeof JSZip === 'undefined') {
+            status.textContent = 'JSZip not loaded. Check your internet connection.';
+            status.className = 'status err';
+            return;
+        }
+        btn.disabled = true;
+        prog.style.display = 'block';
+        bar.style.width = '0%';
+        status.textContent = 'Fetching file list...';
+        status.className = 'status';
+
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status !== 200) {
+                status.textContent = 'Failed to get file list.';
+                status.className = 'status err';
+                btn.disabled = false;
+                prog.style.display = 'none';
+                return;
+            }
+            try {
+                var files = JSON.parse(this.responseText);
+                downloadAndZip(files, btn, bar, prog, status);
+            } catch(e) {
+                status.textContent = 'Bad response from device.';
+                status.className = 'status err';
+                btn.disabled = false;
+                prog.style.display = 'none';
+            }
+        };
+        xhr.open('GET', '/admin/backup/list', true);
+        xhr.send();
+    }
+
+    function downloadAndZip(files, btn, bar, prog, status) {
+        var zip = new JSZip();
+        var done = 0;
+        var skipped = 0;
+        var total = files.length;
+
+        function next() {
+            if (done >= total) {
+                status.textContent = 'Compressing...';
+                zip.generateAsync({ type: 'blob' }).then(function(blob) {
+                    var d = new Date();
+                    var name = 'helloesp-backup-' + d.getFullYear() + '-'
+                        + String(d.getMonth() + 1).padStart(2, '0') + '-'
+                        + String(d.getDate()).padStart(2, '0') + '.zip';
+                    var a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = name;
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                    var msg = 'Backup saved: ' + name + ' (' + formatSize(blob.size) + ')';
+                    if (skipped > 0) msg += ' - ' + skipped + ' file(s) skipped (deleted during backup)';
+                    status.textContent = msg;
+                    status.className = skipped > 0 ? 'status' : 'status ok';
+                    btn.disabled = false;
+                    bar.style.width = '100%';
+                });
+                return;
+            }
+
+            var f = files[done];
+            status.textContent = 'Downloading ' + (done + 1) + '/' + total + ': ' + f.path;
+            bar.style.width = Math.round((done / total) * 100) + '%';
+
+            var xhr = new XMLHttpRequest();
+            xhr.responseType = 'arraybuffer';
+            xhr.onreadystatechange = function() {
+                if (this.readyState !== 4) return;
+                if (this.status === 200) {
+                    var path = f.path.startsWith('/') ? f.path.substring(1) : f.path;
+                    zip.file(path, this.response);
+                } else {
+                    skipped++;
+                }
+                done++;
+                next();
+            };
+            xhr.open('GET', '/admin/download?path=' + encodeURIComponent(f.path), true);
+            xhr.send();
+        }
+
+        if (total === 0) {
+            status.textContent = 'No files found on SD card.';
+            status.className = 'status err';
+            btn.disabled = false;
+            prog.style.display = 'none';
+            return;
+        }
+        next();
+    }
+
+    function startRestore() {
+        var fileInput = document.getElementById('restore-file');
+        var btn = document.getElementById('restore-btn');
+        var bar = document.getElementById('restore-bar');
+        var prog = document.getElementById('restore-progress');
+        var status = document.getElementById('restore-status');
+
+        if (typeof JSZip === 'undefined') {
+            status.textContent = 'JSZip not loaded. Check your internet connection.';
+            status.className = 'status err';
+            return;
+        }
+        if (!fileInput.files || fileInput.files.length === 0) {
+            status.textContent = 'Select a backup .zip file first.';
+            status.className = 'status err';
+            return;
+        }
+
+        var count = 0;
+        JSZip.loadAsync(fileInput.files[0]).then(function(zip) {
+            var entries = [];
+            zip.forEach(function(path, entry) {
+                if (!entry.dir) entries.push({ path: path, entry: entry });
+            });
+
+            if (entries.length === 0) {
+                status.textContent = 'Zip is empty.';
+                status.className = 'status err';
+                return;
+            }
+
+            if (!confirm('This will overwrite ' + entries.length + ' files on the SD card. Continue?')) {
+                status.textContent = 'Cancelled.';
+                status.className = 'status';
+                return;
+            }
+
+            btn.disabled = true;
+            prog.style.display = 'block';
+            bar.style.width = '0%';
+
+            var dirs = {};
+            entries.forEach(function(e) {
+                var parts = e.path.split('/');
+                parts.pop();
+                var built = '';
+                for (var i = 0; i < parts.length; i++) {
+                    built += '/' + parts[i];
+                    dirs[built] = true;
+                }
+            });
+
+            var dirList = Object.keys(dirs).sort();
+            var dirIdx = 0;
+
+            function ensureDirs() {
+                if (dirIdx >= dirList.length) { uploadNext(); return; }
+                var d = dirList[dirIdx++];
+                status.textContent = 'Creating directory: ' + d;
+                var xhr = new XMLHttpRequest();
+                xhr.onreadystatechange = function() {
+                    if (this.readyState !== 4) return;
+                    ensureDirs();
+                };
+                xhr.open('POST', '/admin/mkdir', true);
+                xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+                xhr.send('path=' + encodeURIComponent(d));
+            }
+
+            var done = 0;
+            var failed = 0;
+            var total = entries.length;
+
+            function uploadNext() {
+                if (done >= total) {
+                    var msg = 'Restore complete: ' + (total - failed) + '/' + total + ' files written.';
+                    if (failed > 0) msg += ' (' + failed + ' failed)';
+                    status.textContent = msg;
+                    status.className = failed > 0 ? 'status err' : 'status ok';
+                    bar.style.width = '100%';
+                    btn.disabled = false;
+                    loadFiles(currentPath);
+                    if (confirm('Restore complete. Reboot the ESP32 now to pick up all changes?')) {
+                        reboot();
+                    }
+                    return;
+                }
+
+                var e = entries[done];
+                var filePath = '/' + e.path;
+                var dir = filePath.substring(0, filePath.lastIndexOf('/'));
+                if (dir === '') dir = '/';
+                var fileName = filePath.substring(filePath.lastIndexOf('/') + 1);
+                status.textContent = 'Uploading ' + (done + 1) + '/' + total + ': ' + filePath;
+                bar.style.width = Math.round((done / total) * 100) + '%';
+
+                e.entry.async('blob').then(function(blob) {
+                    var form = new FormData();
+                    form.append('path', dir);
+                    form.append('file', blob, fileName);
+                    var xhr = new XMLHttpRequest();
+                    xhr.onreadystatechange = function() {
+                        if (this.readyState !== 4) return;
+                        if (this.status !== 200) failed++;
+                        done++;
+                        uploadNext();
+                    };
+                    xhr.open('POST', '/_upload', true);
+                    xhr.send(form);
+                }).catch(function() { failed++; done++; uploadNext(); });
+            }
+
+            ensureDirs();
+        }).catch(function(e) {
+            status.textContent = 'Failed to read zip: ' + e.message;
+            status.className = 'status err';
+        });
+    }
+
+    // Init
+    loadDeviceInfo();
+    loadGuestbook(1, false);
+    loadFiles('/');
+    loadBackupStatus();
+</script>
+
+</body>
+</html>

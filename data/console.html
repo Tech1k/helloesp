@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Console / HelloESP</title>
+    <meta name="description" content="Live feed of recent requests to the HelloESP microcontroller.">
+    <meta name="author" content="Tech1k">
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#2686e6">
+    <meta property="og:title" content="Console / HelloESP">
+    <meta property="og:site_name" content="HelloESP">
+    <meta property="og:description" content="Live feed of recent requests to the HelloESP microcontroller.">
+    <meta property="og:image" content="https://helloesp.com/og-banner.jpg">
+    <meta property="og:image:type" content="image/jpeg">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="HelloESP: a website running on an ESP32">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://helloesp.com/console">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Console / HelloESP">
+    <meta name="twitter:description" content="Live feed of recent requests to the HelloESP microcontroller.">
+    <meta name="twitter:image" content="https://helloesp.com/og-banner.jpg">
+    <meta name="twitter:image:alt" content="HelloESP: a website running on an ESP32">
+    <link rel="canonical" href="https://helloesp.com/console">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
+          integrity="sha384-/o6I2CkkWC//PSjvWC/eYN7l3xM3tJm8ZzVkCOfp//W05QcE3mlGskpoHB6XqI+B"
+          crossorigin="anonymous" referrerpolicy="no-referrer">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg: #f8f7f4;
+            --ink: #1a1a1a;
+            --mid: #888;
+            --faint: #ccc;
+            --ok: #0a8b4a;
+            --warn: #c06b00;
+            --err: #b02030;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--ink);
+            font-family: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", monospace;
+            min-height: 100vh;
+            display: grid;
+            grid-template-rows: 1fr auto;
+        }
+
+        a:focus-visible,
+        button:focus-visible {
+            outline: 2px solid var(--ink);
+            outline-offset: 2px;
+            border-radius: 2px;
+        }
+
+        main {
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 80px 24px 64px;
+            width: 100%;
+        }
+
+        .top-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            row-gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+        }
+        @media (max-width: 480px) {
+            .top-links { gap: 14px; font-size: 10px; }
+        }
+        .site-name {
+            font-size: 13px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--mid);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+        .site-name:hover { color: var(--ink); }
+        .top-links {
+            display: flex;
+            gap: 16px;
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+        .top-links a {
+            color: var(--mid);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+        .top-links a:hover { color: var(--ink); }
+
+        h1 {
+            font-size: clamp(28px, 5vw, 42px);
+            font-weight: 400;
+            letter-spacing: -0.02em;
+            line-height: 1.1;
+            margin-bottom: 16px;
+        }
+
+        .desc {
+            font-size: 13px;
+            line-height: 1.8;
+            color: var(--mid);
+            margin-bottom: 32px;
+            max-width: 540px;
+        }
+
+        .indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--mid);
+            margin-bottom: 32px;
+        }
+        .indicator .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--ok);
+            animation: pulse 1.4s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 0.35; }
+            50%      { opacity: 1; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .indicator .dot { animation: none; }
+            .row.new { animation: none; }
+        }
+
+        .feed {
+            border-top: 1px solid var(--faint);
+        }
+        .row {
+            display: grid;
+            grid-template-columns: 70px 34px 60px 1fr 50px;
+            gap: 12px;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--faint);
+            font-size: 12px;
+            align-items: center;
+        }
+        .col-time    { color: var(--mid); font-size: 11px; }
+        .col-country { font-size: 14px; text-align: center; }
+        .col-method  { color: var(--mid); font-size: 10px; letter-spacing: 0.06em; }
+        .col-path    { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .col-status  { text-align: right; font-size: 11px; font-variant-numeric: tabular-nums; }
+        .col-status.ok   { color: var(--ok); }
+        .col-status.warn { color: var(--warn); }
+        .col-status.err  { color: var(--err); }
+
+        .empty {
+            color: var(--mid);
+            font-size: 13px;
+            padding: 24px 0;
+            text-align: center;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-4px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        .row.new { animation: fadeIn 0.3s ease-out; }
+
+        footer {
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 24px;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px solid var(--faint);
+            font-size: 11px;
+            color: var(--mid);
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        footer a {
+            color: var(--mid);
+            text-decoration: none;
+            letter-spacing: 0.08em;
+            transition: color 0.15s;
+        }
+        footer a:hover { color: var(--ink); }
+
+        .footer-links {
+            display: flex;
+            gap: 20px;
+            list-style: none;
+        }
+
+        .served {
+            color: var(--mid);
+            opacity: 0.7;
+        }
+        .served:not(:empty)::before {
+            content: ' \2022 ';
+            margin: 0 2px;
+        }
+        @media (max-width: 480px) {
+            .served { display: none; }
+            .row { grid-template-columns: 58px 28px 50px 1fr 44px; gap: 8px; }
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #111110;
+                --ink: #e8e6e1;
+                --mid: #666;
+                --faint: #2a2a28;
+                --ok: #4fc08d;
+                --warn: #e0a050;
+                --err: #e06072;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<main>
+    <nav class="top-nav" aria-label="Primary">
+        <a class="site-name" href="/"><img src="/favicon.png" alt="" style="height:14px;vertical-align:-1px;margin-right:4px;">HelloESP</a>
+        <ul class="top-links">
+            <li><a href="/guestbook">Guestbook</a></li>
+            <li><a href="/history">History</a></li>
+        </ul>
+    </nav>
+
+    <h1>Console</h1>
+
+    <p class="desc">
+        Live feed of the last 50 public page visits to the ESP32. Refreshes every 5 seconds.
+        Static files, admin routes, and 404s don't show up here.
+    </p>
+
+    <div class="indicator"><span class="dot"></span><span id="status-text">Listening</span></div>
+
+    <div class="feed" id="feed"><div class="empty">Waiting for activity...</div></div>
+</main>
+
+<footer>
+    <span>Made by <a href="https://tech1k.com" target="_blank" rel="noopener">Tech1k</a><span class="served" id="served-time"></span></span>
+    <ul class="footer-links">
+        <li><a href="/"><i class="fa-solid fa-house"></i> Home</a></li>
+        <li><a href="/guestbook"><i class="fa-solid fa-pen"></i> Guestbook</a></li>
+        <li><a href="/history"><i class="fa-solid fa-clock-rotate-left"></i> History</a></li>
+        <li><a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener"><i class="fa-brands fa-github"></i> GitHub</a></li>
+    </ul>
+</footer>
+
+<script>
+    function esc(s) {
+        var d = document.createElement('div');
+        d.textContent = s == null ? '' : String(s);
+        return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function countryFlag(code) {
+        if (!code || code.length !== 2 || code === '??') return '??';
+        var cp = code.toUpperCase().split('').map(function(c) {
+            return 127397 + c.charCodeAt(0);
+        });
+        try { return String.fromCodePoint.apply(String, cp); }
+        catch (e) { return code; }
+    }
+
+    function timeAgo(unixTime) {
+        var now = Math.floor(Date.now() / 1000);
+        var delta = now - unixTime;
+        if (delta < 0) delta = 0;
+        if (delta < 5)   return 'now';
+        if (delta < 60)  return delta + 's ago';
+        if (delta < 3600) return Math.floor(delta / 60) + 'm ago';
+        return Math.floor(delta / 3600) + 'h ago';
+    }
+
+    function statusClass(s) {
+        if (s >= 200 && s < 300) return 'ok';
+        if (s >= 300 && s < 500) return 'warn';
+        return 'err';
+    }
+
+    var lastKeys = new Set();
+
+    function keyOf(e) { return e.time + '|' + e.method + '|' + e.path + '|' + e.status; }
+
+    function render(entries) {
+        var el = document.getElementById('feed');
+        if (!entries || entries.length === 0) {
+            el.innerHTML = '<div class="empty">Waiting for activity...</div>';
+            lastKeys = new Set();
+            return;
+        }
+        var newKeys = new Set();
+        var html = '';
+        for (var i = 0; i < entries.length; i++) {
+            var e = entries[i];
+            var k = keyOf(e);
+            newKeys.add(k);
+            var isNew = !lastKeys.has(k);
+            html += '<div class="row' + (isNew ? ' new' : '') + '">';
+            html += '<div class="col-time">' + esc(timeAgo(e.time)) + '</div>';
+            html += '<div class="col-country" title="' + esc(e.country) + '">' + countryFlag(e.country) + '</div>';
+            html += '<div class="col-method">' + esc(e.method) + '</div>';
+            html += '<div class="col-path" title="' + esc(e.path) + '">' + esc(e.path) + '</div>';
+            html += '<div class="col-status ' + statusClass(e.status) + '">' + esc(e.status) + '</div>';
+            html += '</div>';
+        }
+        el.innerHTML = html;
+        lastKeys = newKeys;
+    }
+
+    var entries = [];
+
+    function fetchFeed() {
+        fetch('/console.json', { cache: 'no-store' })
+            .then(function(r) { return r.ok ? r.json() : []; })
+            .then(function(data) {
+                entries = Array.isArray(data) ? data : [];
+                render(entries);
+                document.getElementById('status-text').textContent = 'Listening';
+            })
+            .catch(function() {
+                document.getElementById('status-text').textContent = 'Reconnecting';
+            });
+    }
+
+    // initial populate via XHR; doesn't wait for SSE
+    fetchFeed();
+
+    var poll = null;
+    function startPolling() {
+        if (poll) return;
+        poll = setInterval(fetchFeed, 5000);
+    }
+    function stopPolling() {
+        if (poll) { clearInterval(poll); poll = null; }
+    }
+
+    // drop duplicates if the initial XHR response and an SSE event describe the same hit
+    function entryKey(e) { return e.time + '|' + e.method + '|' + e.path + '|' + e.status; }
+    function alreadyPresent(entry) {
+        var k = entryKey(entry);
+        for (var i = 0; i < entries.length; i++) {
+            if (entryKey(entries[i]) === k) return true;
+        }
+        return false;
+    }
+
+    // try SSE for real-time updates; fall back to polling if it fails
+    var sse = null;
+    function openSSE() {
+        if (typeof EventSource === 'undefined') { startPolling(); return; }
+        try {
+            sse = new EventSource('/_stream');
+            sse.addEventListener('console', function(e) {
+                try {
+                    var entry = JSON.parse(e.data);
+                    if (alreadyPresent(entry)) return;
+                    entries.unshift(entry);
+                    if (entries.length > 50) entries = entries.slice(0, 50);
+                    render(entries);
+                    document.getElementById('status-text').textContent = 'Listening';
+                    stopPolling();
+                } catch(err) {}
+            });
+            sse.onerror = function() { startPolling(); };
+        } catch(e) { startPolling(); }
+    }
+    openSSE();
+
+    // safety net: if SSE hasn't delivered, fall back to polling
+    setTimeout(function() {
+        if (!sse || sse.readyState !== 1) startPolling();
+    }, 8000);
+
+    // pause both paths when tab is hidden; resume on focus
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            stopPolling();
+            if (sse) { try { sse.close(); } catch(e) {} sse = null; }
+        } else {
+            fetchFeed();
+            if (!sse) openSSE();
+        }
+    });
+
+    // smooth cross-page navigation when supported
+    if (document.startViewTransition) {
+        document.addEventListener('click', function(e) {
+            var a = e.target.closest('a[href^="/"]');
+            if (!a) return;
+            if (a.target || a.hasAttribute('download')) return;
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            var href = a.getAttribute('href');
+            if (!href || href.startsWith('//') || href.startsWith('#')) return;
+            e.preventDefault();
+            document.startViewTransition(function() { location.href = href; });
+        });
+    }
+
+    window.addEventListener('load', function() {
+        try {
+            var nav = performance.getEntriesByType('navigation')[0];
+            if (!nav) return;
+            var ms = Math.round(nav.responseEnd - nav.requestStart);
+            if (ms < 0 || ms > 60000) return;
+            var el = document.getElementById('served-time');
+            if (el) el.textContent = ms + ' ms';
+        } catch (e) {}
+    });
+</script>
+
+</body>
+</html>

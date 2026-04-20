@@ -1,0 +1,40 @@
+name = "helloesp-relay"
+main = "worker.js"
+compatibility_date = "2026-04-08"
+workers_dev = false
+preview_urls = false
+
+# set secret with: wrangler secret put WORKER_SECRET
+#
+# (optional) HMAC device auth, a second secret the ESP signs a challenge with:
+#   wrangler secret put HMAC_SECRET  # must match device_key in config.txt
+#
+# (optional) email notifications via SMTP2GO (skip to disable):
+# covers guestbook moderation alerts, dead-man switch, and backup failure / overdue alerts
+#   wrangler secret put SMTP2GO_KEY    # your SMTP2GO api key
+#   wrangler secret put NOTIFY_EMAIL   # where to send alerts
+#   wrangler secret put NOTIFY_FROM    # "HelloESP <noreply@helloesp.com>" (optional)
+#
+# (optional) dead-man's-switch threshold; default 6 hours, accepts fractional hours
+#   wrangler secret put DEADMAN_HOURS  # e.g. "12" or "0.5" for testing
+#
+# (optional) R2 backup bucket. If not bound, Worker falls back to emailing the bundle as an
+# attachment. Create the bucket once before deploying:
+#   wrangler r2 bucket create helloesp-backup
+
+routes = [
+  { pattern = "helloesp.com", custom_domain = true }
+]
+
+[durable_objects]
+bindings = [
+  { name = "ESP_RELAY", class_name = "EspRelay" }
+]
+
+[[r2_buckets]]
+binding = "BACKUP"
+bucket_name = "helloesp-backup"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["EspRelay"]

@@ -1,0 +1,1812 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HelloESP</title>
+    <meta name="description" content="This entire site runs on a chip with 520 KB of RAM. Every page, every sensor reading, served by a microcontroller.">
+    <meta name="author" content="Tech1k">
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#2686e6">
+    <meta property="og:title" content="HelloESP">
+    <meta property="og:site_name" content="HelloESP">
+    <meta property="og:description" content="This entire site runs on a chip with 520 KB of RAM. Every page, every sensor reading, served by a microcontroller.">
+    <meta property="og:image" content="https://helloesp.com/og-banner.jpg">
+    <meta property="og:image:type" content="image/jpeg">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="HelloESP: a website running on an ESP32">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://helloesp.com/">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="HelloESP">
+    <meta name="twitter:description" content="This entire site runs on a chip with 520 KB of RAM. Every page, every sensor reading, served by a microcontroller.">
+    <meta name="twitter:image" content="https://helloesp.com/og-banner.jpg">
+    <meta name="twitter:image:alt" content="HelloESP: a website running on an ESP32">
+    <link rel="canonical" href="https://helloesp.com/">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <link rel="alternate" type="application/rss+xml" title="HelloESP Changelog" href="/changelog.rss">
+    <link rel="alternate" type="application/rss+xml" title="HelloESP Guestbook" href="/guestbook.rss">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
+          integrity="sha384-/o6I2CkkWC//PSjvWC/eYN7l3xM3tJm8ZzVkCOfp//W05QcE3mlGskpoHB6XqI+B"
+          crossorigin="anonymous" referrerpolicy="no-referrer">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"
+            integrity="sha384-bs/nf9FbdNouRbMiFcrcZfLXYPKiPaGVGplVbv7dLGECccEXDW+S3zjqSKR5ZEaD"
+            crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-geo@4.3.4/build/index.umd.min.js"
+            integrity="sha384-w1pUD3mXXBR/E/GTwT4uFKy89MVbiK9B2muZoTm4RLgdZM9u1xnIgzUlixoW/NLR"
+            crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        :root {
+            --bg:    #f8f7f4;
+            --ink:   #1a1a1a;
+            --mid:   #888;
+            --faint: #ccc;
+        }
+
+        html { font-size: 16px; }
+
+        body {
+            background: var(--bg);
+            color: var(--ink);
+            font-family: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", monospace;
+            min-height: 100vh;
+            display: grid;
+            grid-template-rows: 1fr auto;
+        }
+
+        main {
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 80px 24px 64px;
+            width: 100%;
+        }
+
+        /* header */
+
+        .top-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            row-gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+        }
+        @media (max-width: 480px) {
+            .top-links { gap: 14px; font-size: 10px; }
+        }
+        .site-name {
+            font-size: 13px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--mid);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+        .site-name:hover { color: var(--ink); }
+        .top-links {
+            display: flex;
+            gap: 16px;
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+        .top-links a {
+            color: var(--mid);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+        .top-links a:hover { color: var(--ink); }
+
+        h1 {
+            font-size: clamp(36px, 6vw, 56px);
+            font-weight: 400;
+            letter-spacing: -0.02em;
+            line-height: 1.1;
+            margin-bottom: 20px;
+        }
+        @media (max-width: 420px) { h1 br { display: none; } }
+
+        .desc {
+            font-size: 13px;
+            line-height: 1.8;
+            color: var(--mid);
+            margin-bottom: 48px;
+            max-width: 540px;
+        }
+
+        .desc a {
+            color: var(--ink);
+            text-underline-offset: 3px;
+            transition: color 0.15s;
+        }
+
+        .desc a:hover {
+            color: var(--mid);
+        }
+
+        .response-time {
+            font-size: 11px;
+            color: var(--mid);
+            margin-top: -32px;
+            margin-bottom: 36px;
+            min-height: 16px;
+        }
+
+        .sensor-alert {
+            display: none;
+            border: 1px solid #c0392b;
+            background: rgba(192, 57, 43, 0.08);
+            color: #c0392b;
+            padding: 10px 14px;
+            font-size: 12px;
+            line-height: 1.5;
+            margin-bottom: 32px;
+            border-radius: 2px;
+        }
+        .sensor-alert.show { display: block; }
+        .sensor-alert i { margin-right: 8px; }
+
+        /* countries */
+
+        .countries-section {
+            margin-bottom: 48px;
+        }
+
+        .map-wrap {
+            border: 1px solid var(--faint);
+            border-bottom: none;
+            padding: 12px;
+            background: var(--bg);
+        }
+
+        .countries-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1px;
+            background: var(--faint);
+            border: 1px solid var(--faint);
+        }
+
+        .country-tag {
+            background: var(--bg);
+            padding: 8px 12px;
+            font-size: 11px;
+            color: var(--mid);
+        }
+
+        .country-tag .cc {
+            color: var(--ink);
+            font-weight: 600;
+        }
+
+        /* stats */
+
+        .stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 1px;
+            background: var(--faint);
+            border: 1px solid var(--faint);
+            margin-bottom: 48px;
+        }
+
+        .stat {
+            background: var(--bg);
+            padding: 20px;
+        }
+
+        .stat-wide { grid-column: 1 / -1; }
+
+        .stat-label {
+            font-size: 10px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--mid);
+            margin-bottom: 8px;
+        }
+
+        .stat-value {
+            font-size: 22px;
+            color: var(--ink);
+            line-height: 1;
+        }
+
+        .stat-value.loading {
+            color: var(--faint);
+        }
+
+        .stat-value.loading::after {
+            content: '...';
+        }
+
+        .stat-sub {
+            font-size: 11px;
+            color: var(--mid);
+            margin-top: 4px;
+        }
+
+        .live-dot {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #0a8b4a;
+            margin-left: 4px;
+            vertical-align: 1px;
+            animation: live-pulse 1.4s ease-in-out infinite;
+        }
+        .live-dot.stale {
+            background: var(--faint);
+            animation: none;
+            opacity: 0.6;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .live-dot { animation: none; }
+        }
+        a:focus-visible,
+        button:focus-visible,
+        input:focus-visible,
+        textarea:focus-visible {
+            outline: 2px solid var(--ink);
+            outline-offset: 2px;
+            border-radius: 2px;
+        }
+        @keyframes live-pulse {
+            0%, 100% { opacity: 0.4; }
+            50%      { opacity: 1; }
+        }
+
+        .outdoor { margin-bottom: 48px; }
+        .outdoor-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 14px;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .outdoor-head .section-label { margin-bottom: 0; }
+        .outdoor-meta {
+            font-size: 10px;
+            color: var(--mid);
+            letter-spacing: 0.05em;
+        }
+        .outdoor-card {
+            background: var(--faint);
+            padding: 24px 20px 20px;
+        }
+        .outdoor-condition {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 22px;
+        }
+        .outdoor-icon { font-size: 38px; line-height: 1; }
+        .outdoor-condition-text { font-size: 17px; font-weight: 500; }
+        .outdoor-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 14px 20px;
+        }
+        .outdoor-cell .cell-label {
+            font-size: 10px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--mid);
+            margin-bottom: 3px;
+        }
+        .outdoor-cell .cell-value {
+            font-size: 15px;
+            font-weight: 500;
+        }
+        .outdoor-attribution {
+            font-size: 10px;
+            color: var(--mid);
+            margin-top: 18px;
+            opacity: 0.7;
+        }
+        .outdoor-attribution a { color: var(--mid); }
+        .outdoor-attribution a:hover { color: var(--ink); }
+        @media (max-width: 480px) {
+            .outdoor-grid { grid-template-columns: 1fr 1fr; }
+        }
+
+        .live-ticker {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 12px;
+            color: var(--mid);
+            text-decoration: none;
+            padding: 10px 14px;
+            border: 1px solid var(--faint);
+            margin-bottom: 48px;
+            transition: border-color 0.15s, color 0.15s;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+        .live-ticker:hover { border-color: var(--ink); color: var(--ink); }
+        .ticker-body {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .ticker-empty { font-style: italic; opacity: 0.7; }
+        .ticker-flag   { font-size: 14px; }
+        .ticker-method { font-size: 10px; letter-spacing: 0.06em; opacity: 0.7; }
+        .ticker-path   { overflow: hidden; text-overflow: ellipsis; }
+        .ticker-time   { font-size: 11px; opacity: 0.6; flex-shrink: 0; }
+        .ticker-cta    { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; flex-shrink: 0; opacity: 0.8; }
+        @media (max-width: 560px) {
+            .ticker-cta { display: none; }
+        }
+
+        /* section label */
+
+        .section-label {
+            font-size: 10px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--mid);
+            margin-bottom: 16px;
+        }
+
+        /* date picker */
+
+        .chart-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+
+        .chart-header .section-label { margin-bottom: 0; }
+
+        .date-picker {
+            display: flex;
+            align-items: center;
+            gap: 1px;
+            background: var(--faint);
+            border: 1px solid var(--faint);
+        }
+
+        .date-btn {
+            background: var(--bg);
+            border: none;
+            color: var(--mid);
+            font-family: inherit;
+            font-size: 10px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            padding: 7px 12px;
+            cursor: pointer;
+            transition: color 0.15s, background 0.15s;
+            white-space: nowrap;
+        }
+
+        .date-btn:hover { color: var(--ink); }
+        .date-btn:disabled { opacity: 0.3; cursor: default; }
+
+        .date-display {
+            background: var(--bg);
+            font-family: inherit;
+            font-size: 10px;
+            letter-spacing: 0.08em;
+            color: var(--ink);
+            padding: 7px 12px;
+            min-width: 100px;
+            text-align: center;
+        }
+
+        /* chart */
+
+        .chart-section { margin-bottom: 48px; }
+
+        .history-cta {
+            text-align: center;
+            margin: -32px 0 48px;
+        }
+        .history-cta a {
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--mid);
+            text-decoration: none;
+            padding: 8px 16px;
+            border: 1px solid var(--faint);
+            transition: color 0.15s, border-color 0.15s;
+        }
+        .history-cta a:hover {
+            color: var(--ink);
+            border-color: var(--mid);
+        }
+
+        .chart-nav {
+            display: flex;
+            gap: 1px;
+            background: var(--faint);
+            border: 1px solid var(--faint);
+            margin-bottom: 1px;
+            flex-wrap: wrap;
+        }
+
+        .chart-btn {
+            background: var(--bg);
+            border: none;
+            color: var(--mid);
+            font-family: inherit;
+            font-size: 10px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            padding: 10px 14px;
+            cursor: pointer;
+            transition: color 0.15s, background 0.15s;
+            white-space: nowrap;
+        }
+
+        .chart-btn:hover { color: var(--ink); }
+
+        .chart-btn.active {
+            background: var(--ink);
+            color: var(--bg);
+        }
+
+        .chart-wrap {
+            background: var(--bg);
+            border: 1px solid var(--faint);
+            border-top: none;
+            padding: 20px;
+            position: relative;
+            height: 220px;
+        }
+
+        .chart-empty {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            color: var(--mid);
+        }
+
+        /* photos */
+
+        .photos { margin-bottom: 48px; }
+
+        .carousel {
+            position: relative;
+            overflow: hidden;
+            aspect-ratio: 16 / 9;
+            background: var(--faint);
+        }
+
+        .carousel-track {
+            display: flex;
+            width: 500%;
+            height: 100%;
+            transition: transform 0.4s ease;
+        }
+
+        .carousel-track img,
+        .carousel-track video {
+            width: 20%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+            flex-shrink: 0;
+        }
+
+        /* hide volume controls on the boot video; it has no audio track */
+        .carousel-track video::-webkit-media-controls-volume-slider,
+        .carousel-track video::-webkit-media-controls-mute-button {
+            display: none !important;
+        }
+
+        .carousel-caption {
+            font-size: 11px;
+            color: var(--mid);
+            margin-top: 10px;
+        }
+
+        .carousel-nav {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .carousel-btn {
+            background: none;
+            border: 1px solid var(--faint);
+            color: var(--mid);
+            width: 28px;
+            height: 28px;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: border-color 0.15s, color 0.15s;
+            font-family: inherit;
+        }
+
+        .carousel-btn:hover {
+            border-color: var(--ink);
+            color: var(--ink);
+        }
+
+        .carousel-dots { display: flex; gap: 8px; }
+
+        .carousel-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--faint);
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .carousel-dot.active { background: var(--ink); }
+
+        /* changelog */
+
+        .log { margin-bottom: 48px; }
+
+        .log-entry {
+            display: grid;
+            grid-template-columns: 88px 1fr;
+            gap: 16px;
+            padding: 12px 0;
+            border-top: 1px solid var(--faint);
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .log-entry:last-child { border-bottom: 1px solid var(--faint); }
+
+        .log-date {
+            color: var(--mid);
+            font-size: 11px;
+            padding-top: 2px;
+        }
+
+        .log-text { color: var(--ink); }
+        .log-text a { color: inherit; text-underline-offset: 3px; }
+
+        .log-entry.hidden { display: none; }
+        .log-toggle {
+            background: none;
+            border: none;
+            color: var(--mid);
+            font-family: inherit;
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            cursor: pointer;
+            padding: 12px 0;
+            margin-top: 4px;
+            border-top: 1px solid var(--faint);
+            width: 100%;
+            text-align: left;
+        }
+        .log-toggle:hover { color: var(--ink); }
+
+        /* footer */
+
+        footer {
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 24px;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px solid var(--faint);
+            font-size: 11px;
+            color: var(--mid);
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        footer a {
+            color: var(--mid);
+            text-decoration: none;
+            letter-spacing: 0.08em;
+            transition: color 0.15s;
+        }
+
+        footer a:hover { color: var(--ink); }
+
+        .footer-links {
+            display: flex;
+            gap: 20px;
+            list-style: none;
+        }
+
+        .served {
+            color: var(--mid);
+            opacity: 0.7;
+        }
+        .served:not(:empty)::before {
+            content: ' \2022 ';
+            margin: 0 2px;
+        }
+        @media (max-width: 480px) {
+            .served { display: none; }
+        }
+
+        /* dark mode */
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg:    #111110;
+                --ink:   #e8e6e1;
+                --mid:   #666;
+                --faint: #2a2a28;
+            }
+
+            .stats { background: var(--faint); }
+            .stat  { background: #1a1918; }
+            .carousel { background: #1a1918; }
+            .country-tag { background: #1a1918; }
+            .map-wrap { background: #1a1918; }
+            .chart-nav  { background: var(--faint); }
+            .chart-btn  { background: #1a1918; }
+            .chart-wrap { background: #1a1918; }
+            .chart-btn.active { background: var(--ink); color: #111110; }
+            .date-picker { background: var(--faint); }
+            .date-btn    { background: #1a1918; }
+            .date-display { background: #1a1918; }
+            .live-dot    { background: #4fc08d; }
+            .live-dot.stale { background: var(--faint); }
+            .outdoor-card { background: #1a1918; }
+        }
+
+        @media (max-width: 640px) {
+            main { padding: 60px 16px 48px; }
+        }
+
+        @media (max-width: 480px) {
+            .stats { grid-template-columns: 1fr 1fr; }
+            .log-entry { grid-template-columns: 1fr; gap: 2px; }
+            .log-date { padding-top: 0; }
+            .chart-btn { padding: 8px 10px; }
+        }
+    </style>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "WebSite",
+          "@id": "https://helloesp.com/#website",
+          "url": "https://helloesp.com/",
+          "name": "HelloESP",
+          "description": "A website served entirely by an ESP32 microcontroller with 520 KB of RAM.",
+          "inLanguage": "en",
+          "publisher": { "@id": "https://helloesp.com/#person" }
+        },
+        {
+          "@type": "Person",
+          "@id": "https://helloesp.com/#person",
+          "name": "Kristian Kramer",
+          "alternateName": "Tech1k",
+          "url": "https://tech1k.com",
+          "sameAs": [
+            "https://github.com/Tech1k",
+            "https://github.com/Tech1k/helloesp"
+          ]
+        }
+      ]
+    }
+    </script>
+</head>
+<body>
+
+<main>
+
+    <nav class="top-nav" aria-label="Primary">
+        <a class="site-name" href="/"><img src="/favicon.png" alt="" style="height:14px;vertical-align:-1px;margin-right:4px;">HelloESP</a>
+        <ul class="top-links">
+            <li><a href="/guestbook">Guestbook</a></li>
+            <li><a href="/history">History</a></li>
+            <li><a href="/console">Console</a></li>
+        </ul>
+    </nav>
+
+    <h1>A website,<br>hosted on an ESP32.</h1>
+
+    <p class="desc">
+        This entire site runs on a chip with 520 KB of RAM.
+        Every page, every sensor reading, served by a microcontroller.
+        <a href="/guestbook">Sign the guestbook</a> or view the
+        <a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener">source</a>.
+    </p>
+
+    <div class="response-time" id="response_time"></div>
+
+    <div class="sensor-alert" id="sensor_alert">
+        <i class="fa-solid fa-triangle-exclamation"></i><span id="sensor_alert_text"></span>
+    </div>
+
+    <!-- stats -->
+    <div class="stats">
+        <!-- server -->
+        <div class="stat">
+            <div class="stat-label"><i class="fa-regular fa-user"></i> Visitors</div>
+            <div class="stat-value loading" id="visitors"></div>
+            <div class="stat-sub" id="daily_visitors"></div>
+        </div>
+        <div class="stat">
+            <div class="stat-label"><i class="fa-regular fa-clock"></i> Uptime</div>
+            <div class="stat-value loading" id="uptime"></div>
+        </div>
+        <div class="stat">
+            <div class="stat-label"><i class="fa-solid fa-wifi"></i> Signal</div>
+            <div class="stat-value loading" id="rssi"></div>
+            <div class="stat-sub" id="rssi_sub"></div>
+        </div>
+        <!-- chip -->
+        <div class="stat">
+            <div class="stat-label"><i class="fa-solid fa-microchip"></i> Memory Used</div>
+            <div class="stat-value loading" id="memory"></div>
+            <div class="stat-sub" id="memory_sub"></div>
+        </div>
+        <div class="stat">
+            <div class="stat-label"><i class="fa-solid fa-fire-flame-simple"></i> CPU Temp</div>
+            <div class="stat-value loading" id="cpu_temp"></div>
+            <div class="stat-sub" id="cpu_temp_sub"></div>
+        </div>
+        <div class="stat">
+            <div class="stat-label"><i class="fa-solid fa-sd-card"></i> SD Card</div>
+            <div class="stat-value loading" id="sd_used"></div>
+            <div class="stat-sub" id="sd_free"></div>
+        </div>
+        <!-- environment -->
+        <div class="stat">
+            <div class="stat-label"><i class="fa-solid fa-temperature-half"></i> Temperature</div>
+            <div class="stat-value loading" id="temperature"></div>
+            <div class="stat-sub" id="temperature_sub"></div>
+        </div>
+        <div class="stat">
+            <div class="stat-label"><i class="fa-solid fa-droplet"></i> Humidity</div>
+            <div class="stat-value loading" id="humidity"></div>
+            <div class="stat-sub" id="humidity_sub"></div>
+        </div>
+        <div class="stat">
+            <div class="stat-label"><i class="fa-solid fa-sun"></i> Heat Index</div>
+            <div class="stat-value loading" id="heat_index"></div>
+            <div class="stat-sub" id="heat_index_sub"></div>
+        </div>
+        <!-- air -->
+        <div class="stat">
+            <div class="stat-label"><i class="fa-solid fa-wind"></i> CO&#x2082;</div>
+            <div class="stat-value loading" id="co2"></div>
+            <div class="stat-sub" id="co2_sub"></div>
+        </div>
+        <div class="stat">
+            <div class="stat-label"><i class="fa-solid fa-smog"></i> VOC</div>
+            <div class="stat-value loading" id="voc"></div>
+            <div class="stat-sub" id="voc_sub"></div>
+        </div>
+        <div class="stat">
+            <div class="stat-label"><i class="fa-solid fa-mountain"></i> Altitude</div>
+            <div class="stat-value loading" id="altitude"></div>
+            <div class="stat-sub" id="pressure"></div>
+        </div>
+        <div class="stat stat-wide">
+            <div class="stat-label"><i class="fa-solid fa-clock-rotate-left"></i> Last updated <span class="live-dot stale" id="live-dot" role="status" aria-label="connection: stale"></span> <span id="live-label">stale</span></div>
+            <div class="stat-value" id="last_updated" style="font-size:14px;color:var(--mid);" aria-live="polite" aria-atomic="true">...</div>
+        </div>
+    </div>
+
+    <p style="font-size:11px;color:var(--mid);margin:-40px 0 24px;opacity:0.7;">
+        <i class="fa-solid fa-circle-info" style="margin-right:6px;"></i>Sensors are inside a sealed frame, so readings reflect the enclosure, not the room.
+    </p>
+
+    <section class="outdoor" id="outdoor-section" style="display:none;">
+        <div class="outdoor-head">
+            <div class="section-label"><i class="fa-solid fa-cloud-sun"></i> Outdoor</div>
+            <div class="outdoor-meta"><span id="outdoor-location">Denver, CO</span> &middot; <span id="outdoor-updated">updated recently</span></div>
+        </div>
+        <div class="outdoor-card">
+            <div class="outdoor-condition">
+                <span class="outdoor-icon" id="outdoor-icon">&#9728;</span>
+                <span class="outdoor-condition-text" id="outdoor-condition-text">&mdash;</span>
+            </div>
+            <div class="outdoor-grid">
+                <div class="outdoor-cell"><div class="cell-label">Temperature</div><div class="cell-value" id="outdoor-temp">&mdash;</div></div>
+                <div class="outdoor-cell"><div class="cell-label">Humidity</div><div class="cell-value" id="outdoor-humidity">&mdash;</div></div>
+                <div class="outdoor-cell"><div class="cell-label">Wind</div><div class="cell-value" id="outdoor-wind">&mdash;</div></div>
+                <div class="outdoor-cell"><div class="cell-label">Pressure</div><div class="cell-value" id="outdoor-pressure">&mdash;</div></div>
+            </div>
+            <div class="outdoor-attribution">Data from <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a> &middot; Refreshed hourly</div>
+        </div>
+    </section>
+
+    <div class="section-label"><i class="fa-solid fa-bolt"></i> Live activity</div>
+    <a class="live-ticker" href="/console" aria-label="See full live console">
+        <span class="ticker-body" id="ticker-body"><span class="ticker-empty">Waiting for a visit...</span></span>
+        <span class="ticker-cta">See all &rarr;</span>
+    </a>
+
+    <!-- countries -->
+    <div class="countries-section">
+        <div class="section-label"><i class="fa-solid fa-globe"></i> <span id="countries-label">Visitors</span></div>
+        <div class="map-wrap">
+            <canvas id="country-map" role="img" aria-label="World map of visitor countries. A full list with counts follows."></canvas>
+        </div>
+        <div class="countries-list" id="countries-list"></div>
+    </div>
+
+    <!-- chart -->
+    <div class="chart-section">
+        <div class="chart-header">
+            <div class="section-label"><i class="fa-solid fa-chart-line"></i> Charts</div>
+            <div class="date-picker">
+                <button class="date-btn" id="date-prev" onclick="stepDate(-1)" aria-label="Previous day">&#8592;</button>
+                <div class="date-display" id="date-display">Today</div>
+                <button class="date-btn" id="date-next" onclick="stepDate(1)" disabled aria-label="Next day">&#8594;</button>
+            </div>
+        </div>
+        <div class="chart-nav">
+            <button class="chart-btn active" data-metric="temperature_c" data-label="Temperature (°C)">Temp</button>
+            <button class="chart-btn" data-metric="humidity_percent" data-label="Humidity (%)">Humidity</button>
+            <button class="chart-btn" data-metric="heat_index_c" data-label="Heat Index (°C)">Heat Index</button>
+            <button class="chart-btn" data-metric="co2_ppm" data-label="CO₂ (ppm)">CO&#x2082;</button>
+            <button class="chart-btn" data-metric="voc_ppb" data-label="VOC (ppb)">VOC</button>
+            <button class="chart-btn" data-metric="requests_interval" data-label="Requests / 5 min">Requests</button>
+            <button class="chart-btn" data-metric="rssi" data-label="Signal (dBm)">Signal</button>
+            <button class="chart-btn" data-metric="memory_percent" data-label="Memory (%)">Memory</button>
+            <button class="chart-btn" data-metric="cpu_temp_c" data-label="CPU Temp (°C)">CPU Temp</button>
+            <button class="chart-btn" data-metric="pressure_hpa" data-label="Pressure (hPa)">Pressure</button>
+            <button class="chart-btn" data-metric="altitude_ft" data-label="Altitude (ft)">Altitude</button>
+        </div>
+        <div class="chart-wrap">
+            <div class="chart-empty" id="chart-empty">Loading today's data...</div>
+            <canvas id="chart" style="display:none;" role="img" aria-label="Sensor trend chart. Current values are available in the stats grid above."></canvas>
+        </div>
+    </div>
+
+    <div class="history-cta">
+        <a href="/history">View full stats history &rarr;</a>
+    </div>
+
+    <!-- photos -->
+    <div class="photos">
+        <div class="section-label"><i class="fa-regular fa-image"></i> Photos</div>
+        <div class="carousel">
+            <div class="carousel-track" id="track">
+                <img src="/helloesp-framed.jpg" alt="HelloESP in its display frame" loading="lazy">
+                <video id="boot-video" src="/helloesp-boot.mp4"
+                       poster="/helloesp-boot-poster.jpg"
+                       muted playsinline preload="none" controls
+                       controlslist="nodownload noremoteplayback noplaybackrate"
+                       disablepictureinpicture
+                       aria-label="HelloESP boot sequence"></video>
+                <img src="/esp32-webserver.jpg" alt="The ESP32 that hosted the previous version of this site" loading="lazy">
+                <img src="/esp32-webserver-bme280.jpg" alt="ESP32 with BME280 sensor" loading="lazy">
+                <img src="/esp8266-webserver.jpg" alt="The original ESP8266 that started it all" loading="lazy">
+            </div>
+        </div>
+        <div class="carousel-caption" id="caption">HelloESP in its display frame, 4/18/2026</div>
+        <div class="carousel-nav">
+            <button class="carousel-btn" onclick="move(-1)" aria-label="Previous photo">&#8592;</button>
+            <button class="carousel-btn" onclick="move(1)" aria-label="Next photo">&#8594;</button>
+            <div class="carousel-dots">
+                <div class="carousel-dot active" onclick="go(0)"></div>
+                <div class="carousel-dot" onclick="go(1)"></div>
+                <div class="carousel-dot" onclick="go(2)"></div>
+                <div class="carousel-dot" onclick="go(3)"></div>
+                <div class="carousel-dot" onclick="go(4)"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- changelog -->
+    <div class="log">
+        <div class="section-label"><i class="fa-solid fa-list"></i> Changelog</div>
+        <div class="log-entry">
+            <div class="log-date">Apr 19, 2026</div>
+            <div class="log-text">Public relaunch on a fresh ESP32. Full rebuild: air quality sensors, historical charts, guestbook with moderation, admin panel, OLED dashboard, daily off-site backups, and a Cloudflare Worker relay so it can live on WiFi without a tunnel.</div>
+        </div>
+        <div class="log-entry log-older hidden">
+            <div class="log-date">Nov 2023</div>
+            <div class="log-text">The original ESP32 burned out after a little over 500 days online. Site went into a read-only archive of stats, news, and photos until the relaunch.</div>
+        </div>
+        <div class="log-entry log-older hidden">
+            <div class="log-date">Jan 30, 2023</div>
+            <div class="log-text">Published the first "final" version of HelloESP.</div>
+        </div>
+        <div class="log-entry log-older hidden">
+            <div class="log-date">Jul 6, 2022</div>
+            <div class="log-text">Added a photo of the ESP32 with the BME280 attached.</div>
+        </div>
+        <div class="log-entry log-older hidden">
+            <div class="log-date">Jul 5, 2022</div>
+            <div class="log-text">Images now served from the ESP32 itself. Migrated to ESPAsyncWebServer.</div>
+        </div>
+        <div class="log-entry log-older hidden">
+            <div class="log-date">Jul 4, 2022</div>
+            <div class="log-text">Visitor counter now runs fully off the ESP32 via SPIFFS.</div>
+        </div>
+        <div class="log-entry log-older hidden">
+            <div class="log-date">Jul 2, 2022</div>
+            <div class="log-text">Added BME280 sensor readings: temperature, humidity, and altitude.</div>
+        </div>
+        <div class="log-entry log-older hidden">
+            <div class="log-date">Jun 27, 2022</div>
+            <div class="log-text">HelloESP launched. A little project showing what these tiny boards can do.</div>
+        </div>
+        <button class="log-toggle" id="log-toggle" onclick="toggleLog()">Show older entries</button>
+    </div>
+
+</main>
+
+<footer>
+    <span>Made by <a href="https://tech1k.com" target="_blank" rel="noopener">Tech1k</a><span class="served" id="served-time"></span></span>
+    <ul class="footer-links">
+        <li><a href="/guestbook"><i class="fa-solid fa-pen"></i> Guestbook</a></li>
+        <li><a href="/history"><i class="fa-solid fa-clock-rotate-left"></i> History</a></li>
+        <li><a href="/console"><i class="fa-solid fa-terminal"></i> Console</a></li>
+        <li><a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener"><i class="fa-brands fa-github"></i> GitHub</a></li>
+    </ul>
+</footer>
+
+<script>
+    console.log('%cHelloESP', 'font-size:20px;font-weight:bold');
+    console.log("You're looking at a website running on a $10 dev board with 520 KB of RAM.\nhttps://github.com/Tech1k/helloesp");
+
+    // smooth cross-page navigation when the browser supports it (Chrome/Edge 111+, Safari 18+, Firefox 129+)
+    if (document.startViewTransition) {
+        document.addEventListener('click', function(e) {
+            var a = e.target.closest('a[href^="/"]');
+            if (!a) return;
+            if (a.target || a.hasAttribute('download')) return;
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            var href = a.getAttribute('href');
+            if (!href || href.startsWith('//') || href.startsWith('#')) return;
+            e.preventDefault();
+            document.startViewTransition(function() { location.href = href; });
+        });
+    }
+
+    window.addEventListener('load', function() {
+        try {
+            var nav = performance.getEntriesByType('navigation')[0];
+            if (!nav) return;
+            var ms = Math.round(nav.responseEnd - nav.requestStart);
+            if (ms < 0 || ms > 60000) return;
+            var el = document.getElementById('served-time');
+            if (el) el.textContent = ms + ' ms';
+        } catch (e) {}
+    });
+
+    /* carousel */
+    const captions = [
+        'HelloESP in its display frame, 4/18/2026',
+        'Boot sequence, 4/18/2026',
+        'The ESP32 that hosted the previous version of this site, 3/1/2023',
+        'ESP32 with BME280 sensor, 7/5/2022',
+        'The original ESP8266 that started it all, 6/27/2022'
+    ];
+    const TOTAL = 5;
+    let cur = 0;
+    let autoTimer = null;
+
+    function startAuto() {
+        if (autoTimer) return;
+        autoTimer = setInterval(function() { move(1); }, 6000);
+    }
+    function stopAuto() {
+        if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+    }
+
+    function go(n) {
+        cur = ((n % TOTAL) + TOTAL) % TOTAL;
+        document.getElementById('track').style.transform = 'translateX(-' + (cur * 100 / TOTAL) + '%)';
+        document.getElementById('caption').textContent = captions[cur];
+        document.querySelectorAll('.carousel-dot').forEach(function(d, i) {
+            d.classList.toggle('active', i === cur);
+        });
+        var vid = document.getElementById('boot-video');
+        if (vid && cur !== 1) vid.pause();
+    }
+    function move(dir) {
+        go(cur + dir);
+        // Reset the auto-advance clock so a manual click doesn't get stomped by an imminent auto-slide.
+        stopAuto();
+        startAuto();
+    }
+    startAuto();
+
+    (function() {
+        var vid = document.getElementById('boot-video');
+        if (!vid) return;
+        vid.addEventListener('play', stopAuto);
+        vid.addEventListener('pause', startAuto);
+        vid.addEventListener('ended', startAuto);
+    })();
+
+    /* changelog toggle */
+    function toggleLog() {
+        var older = document.querySelectorAll('.log-older');
+        var btn = document.getElementById('log-toggle');
+        var expanded = !older[0].classList.contains('hidden');
+        for (var i = 0; i < older.length; i++) {
+            older[i].classList.toggle('hidden');
+        }
+        btn.textContent = expanded ? 'Show older entries' : 'Show fewer entries';
+    }
+
+    /* uptime formatter */
+    function formatUptime(str) {
+        var m = str.match(/(\d+) days?,\s*(\d+) hours?,\s*(\d+) minutes?,\s*(\d+) seconds?/);
+        if (!m) return str;
+        var d = +m[1], h = +m[2], min = +m[3], s = +m[4];
+        if (d > 0)   return d + 'd ' + h + 'h';
+        if (h > 0)   return h + 'h ' + min + 'm';
+        if (min > 0) return min + 'm ' + s + 's';
+        return s + 's';
+    }
+
+    /* stats */
+    var prevStats = {};
+    function trend(key, val) {
+        if (prevStats[key] == null) { prevStats[key] = val; return ''; }
+        var arrow = val > prevStats[key] ? ' \u2197' : (val < prevStats[key] ? ' \u2198' : '');
+        prevStats[key] = val;
+        return arrow;
+    }
+
+    function co2Quality(ppm) {
+        if (ppm < 800)  return 'Good';
+        if (ppm < 1200) return 'Moderate';
+        return 'Poor';
+    }
+    function vocQuality(ppb) {
+        if (ppb < 250)  return 'Good';
+        if (ppb < 500)  return 'Moderate';
+        return 'Poor';
+    }
+    function humidityQuality(pct) {
+        if (pct < 30) return 'Dry';
+        if (pct > 60) return 'Humid';
+        return 'Comfortable';
+    }
+    function rssiQuality(dbm) {
+        if (dbm > -50) return 'Excellent';
+        if (dbm > -70) return 'Good';
+        return 'Weak';
+    }
+    function heatIndexQuality(f) {
+        if (f < 80) return 'Comfortable';
+        if (f < 90) return 'Caution';
+        return 'Danger';
+    }
+    function pressureTrend(hpa) {
+        if (prevStats['pres'] == null) { prevStats['pres'] = hpa; return 'Steady'; }
+        var diff = hpa - prevStats['pres'];
+        prevStats['pres'] = hpa;
+        if (diff > 0.5)  return 'Rising';
+        if (diff < -0.5) return 'Falling';
+        return 'Steady';
+    }
+
+    function setLive(live) {
+        var dot = document.getElementById('live-dot');
+        if (dot) {
+            dot.classList.toggle('stale', !live);
+            dot.setAttribute('aria-label', 'connection: ' + (live ? 'live' : 'stale'));
+        }
+        var label = document.getElementById('live-label');
+        if (label) label.textContent = live ? 'live' : 'stale';
+    }
+
+    // WMO weather code -> condition text + icon (Open-Meteo reference)
+    function wmoIcon(c) {
+        if (c === 0) return '\u2600';                    // ☀
+        if (c >= 1 && c <= 2) return '\u26C5';           // ⛅
+        if (c === 3) return '\u2601';                    // ☁
+        if (c === 45 || c === 48) return '\uD83C\uDF2B'; // 🌫
+        if (c >= 51 && c <= 57) return '\uD83C\uDF26';   // 🌦
+        if (c >= 61 && c <= 67) return '\uD83C\uDF27';   // 🌧
+        if (c >= 71 && c <= 77) return '\uD83C\uDF28';   // 🌨
+        if (c >= 80 && c <= 82) return '\uD83C\uDF26';   // 🌦
+        if (c >= 85 && c <= 86) return '\uD83C\uDF28';   // 🌨
+        if (c >= 95 && c <= 99) return '\u26C8';         // ⛈
+        return '\uD83C\uDF21';                           // 🌡
+    }
+    function wmoText(c) {
+        if (c === 0) return 'Clear';
+        if (c === 1) return 'Mostly clear';
+        if (c === 2) return 'Partly cloudy';
+        if (c === 3) return 'Overcast';
+        if (c === 45 || c === 48) return 'Fog';
+        if (c >= 51 && c <= 55) return 'Drizzle';
+        if (c >= 56 && c <= 57) return 'Freezing drizzle';
+        if (c >= 61 && c <= 65) return 'Rain';
+        if (c >= 66 && c <= 67) return 'Freezing rain';
+        if (c >= 71 && c <= 75) return 'Snow';
+        if (c === 77) return 'Snow grains';
+        if (c >= 80 && c <= 82) return 'Rain showers';
+        if (c >= 85 && c <= 86) return 'Snow showers';
+        if (c === 95) return 'Thunderstorm';
+        if (c >= 96 && c <= 99) return 'Thunderstorm with hail';
+        return 'Unknown';
+    }
+    function agoStr(ms) {
+        if (ms == null || ms < 0) return 'recently';
+        if (ms < 60000) return 'just now';
+        var m = Math.floor(ms / 60000);
+        if (m < 60) return 'updated ' + m + 'm ago';
+        var h = Math.floor(m / 60);
+        return 'updated ' + h + 'h ago';
+    }
+
+    function applyStats(s) {
+        try {
+            var el;
+
+            el = document.getElementById('uptime');
+                if (el) { el.classList.remove('loading'); el.textContent = formatUptime(s.uptime); }
+
+                el = document.getElementById('memory');
+                if (el) { el.classList.remove('loading'); el.textContent = s.memory.used_kb + ' KB' + trend('mem', s.memory.used_percent); }
+                el = document.getElementById('memory_sub');
+                if (el) el.textContent = s.memory.used_percent + '% used';
+
+                el = document.getElementById('visitors');
+                if (el) { el.classList.remove('loading'); el.textContent = s.visitors; }
+                el = document.getElementById('daily_visitors');
+                if (el) el.textContent = s.daily_visitors + ' today';
+
+                el = document.getElementById('temperature');
+                if (el) { el.classList.remove('loading'); el.textContent = s.temperature.fahrenheit + '\u00b0F' + trend('temp', s.temperature.fahrenheit); }
+                el = document.getElementById('temperature_sub');
+                if (el) el.textContent = s.temperature.celsius + '\u00b0C';
+
+                el = document.getElementById('humidity');
+                if (el) { el.classList.remove('loading'); el.textContent = s.humidity_percent + '%' + trend('hum', s.humidity_percent); }
+                el = document.getElementById('humidity_sub');
+                if (el) el.textContent = humidityQuality(s.humidity_percent);
+
+                el = document.getElementById('altitude');
+                if (el) { el.classList.remove('loading'); el.textContent = s.altitude_ft + ' ft'; }
+                el = document.getElementById('pressure');
+                if (el) el.textContent = s.pressure_hpa + ' hPa \u00b7 ' + pressureTrend(s.pressure_hpa);
+
+                el = document.getElementById('co2');
+                if (el) { el.classList.remove('loading'); el.textContent = s.co2_ppm + ' ppm' + trend('co2', s.co2_ppm); }
+                el = document.getElementById('co2_sub');
+                if (el) el.textContent = co2Quality(s.co2_ppm);
+
+                el = document.getElementById('voc');
+                if (el) { el.classList.remove('loading'); el.textContent = s.voc_ppb + ' ppb' + trend('voc', s.voc_ppb); }
+                el = document.getElementById('voc_sub');
+                if (el) el.textContent = vocQuality(s.voc_ppb);
+
+                el = document.getElementById('cpu_temp');
+                if (el) { el.classList.remove('loading'); el.textContent = s.cpu_temp.celsius + '\u00b0C' + trend('cpu', s.cpu_temp.celsius); }
+                el = document.getElementById('cpu_temp_sub');
+                if (el) el.textContent = s.cpu_temp.fahrenheit + '\u00b0F';
+
+                el = document.getElementById('heat_index');
+                if (el) { el.classList.remove('loading'); el.textContent = s.heat_index.fahrenheit + '\u00b0F'; }
+                el = document.getElementById('heat_index_sub');
+                if (el) el.textContent = s.heat_index.celsius + '\u00b0C \u00b7 ' + heatIndexQuality(s.heat_index.fahrenheit);
+
+                el = document.getElementById('rssi');
+                if (el) { el.classList.remove('loading'); el.textContent = s.rssi + ' dBm' + trend('rssi', s.rssi); }
+                el = document.getElementById('rssi_sub');
+                if (el) el.textContent = rssiQuality(s.rssi);
+
+                el = document.getElementById('sd_used');
+                if (el) { el.classList.remove('loading'); el.textContent = s.sd_used_mb + ' MB'; }
+                el = document.getElementById('sd_free');
+                if (el) el.textContent = s.sd_free_mb + ' MB free';
+
+                el = document.getElementById('last_updated');
+                if (el) el.textContent = new Date().toLocaleTimeString();
+
+                el = document.getElementById('response_time');
+                if (el) el.textContent = 'Response generated in ' + s.response_ms + 'ms';
+
+                var alert = document.getElementById('sensor_alert');
+                var alertText = document.getElementById('sensor_alert_text');
+                if (alert && alertText && s.sensors) {
+                    var bad = [];
+                    if (s.sensors.bme_ok === false) bad.push('BME280 (temperature, humidity, pressure)');
+                    if (s.sensors.ccs_ok === false) bad.push('CCS811 (CO\u2082, VOC)');
+                    if (bad.length > 0) {
+                        alertText.textContent = ' Sensor not responding: ' + bad.join(' and ') +
+                            '. Showing last known values until it recovers.';
+                        alert.classList.add('show');
+                    } else {
+                        alert.classList.remove('show');
+                    }
+                }
+
+                // outdoor section (Worker-injected; absent for LAN-only installs)
+                var outdoor = document.getElementById('outdoor-section');
+                if (s.outdoor) {
+                    var o = s.outdoor;
+                    if (outdoor) outdoor.style.display = '';
+                    el = document.getElementById('outdoor-location');
+                    if (el && o.location) el.textContent = o.location;
+                    el = document.getElementById('outdoor-updated');
+                    if (el) el.textContent = agoStr(o.age_ms);
+                    el = document.getElementById('outdoor-icon');
+                    if (el) el.textContent = wmoIcon(o.weather_code);
+                    el = document.getElementById('outdoor-condition-text');
+                    if (el) el.textContent = wmoText(o.weather_code);
+                    el = document.getElementById('outdoor-temp');
+                    if (el) el.textContent = Math.round(o.temp_f * 10) / 10 + '\u00b0F';
+                    el = document.getElementById('outdoor-humidity');
+                    if (el) el.textContent = Math.round(o.humidity) + '%';
+                    el = document.getElementById('outdoor-wind');
+                    if (el) el.textContent = Math.round(o.wind_mph) + ' mph';
+                    el = document.getElementById('outdoor-pressure');
+                    // convert hPa to inHg: 1 hPa = 0.02953 inHg
+                    if (el) el.textContent = (o.pressure_hpa * 0.02953).toFixed(2) + ' inHg';
+                } else {
+                    if (outdoor) outdoor.style.display = 'none';
+                }
+
+            lastStatsAt = Date.now();
+            setLive(true);
+        } catch(e) { setLive(false); }
+    }
+
+    var lastStatsAt = 0;
+
+    function loadStats() {
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status !== 200) { setLive(false); return; }
+            try { applyStats(JSON.parse(this.responseText)); }
+            catch(e) { setLive(false); }
+        };
+        xhr.onerror = function() { setLive(false); };
+        xhr.open('GET', '/stats', true);
+        xhr.send();
+    }
+
+    // initial XHR load so the page populates fast, doesn't wait for SSE
+    loadStats();
+
+    var pollTimer = null;
+    function startPolling() {
+        if (pollTimer) return;
+        pollTimer = setInterval(function() {
+            if (document.visibilityState === 'visible') loadStats();
+        }, 30000);
+    }
+    function stopPolling() {
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    }
+
+    // "right now" ticker: last request for the homepage snippet
+    var tickerEntry = null;
+
+    function tickerFlag(code) {
+        if (!code || code.length !== 2 || code === '??') return '??';
+        try {
+            var cp = code.toUpperCase().split('').map(function(c) { return 127397 + c.charCodeAt(0); });
+            return String.fromCodePoint.apply(String, cp);
+        } catch (err) { return code; }
+    }
+    function tickerAgo(unixTime) {
+        var delta = Math.max(0, Math.floor(Date.now() / 1000) - unixTime);
+        if (delta < 5)    return 'now';
+        if (delta < 60)   return delta + 's ago';
+        if (delta < 3600) return Math.floor(delta / 60) + 'm ago';
+        return Math.floor(delta / 3600) + 'h ago';
+    }
+    function renderTicker() {
+        var body = document.getElementById('ticker-body');
+        if (!body) return;
+        if (!tickerEntry) {
+            body.innerHTML = '<span class="ticker-empty">Waiting for a visit...</span>';
+            return;
+        }
+        var e = tickerEntry;
+        var html = '';
+        html += '<span class="ticker-flag" title="' + esc(e.country) + '">' + tickerFlag(e.country) + '</span>';
+        html += '<span class="ticker-method">' + esc(e.method) + '</span>';
+        var pathSafe = document.createElement('span');
+        pathSafe.className = 'ticker-path';
+        pathSafe.textContent = e.path;
+        html += pathSafe.outerHTML;
+        html += '<span class="ticker-time">' + tickerAgo(e.time) + '</span>';
+        body.innerHTML = html;
+    }
+    // seed the ticker with the latest entry on load
+    fetch('/console.json', { cache: 'no-store' })
+        .then(function(r) { return r.ok ? r.json() : []; })
+        .then(function(data) {
+            if (Array.isArray(data) && data.length > 0) {
+                tickerEntry = data[0];
+                renderTicker();
+            }
+        })
+        .catch(function() {});
+    // refresh the time-ago text every 5s even without new events
+    setInterval(renderTicker, 5000);
+
+    // try SSE for live ~5s updates; if it errors, fall back to polling
+    var sse = null;
+    if (typeof EventSource !== 'undefined') {
+        try {
+            sse = new EventSource('/_stream');
+            sse.addEventListener('stats', function(e) {
+                try { applyStats(JSON.parse(e.data)); stopPolling(); }
+                catch(err) {}
+            });
+            sse.addEventListener('console', function(e) {
+                try {
+                    tickerEntry = JSON.parse(e.data);
+                    renderTicker();
+                } catch(err) {}
+            });
+            sse.onerror = function() { startPolling(); };
+        } catch(e) { startPolling(); }
+    } else {
+        startPolling();
+    }
+
+    // safety net: if SSE hasn't produced data within 8s, start polling
+    setTimeout(function() {
+        if (Date.now() - lastStatsAt > 8000) startPolling();
+    }, 8000);
+
+    // staleness watchdog: flag the live-dot grey if no data in 15s
+    setInterval(function() {
+        if (lastStatsAt && Date.now() - lastStatsAt > 15000) setLive(false);
+    }, 3000);
+
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            // close SSE when tab hides so we don't hold Worker resources in abandoned tabs
+            if (sse) { try { sse.close(); } catch (e) {} sse = null; }
+            stopPolling();
+        } else {
+            loadStats();
+            if (typeof EventSource !== 'undefined' && !sse) {
+                try {
+                    sse = new EventSource('/_stream');
+                    sse.addEventListener('stats', function(e) {
+                        try { applyStats(JSON.parse(e.data)); stopPolling(); }
+                        catch(err) {}
+                    });
+                    sse.addEventListener('console', function(e) {
+                        try { tickerEntry = JSON.parse(e.data); renderTicker(); }
+                        catch(err) {}
+                    });
+                    sse.onerror = function() { startPolling(); };
+                } catch(e) { startPolling(); }
+            }
+        }
+    });
+
+    /* countries */
+    var countryMap = null;
+    var worldData = null;
+
+    fetch('https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json', {
+        integrity: 'sha384-yOCJ+8ShBm8UDqtAVtAvxTDDf4gXo5edxl/YG0FmVC5OTmqVLl7utuVGBDEeZWHf',
+        credentials: 'omit',
+        referrerPolicy: 'no-referrer'
+    })
+    .then(function(r) { return r.ok ? r.json() : Promise.reject(r.status); })
+    .then(function(data) { worldData = data; loadCountries(); })
+    .catch(function() {});
+
+    // ISO 3166-1 numeric to alpha-2 lookup (common ones)
+    var numToAlpha2 = {"004":"AF","008":"AL","012":"DZ","020":"AD","024":"AO","028":"AG","032":"AR","036":"AU","040":"AT","044":"BS","048":"BH","050":"BD","051":"AM","056":"BE","060":"BM","064":"BT","068":"BO","070":"BA","072":"BW","076":"BR","084":"BZ","090":"SB","096":"BN","100":"BG","104":"MM","108":"BI","112":"BY","116":"KH","120":"CM","124":"CA","140":"CF","144":"LK","148":"TD","152":"CL","156":"CN","158":"TW","170":"CO","174":"KM","178":"CG","180":"CD","188":"CR","191":"HR","192":"CU","196":"CY","203":"CZ","204":"BJ","208":"DK","214":"DO","218":"EC","818":"EG","222":"SV","226":"GQ","231":"ET","232":"ER","233":"EE","234":"FO","242":"FJ","246":"FI","250":"FR","258":"PF","262":"DJ","266":"GA","268":"GE","270":"GM","275":"PS","276":"DE","288":"GH","300":"GR","308":"GD","316":"GU","320":"GT","324":"GN","328":"GY","332":"HT","340":"HN","344":"HK","348":"HU","352":"IS","356":"IN","360":"ID","364":"IR","368":"IQ","372":"IE","376":"IL","380":"IT","384":"CI","388":"JM","392":"JP","398":"KZ","400":"JO","404":"KE","408":"KP","410":"KR","414":"KW","417":"KG","418":"LA","422":"LB","426":"LS","428":"LV","430":"LR","434":"LY","438":"LI","440":"LT","442":"LU","450":"MG","454":"MW","458":"MY","462":"MV","466":"ML","470":"MT","478":"MR","480":"MU","484":"MX","492":"MC","496":"MN","498":"MD","499":"ME","504":"MA","508":"MZ","512":"OM","516":"NA","520":"NR","524":"NP","528":"NL","540":"NC","554":"NZ","558":"NI","562":"NE","566":"NG","578":"NO","586":"PK","591":"PA","598":"PG","600":"PY","604":"PE","608":"PH","616":"PL","620":"PT","630":"PR","634":"QA","642":"RO","643":"RU","646":"RW","682":"SA","686":"SN","688":"RS","694":"SL","702":"SG","703":"SK","704":"VN","705":"SI","706":"SO","710":"ZA","716":"ZW","724":"ES","728":"SS","729":"SD","740":"SR","748":"SZ","752":"SE","756":"CH","760":"SY","762":"TJ","764":"TH","768":"TG","776":"TO","780":"TT","784":"AE","788":"TN","792":"TR","795":"TM","800":"UG","804":"UA","807":"MK","826":"GB","834":"TZ","840":"US","854":"BF","858":"UY","860":"UZ","862":"VE","887":"YE","894":"ZM"};
+
+    function renderCountryMap(entries) {
+        if (!worldData) return;
+        var colors = getChartColors();
+        var countries = ChartGeo.topojson.feature(worldData, worldData.objects.countries).features;
+
+        // build lookup from alpha-2 code to count
+        var lookup = {};
+        for (var i = 0; i < entries.length; i++) {
+            lookup[entries[i].code] = entries[i].count;
+        }
+
+        var maxCount = 1;
+        for (var i = 0; i < entries.length; i++) {
+            if (entries[i].count > maxCount) maxCount = entries[i].count;
+        }
+
+        var canvas = document.getElementById('country-map');
+        if (countryMap) countryMap.destroy();
+
+        countryMap = new Chart(canvas, {
+            type: 'choropleth',
+            data: {
+                labels: countries.map(function(c) { return c.properties.name; }),
+                datasets: [{
+                    label: 'Visitors',
+                    outline: countries,
+                    data: countries.map(function(c) {
+                        var alpha2 = numToAlpha2[c.id] || '';
+                        return {
+                            feature: c,
+                            value: lookup[alpha2] || 0
+                        };
+                    }),
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                showOutline: true,
+                showGraticule: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: colors.bg,
+                        borderColor: colors.faint,
+                        borderWidth: 1,
+                        titleColor: colors.mid,
+                        bodyColor: colors.ink,
+                        titleFont: { family: 'ui-monospace, monospace', size: 10 },
+                        bodyFont: { family: 'ui-monospace, monospace', size: 12 },
+                        callbacks: {
+                            title: function(items) {
+                                return items[0].raw.feature.properties.name;
+                            },
+                            label: function(ctx) {
+                                var v = ctx.raw.value;
+                                return v > 0 ? v + ' visitors' : 'No visitors';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    projection: {
+                        axis: 'x',
+                        projection: 'equalEarth'
+                    },
+                    color: {
+                        axis: 'x',
+                        display: false,
+                        interpolate: function(v) {
+                            var dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                            if (v === 0) return dark ? '#222220' : '#ddd';
+                            var a = 0.3 + v * 0.7;
+                            return dark
+                                ? 'rgba(100,160,230,' + a.toFixed(2) + ')'
+                                : 'rgba(40,100,180,' + a.toFixed(2) + ')';
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    function loadCountries() {
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4 || this.status !== 200) return;
+            try {
+                var data = JSON.parse(this.responseText);
+                var entries = [];
+                for (var code in data) {
+                    entries.push({ code: code, count: data[code] });
+                }
+                entries.sort(function(a, b) { return b.count - a.count; });
+
+                var label = document.getElementById('countries-label');
+                if (label) label.textContent = 'Visited from ' + entries.length + ' countries';
+
+                // build alpha2 to name lookup from topojson
+                var codeToName = {};
+                if (worldData) {
+                    var features = ChartGeo.topojson.feature(worldData, worldData.objects.countries).features;
+                    for (var j = 0; j < features.length; j++) {
+                        var a2 = numToAlpha2[features[j].id];
+                        if (a2) codeToName[a2] = features[j].properties.name;
+                    }
+                }
+
+                renderCountryMap(entries);
+
+                var list = document.getElementById('countries-list');
+                if (!list) return;
+                list.innerHTML = '';
+                if (entries.length === 0) {
+                    list.innerHTML = '<div class="country-tag">No data yet</div>';
+                    return;
+                }
+                var html = '';
+                for (var i = 0; i < entries.length; i++) {
+                    var code = entries[i].code;
+                    var isUnknown = code === '??';
+                    var name = isUnknown ? 'Unknown' : (codeToName[code] || code);
+                    var label = isUnknown ? '?' : code;
+                    html += '<div class="country-tag" title="' + esc(name) + '"><span class="cc">' + esc(label) + '</span> ' + entries[i].count + '</div>';
+                }
+                list.innerHTML = html;
+            } catch(e) {}
+        };
+        xhr.open('GET', '/countries', true);
+        xhr.send();
+    }
+
+    function loadCountriesIfVisible() {
+        if (document.visibilityState === 'visible' && worldData) loadCountries();
+    }
+    setInterval(loadCountriesIfVisible, 300000);
+    document.addEventListener('visibilitychange', loadCountriesIfVisible);
+
+    /* chart */
+    var logRows      = [];
+    var activeMetric = 'temperature_c';
+    var activeLabel  = 'Temperature (\u00b0C)';
+    var chart        = null;
+    var availableDates = [];  // sorted ascending, e.g. ["2026-04-03", "2026-04-04"]
+    var dateIndex    = 0;     // current position in availableDates, -1 = today
+
+    // timestamp,cpu_temp_c,cpu_temp_f,memory_percent,temperature_c,temperature_f,
+    // humidity_percent,pressure_hpa,altitude_ft,co2_ppm,voc_ppb,
+    // heat_index_c,heat_index_f,rssi,sd_free_mb,requests_interval
+    var COL = {
+        timestamp:          0,
+        cpu_temp_c:         1,
+        cpu_temp_f:         2,
+        memory_percent:     3,
+        temperature_c:      4,
+        temperature_f:      5,
+        humidity_percent:   6,
+        pressure_hpa:       7,
+        altitude_ft:        8,
+        co2_ppm:            9,
+        voc_ppb:            10,
+        heat_index_c:       11,
+        heat_index_f:       12,
+        rssi:               13,
+        sd_free_mb:         14,
+        requests_interval:  15
+    };
+
+    function parseCSV(text) {
+        var lines = text.trim().split('\n');
+        if (lines.length < 2) return [];
+        var rows = [];
+        for (var i = 1; i < lines.length; i++) {
+            var cols = lines[i].split(',');
+            if (cols.length < 16) continue;
+            rows.push(cols.map(function(c) { return c.trim(); }));
+        }
+        return rows;
+    }
+
+    function parseTime(ts) {
+        var t = ts.replace('T', ' ').replace('Z', '');
+        var parts = t.split(' ');
+        return parts[1] ? parts[1].substring(0, 5) : ts;
+    }
+
+    function esc(str) {
+        var d = document.createElement('div');
+        d.textContent = str == null ? '' : String(str);
+        return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function hexToRgba(hex, alpha) {
+        var r = parseInt(hex.slice(1, 3), 16);
+        var g = parseInt(hex.slice(3, 5), 16);
+        var b = parseInt(hex.slice(5, 7), 16);
+        return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+    }
+
+    function getChartColors() {
+        var dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        return {
+            ink:   dark ? '#e8e6e1' : '#1a1a1a',
+            mid:   dark ? '#555'    : '#888',
+            faint: dark ? '#2a2a28' : '#ccc',
+            bg:    dark ? '#1a1918' : '#f8f7f4'
+        };
+    }
+
+    function renderChart() {
+        if (!logRows.length) return;
+
+        var colors = getChartColors();
+        var labels = logRows.map(function(r) { return parseTime(r[COL.timestamp]); });
+        var data   = logRows.map(function(r) { return parseFloat(r[COL[activeMetric]]); });
+
+        var maxLabels = 12;
+        var step = Math.ceil(labels.length / maxLabels);
+        var displayLabels = labels.map(function(l, i) { return i % step === 0 ? l : ''; });
+
+        document.getElementById('chart-empty').style.display = 'none';
+        var canvas = document.getElementById('chart');
+        canvas.style.display = 'block';
+
+        if (chart) { chart.destroy(); }
+
+        chart = new Chart(canvas, {
+            type: 'line',
+            data: {
+                labels: displayLabels,
+                datasets: [{
+                    label: activeLabel,
+                    data: data,
+                    borderColor: colors.ink,
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    pointHoverRadius: 3,
+                    pointHoverBackgroundColor: colors.ink,
+                    tension: 0.3,
+                    fill: true,
+                    backgroundColor: function(ctx) {
+                        var gradient = ctx.chart.ctx.createLinearGradient(0, 0, 0, 200);
+                        gradient.addColorStop(0, hexToRgba(colors.ink, 0.08));
+                        gradient.addColorStop(1, hexToRgba(colors.ink, 0));
+                        return gradient;
+                    }
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 300 },
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: colors.bg,
+                        borderColor: colors.faint,
+                        borderWidth: 1,
+                        titleColor: colors.mid,
+                        bodyColor: colors.ink,
+                        titleFont: { family: 'ui-monospace, monospace', size: 10 },
+                        bodyFont: { family: 'ui-monospace, monospace', size: 12 },
+                        callbacks: {
+                            title: function(items) { return labels[items[0].dataIndex]; }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: colors.faint, lineWidth: 0.5 },
+                        ticks: {
+                            color: colors.mid,
+                            font: { family: 'ui-monospace, monospace', size: 9 },
+                            maxRotation: 0
+                        },
+                        border: { color: colors.faint }
+                    },
+                    y: {
+                        grid: { color: colors.faint, lineWidth: 0.5 },
+                        ticks: {
+                            color: colors.mid,
+                            font: { family: 'ui-monospace, monospace', size: 9 }
+                        },
+                        border: { color: colors.faint }
+                    }
+                }
+            }
+        });
+    }
+
+    function showChartEmpty(msg) {
+        var empty  = document.getElementById('chart-empty');
+        var canvas = document.getElementById('chart');
+        if (chart) { chart.destroy(); chart = null; }
+        canvas.style.display = 'none';
+        empty.textContent = msg;
+        empty.style.display = 'flex';
+    }
+
+    function loadLogForDate(date) {
+        // date = "YYYY-MM-DD" or null for today
+        var url = date ? '/logs/' + date : '/logs/today';
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status === 200) {
+                logRows = parseCSV(this.responseText);
+                if (logRows.length === 0) {
+                    showChartEmpty('No data for this day.');
+                } else {
+                    renderChart();
+                }
+            } else {
+                showChartEmpty('No log available for this day.');
+            }
+        };
+        xhr.open('GET', url, true);
+        xhr.send();
+    }
+
+    function updateDateUI() {
+        var display = document.getElementById('date-display');
+        var prevBtn = document.getElementById('date-prev');
+        var nextBtn = document.getElementById('date-next');
+
+        var isToday = (dateIndex === availableDates.length - 1 || availableDates.length === 0);
+
+        display.textContent = isToday ? 'Today' : availableDates[dateIndex];
+        prevBtn.disabled = (dateIndex <= 0);
+        nextBtn.disabled = isToday;
+    }
+
+    function stepDate(dir) {
+        if (!availableDates.length) return;
+        dateIndex = Math.max(0, Math.min(availableDates.length - 1, dateIndex + dir));
+        updateDateUI();
+        var isToday = (dateIndex === availableDates.length - 1);
+        loadLogForDate(isToday ? null : availableDates[dateIndex]);
+    }
+
+    function loadAvailableDates() {
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4 || this.status !== 200) return;
+            try {
+                var files = JSON.parse(this.responseText);
+                // filenames come back as "2026-04-04.csv", strip extension and sort
+                availableDates = files
+                    .map(function(f) { return f.replace('.csv', '').replace('/logs/', ''); })
+                    .filter(function(f) { return /^\d{4}-\d{2}-\d{2}$/.test(f); })
+                    .sort();
+                dateIndex = availableDates.length - 1; // start at most recent (today)
+                updateDateUI();
+            } catch(e) {}
+        };
+        xhr.open('GET', '/logs', true);
+        xhr.send();
+    }
+
+    // Metric switcher
+    document.querySelectorAll('.chart-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.chart-btn').forEach(function(b) { b.classList.remove('active'); });
+            btn.classList.add('active');
+            activeMetric = btn.dataset.metric;
+            activeLabel  = btn.dataset.label;
+            renderChart();
+        });
+    });
+
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
+        if (logRows.length) renderChart();
+    });
+
+    // load available dates then today's log
+    loadAvailableDates();
+    loadLogForDate(null);
+    // Refresh today's data every 5 minutes (only if viewing today)
+    setInterval(function() {
+        var isToday = (dateIndex === availableDates.length - 1 || availableDates.length === 0);
+        if (isToday) loadLogForDate(null);
+    }, 300000);
+</script>
+
+</body>
+</html>

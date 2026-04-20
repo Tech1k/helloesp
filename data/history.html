@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>History / HelloESP</title>
+    <meta name="description" content="Weekly, monthly, and yearly stats archives from HelloESP.">
+    <meta name="author" content="Tech1k">
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#2686e6">
+    <meta property="og:title" content="History / HelloESP">
+    <meta property="og:site_name" content="HelloESP">
+    <meta property="og:description" content="Weekly, monthly, and yearly stats archives from HelloESP.">
+    <meta property="og:image" content="https://helloesp.com/og-banner.jpg">
+    <meta property="og:image:type" content="image/jpeg">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="HelloESP: a website running on an ESP32">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://helloesp.com/history">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="History / HelloESP">
+    <meta name="twitter:description" content="Weekly, monthly, and yearly stats archives from HelloESP.">
+    <meta name="twitter:image" content="https://helloesp.com/og-banner.jpg">
+    <meta name="twitter:image:alt" content="HelloESP: a website running on an ESP32">
+    <link rel="canonical" href="https://helloesp.com/history">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
+          integrity="sha384-/o6I2CkkWC//PSjvWC/eYN7l3xM3tJm8ZzVkCOfp//W05QcE3mlGskpoHB6XqI+B"
+          crossorigin="anonymous" referrerpolicy="no-referrer">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg: #f8f7f4;
+            --ink: #1a1a1a;
+            --mid: #888;
+            --faint: #ccc;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--ink);
+            font-family: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", monospace;
+            min-height: 100vh;
+            display: grid;
+            grid-template-rows: 1fr auto;
+        }
+
+        a:focus-visible,
+        button:focus-visible {
+            outline: 2px solid var(--ink);
+            outline-offset: 2px;
+            border-radius: 2px;
+        }
+
+        main {
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 80px 24px 64px;
+            width: 100%;
+        }
+
+        .top-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            row-gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+        }
+        @media (max-width: 480px) {
+            .top-links { gap: 14px; font-size: 10px; }
+        }
+        .site-name {
+            font-size: 13px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--mid);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+        .site-name:hover { color: var(--ink); }
+        .top-links {
+            display: flex;
+            gap: 16px;
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+        .top-links a {
+            color: var(--mid);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+        .top-links a:hover { color: var(--ink); }
+
+        h1 {
+            font-size: clamp(28px, 5vw, 42px);
+            font-weight: 400;
+            letter-spacing: -0.02em;
+            line-height: 1.1;
+            margin-bottom: 16px;
+        }
+
+        .desc {
+            font-size: 13px;
+            line-height: 1.8;
+            color: var(--mid);
+            margin-bottom: 48px;
+            max-width: 540px;
+        }
+
+        .section-label {
+            font-size: 10px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--mid);
+            margin-bottom: 16px;
+        }
+
+        .period {
+            border-top: 1px solid var(--faint);
+            padding: 20px 0;
+        }
+        .period:last-child { border-bottom: 1px solid var(--faint); }
+
+        .period.current { background: rgba(38, 134, 230, 0.04); border-left: 3px solid #2686e6; padding-left: 14px; }
+
+        .period-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .period-name {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .period-badge {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: #2686e6;
+        }
+
+        .period-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 14px 20px;
+            font-size: 12px;
+        }
+
+        .cell-label {
+            color: var(--mid);
+            font-size: 10px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 3px;
+        }
+
+        .cell-value {
+            font-size: 15px;
+            font-weight: 500;
+        }
+
+        .cell-sub {
+            font-size: 10px;
+            color: var(--mid);
+            margin-top: 2px;
+        }
+
+        .group {
+            margin-bottom: 64px;
+        }
+
+        .empty {
+            font-size: 13px;
+            color: var(--mid);
+            padding: 20px 0;
+        }
+
+        footer {
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 24px;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px solid var(--faint);
+            font-size: 11px;
+            color: var(--mid);
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        footer a {
+            color: var(--mid);
+            text-decoration: none;
+            letter-spacing: 0.08em;
+            transition: color 0.15s;
+        }
+        footer a:hover { color: var(--ink); }
+
+        .footer-links {
+            display: flex;
+            gap: 20px;
+            list-style: none;
+        }
+
+        .served {
+            color: var(--mid);
+            opacity: 0.7;
+        }
+        .served:not(:empty)::before {
+            content: ' \2022 ';
+            margin: 0 2px;
+        }
+        @media (max-width: 480px) {
+            .served { display: none; }
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #111110;
+                --ink: #e8e6e1;
+                --mid: #666;
+                --faint: #2a2a28;
+            }
+            .period.current { background: rgba(38, 134, 230, 0.08); }
+        }
+    </style>
+</head>
+<body>
+
+<main>
+    <nav class="top-nav" aria-label="Primary">
+        <a class="site-name" href="/"><img src="/favicon.png" alt="" style="height:14px;vertical-align:-1px;margin-right:4px;">HelloESP</a>
+        <ul class="top-links">
+            <li><a href="/guestbook">Guestbook</a></li>
+            <li><a href="/console">Console</a></li>
+        </ul>
+    </nav>
+
+    <h1>History</h1>
+
+    <p class="desc">
+        Weekly, monthly, and yearly stats from the ESP32. Past periods
+        are saved to the SD card. The current period updates live.
+    </p>
+
+    <div class="group" id="records-group" style="display:none;">
+        <div class="section-label"><i class="fa-solid fa-trophy"></i> Hall of Fame</div>
+        <div id="records-list"></div>
+    </div>
+
+    <div class="group">
+        <div class="section-label"><i class="fa-solid fa-calendar-week"></i> Weekly</div>
+        <div id="weekly"><div class="empty">Loading...</div></div>
+    </div>
+
+    <div class="group">
+        <div class="section-label"><i class="fa-solid fa-calendar-days"></i> Monthly</div>
+        <div id="monthly"><div class="empty">Loading...</div></div>
+    </div>
+
+    <div class="group">
+        <div class="section-label"><i class="fa-solid fa-calendar"></i> Yearly</div>
+        <div id="yearly"><div class="empty">Loading...</div></div>
+    </div>
+</main>
+
+<footer>
+    <span>Made by <a href="https://tech1k.com" target="_blank" rel="noopener">Tech1k</a><span class="served" id="served-time"></span></span>
+    <ul class="footer-links">
+        <li><a href="/"><i class="fa-solid fa-house"></i> Home</a></li>
+        <li><a href="/guestbook"><i class="fa-solid fa-pen"></i> Guestbook</a></li>
+        <li><a href="/console"><i class="fa-solid fa-terminal"></i> Console</a></li>
+        <li><a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener"><i class="fa-brands fa-github"></i> GitHub</a></li>
+    </ul>
+</footer>
+
+<script>
+    function esc(s) {
+        var d = document.createElement('div');
+        d.textContent = s == null ? '' : String(s);
+        return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function fmtInt(n) {
+        return (n == null ? 0 : n).toLocaleString();
+    }
+
+    function prettyMonth(label) {
+        var parts = label.split('-');
+        if (parts.length !== 2) return label;
+        var names = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+        var m = parseInt(parts[1], 10) - 1;
+        if (m < 0 || m > 11) return label;
+        return names[m] + ' ' + parts[0];
+    }
+
+    function prettyWeek(label) {
+        var parts = label.split('-W');
+        if (parts.length !== 2) return label;
+        return 'Week ' + parseInt(parts[1], 10) + ', ' + parts[0];
+    }
+
+    function renderCard(label, data, isCurrent, kind) {
+        var pretty = kind === 'month' ? prettyMonth(label) : (kind === 'week' ? prettyWeek(label) : label);
+        var v = (data && data.visitors) || 0;
+        var html = '<div class="period' + (isCurrent ? ' current' : '') + '" data-label="' + esc(label) + '" data-visitors="' + v + '">';
+        html += '<div class="period-head">';
+        html += '<div class="period-name">' + esc(pretty) + '</div>';
+        if (isCurrent) html += '<div class="period-badge">in progress</div>';
+        html += '</div>';
+
+        if (!data || data.samples === 0) {
+            html += '<div class="empty">No data yet for this period.</div></div>';
+            return html;
+        }
+
+        html += '<div class="period-grid">';
+        html += '<div><div class="cell-label">Visitors</div><div class="cell-value">' + fmtInt(data.visitors) + '</div></div>';
+        html += '<div><div class="cell-label">Guestbook</div><div class="cell-value">' + fmtInt(data.guestbook) + '</div><div class="cell-sub">entries submitted</div></div>';
+        html += '<div><div class="cell-label">Peak requests</div><div class="cell-value">' + fmtInt(data.peak_reqs) + '</div><div class="cell-sub">per 5 min</div></div>';
+        if (data.temp_c) {
+            var tminF = (data.temp_c.min * 9/5 + 32).toFixed(1);
+            var tmaxF = (data.temp_c.max * 9/5 + 32).toFixed(1);
+            var tavgF = (data.temp_c.avg * 9/5 + 32).toFixed(1);
+            html += '<div><div class="cell-label">Temperature</div>';
+            html += '<div class="cell-value">' + tminF + '\u2013' + tmaxF + '\u00b0F</div>';
+            html += '<div class="cell-sub">avg ' + tavgF + '\u00b0F</div></div>';
+        }
+        if (data.humidity) {
+            html += '<div><div class="cell-label">Humidity</div>';
+            html += '<div class="cell-value">' + data.humidity.min + '\u2013' + data.humidity.max + '%</div>';
+            html += '<div class="cell-sub">avg ' + data.humidity.avg + '%</div></div>';
+        }
+        if (data.co2_ppm) {
+            html += '<div><div class="cell-label">CO\u2082</div>';
+            html += '<div class="cell-value">' + data.co2_ppm.min + '\u2013' + data.co2_ppm.max + ' ppm</div>';
+            html += '<div class="cell-sub">avg ' + data.co2_ppm.avg + ' ppm</div></div>';
+        }
+        if (data.voc_ppb) {
+            html += '<div><div class="cell-label">VOC</div>';
+            html += '<div class="cell-value">' + data.voc_ppb.min + '\u2013' + data.voc_ppb.max + ' ppb</div>';
+            html += '<div class="cell-sub">avg ' + data.voc_ppb.avg + ' ppb</div></div>';
+        }
+        html += '<div><div class="cell-label">Samples</div><div class="cell-value">' + fmtInt(data.samples) + '</div><div class="cell-sub">5-min sensor reads</div></div>';
+        html += '</div></div>';
+        return html;
+    }
+
+    function loadSection(el, archives, currentData, kind, dir) {
+        var html = '';
+        if (currentData && currentData.label) {
+            html += renderCard(currentData.label, currentData, true, kind);
+        }
+        var sorted = (archives || []).slice().sort().reverse();
+        var toFetch = sorted.filter(function(l) {
+            return !(currentData && currentData.label === l);
+        });
+        var promises = toFetch.map(function(label) {
+            return fetch('/stats/' + dir + '/' + label).then(function(r) {
+                return r.ok ? r.json() : null;
+            }).catch(function() { return null; });
+        });
+
+        Promise.all(promises).then(function(results) {
+            results.forEach(function(data, i) {
+                if (data) html += renderCard(toFetch[i], data, false, kind);
+            });
+            if (!html) html = '<div class="empty">No data yet.</div>';
+            el.innerHTML = html;
+        });
+    }
+
+    function formatRecordDate(s) {
+        if (!s || s === 'unknown') return s || '';
+        // Date-only: "YYYY-MM-DD". Parse as local to avoid the UTC-midnight prev-day shift.
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+            var p = s.split('-');
+            var d = new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10));
+            return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+        }
+        // Full ISO timestamp with timezone offset.
+        var dt = new Date(s);
+        if (isNaN(dt.getTime())) return s;
+        return dt.toLocaleString(undefined, {
+            year: 'numeric', month: 'short', day: 'numeric',
+            hour: 'numeric', minute: '2-digit'
+        });
+    }
+
+    function loadRecords() {
+        fetch('/records.json').then(function(r) { return r.ok ? r.json() : null; }).then(function(data) {
+            if (!data) return;
+            var rows = [];
+            function row(label, rec, suffix, isInt) {
+                if (!rec) return;
+                var v = isInt ? String(rec.value) : (+rec.value).toFixed(1);
+                rows.push({ label: label, value: v + suffix, at: rec.at });
+            }
+            row('Highest CO\u2082',      data.highest_co2,       ' ppm',      true);
+            row('Hottest recorded',      data.highest_temp_f,    '\u00b0F',   false);
+            row('Coldest recorded',      data.lowest_temp_f,     '\u00b0F',   false);
+            row('Busiest day',           data.most_visitors_day, ' visitors', true);
+            row('Longest uptime',        data.longest_uptime_d,  '-day streak', true);
+            if (rows.length === 0) return;
+            var html = '<div style="border-top:1px solid var(--faint);">';
+            rows.forEach(function(r) {
+                html += '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--faint);gap:12px;flex-wrap:wrap;">';
+                html += '<div><div style="font-size:11px;color:var(--mid);text-transform:uppercase;letter-spacing:0.06em;">' + esc(r.label) + '</div>';
+                html += '<div style="font-size:15px;font-weight:500;margin-top:2px;">' + esc(r.value) + '</div></div>';
+                html += '<div style="font-size:11px;color:var(--mid);">' + esc(formatRecordDate(r.at)) + '</div>';
+                html += '</div>';
+            });
+            html += '</div>';
+            var el = document.getElementById('records-list');
+            if (el) el.innerHTML = html;
+            var g = document.getElementById('records-group');
+            if (g) g.style.display = '';
+        }).catch(function() {});
+    }
+
+    function annotateMonthlyYoY(el, currentYearMonth) {
+        // for each monthly card already rendered, check if its label has a YoY predecessor and compute delta visitors
+        var cards = el.querySelectorAll('.period');
+        cards.forEach(function(card) {
+            var nameEl = card.querySelector('.period-name');
+            if (!nameEl) return;
+            // name is rendered via prettyMonth, so reverse lookup from data-label
+            var label = card.getAttribute('data-label');
+            if (!label) return;
+            var parts = label.split('-');
+            if (parts.length !== 2) return;
+            var yoyLabel = (parseInt(parts[0], 10) - 1) + '-' + parts[1];
+            fetch('/stats/monthly/' + yoyLabel).then(function(r) {
+                return r.ok ? r.json() : null;
+            }).then(function(past) {
+                if (!past || !past.visitors) return;
+                var currentVisitors = parseInt(card.getAttribute('data-visitors') || '0', 10);
+                if (!currentVisitors) return;
+                var pct = ((currentVisitors - past.visitors) / past.visitors) * 100;
+                var arrow = pct >= 0 ? '\u2197' : '\u2198';
+                var sign = pct >= 0 ? '+' : '';
+                var note = document.createElement('div');
+                note.style.cssText = 'font-size:10px;color:var(--mid);margin-top:6px;letter-spacing:0.05em;';
+                note.textContent = arrow + ' ' + sign + Math.round(pct) + '% visitors vs ' + prettyMonth(yoyLabel);
+                var head = card.querySelector('.period-head');
+                if (head) head.parentNode.insertBefore(note, head.nextSibling);
+            }).catch(function() {});
+        });
+    }
+
+    function load() {
+        var weeklyEl  = document.getElementById('weekly');
+        var monthlyEl = document.getElementById('monthly');
+        var yearlyEl  = document.getElementById('yearly');
+
+        loadRecords();
+
+        fetch('/history.json').then(function(r) { return r.json(); }).then(function(index) {
+            return fetch('/stats/current').then(function(r) { return r.json(); }).then(function(current) {
+                loadSection(weeklyEl,  index.weekly,  current.week,  'week',  'weekly');
+                loadSection(monthlyEl, index.monthly, current.month, 'month', 'monthly');
+                loadSection(yearlyEl,  index.yearly,  current.year,  'year',  'yearly');
+                // YoY comparison fires once monthly cards are rendered
+                setTimeout(function() { annotateMonthlyYoY(monthlyEl, current.month && current.month.label); }, 500);
+            });
+        }).catch(function() {
+            var msg = '<div class="empty">Failed to load history.</div>';
+            weeklyEl.innerHTML  = msg;
+            monthlyEl.innerHTML = msg;
+            yearlyEl.innerHTML  = msg;
+        });
+    }
+
+    load();
+
+    // smooth cross-page navigation when supported
+    if (document.startViewTransition) {
+        document.addEventListener('click', function(e) {
+            var a = e.target.closest('a[href^="/"]');
+            if (!a) return;
+            if (a.target || a.hasAttribute('download')) return;
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            var href = a.getAttribute('href');
+            if (!href || href.startsWith('//') || href.startsWith('#')) return;
+            e.preventDefault();
+            document.startViewTransition(function() { location.href = href; });
+        });
+    }
+
+    window.addEventListener('load', function() {
+        try {
+            var nav = performance.getEntriesByType('navigation')[0];
+            if (!nav) return;
+            var ms = Math.round(nav.responseEnd - nav.requestStart);
+            if (ms < 0 || ms > 60000) return;
+            var el = document.getElementById('served-time');
+            if (el) el.textContent = ms + ' ms';
+        } catch (e) {}
+    });
+</script>
+
+</body>
+</html>

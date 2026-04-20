@@ -1,0 +1,5 @@
+.pio
+.vscode
+.cache
+compile_commands.json
+data/config.txt
