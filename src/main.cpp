@@ -17,6 +17,7 @@
 #include "time.h"
 #include "Update.h"
 #include "esp_system.h"
+#include "esp_sleep.h"
 #include "mbedtls/md.h"
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
@@ -697,7 +698,7 @@ static bool consoleShouldSkip(const String& url) {
     if (url.startsWith("/logs/")) return true;        // CSV data the charts fetch in the background
     if (url.startsWith("/.well-known/")) return true; // security scanners only
     // AsyncWebServer routes "//sometext" to the "/" handler, logging the raw URL. Visitors discovered they could "chat" by visiting URLs like "//HelloEveryone" and seeing them show up on /console. 
-    // Fun in concept, but moderation hell at scale. Skip any path with djacent slashes so nothing bypasses route matching via this quirk.
+    // Fun in concept, but moderation hell at scale. Skip any path with adjacent slashes so nothing bypasses route matching via this quirk.
     if (url.startsWith("//") || url.indexOf("//") >= 0) return true;
     if (url == "/ping")           return true;        // polled by auto-retry, too noisy
     // AJAX endpoints the homepage + history + console + guestbook pages fetch in the background
@@ -924,6 +925,17 @@ static void clearAuthFails(uint32_t ip) {
 
 static bool safePath(const String& p) {
     return p.startsWith("/") && p.indexOf("..") < 0;
+}
+
+// Reboot by briefly entering deep sleep instead of plain ESP.restart().
+// This closely matches a physical power cycle and clears WiFi driver state.
+// Previouly ESP.restart() would leave the device in a post-OTA broken state only fixable with physical power cycling.
+static void cleanRestart() {
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    delay(200);
+    esp_sleep_enable_timer_wakeup(500ULL * 1000ULL); // 500 ms
+    esp_deep_sleep_start();
 }
 
 static String jsonEscape(const String& s) {
@@ -2131,7 +2143,7 @@ void setup() {
         if (millis() - wifiStart > 300000UL) {
             bootLog("[net] wifi TIMEOUT");
             delay(500);
-            ESP.restart();
+            cleanRestart();
         }
     }
     Serial.println("WiFi connected: " + WiFi.localIP().toString());
@@ -2174,6 +2186,16 @@ void setup() {
     // Routes
 
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+        // AsyncWebServer routes URLs with adjacent slashes (e.g. "//anything") to this handler.
+        // Reject those requests with a real 404 so they don't inflate visitor counts.
+        String reqUrl = request->url();
+        if (reqUrl != "/" && reqUrl.indexOf("//") >= 0) {
+            AsyncWebServerResponse *r = request->beginResponse(SD, "/404.html", "text/html");
+            r->setCode(404);
+            request->send(r);
+            return;
+        }
+
         // Count only public visits. Detects three relay patterns:
         //   - Cloudflare Worker / Cloudflared tunnel: sets CF-Connecting-IP header
         //   - Direct port forward from router: remote IP is not a LAN private range
@@ -2485,7 +2507,7 @@ void setup() {
             request->send(200, "text/plain", success ? "OTA success, rebooting..." : "OTA failed");
             if (success) {
                 delay(500);
-                ESP.restart();
+                cleanRestart();
             }
         },
         [](AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final) {
@@ -2795,7 +2817,10 @@ void setup() {
             json += "],\"hasMore\":" + String(hasMore ? "true" : "false");
             json += ",\"total\":" + String(totalApproved);
             json += ",\"countries\":" + String(seenCountryCount) + "}";
-            request->send(200, "application/json", json);
+            // Edge-cache for 30s. New guestbook approvals won't show for up to 30 seconds to help with load reduction.
+            AsyncWebServerResponse *r = request->beginResponse(200, "application/json", json);
+            r->addHeader("Cache-Control", "public, max-age=30");
+            request->send(r);
             logConsole(request, 200);
             return;
         }
@@ -3598,7 +3623,7 @@ void setup() {
             if (!adminAuth(request)) return;
             request->send(200, "text/plain", "Rebooting...");
             delay(500);
-            ESP.restart();
+            cleanRestart();
             return;
         }
 
@@ -3673,7 +3698,7 @@ void loop() {
             Serial.println("[net] wifi down >10 min, restarting");
             logError("net", "wifi down >10 min, restarting");
             delay(200);
-            ESP.restart();
+            cleanRestart();
         }
         delay(500);
     } else if (!wasWifiUp) {
@@ -3982,14 +4007,16 @@ void loop() {
         }
     }
 
-    // heap safety net
-    if (ESP.getFreeHeap() < 20000) {
+    // heap safety net. Reboots before AsyncTCP starts failing allocations.
+    // 30KB threshold should leave enough room for WiFi driver + a few TCP
+    // buffers without wasting too much usable headroom.
+    if (ESP.getFreeHeap() < 30000) {
         Serial.println("Heap critical, restarting...");
         char buf[48];
         snprintf(buf, sizeof(buf), "heap critical (%u bytes free), restarting", (unsigned)ESP.getFreeHeap());
         logError("heap", buf);
         delay(100);
-        ESP.restart();
+        cleanRestart();
     }
 
     delay(500);
