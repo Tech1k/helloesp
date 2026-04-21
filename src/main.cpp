@@ -696,6 +696,9 @@ static bool consoleShouldSkip(const String& url) {
     if (url.startsWith("/_"))     return true;        // /_ws, /_upload, /_ota (internal)
     if (url.startsWith("/logs/")) return true;        // CSV data the charts fetch in the background
     if (url.startsWith("/.well-known/")) return true; // security scanners only
+    // AsyncWebServer routes "//sometext" to the "/" handler, logging the raw URL. Visitors discovered they could "chat" by visiting URLs like "//HelloEveryone" and seeing them show up on /console. 
+    // Fun in concept, but moderation hell at scale. Skip any path with djacent slashes so nothing bypasses route matching via this quirk.
+    if (url.startsWith("//") || url.indexOf("//") >= 0) return true;
     if (url == "/ping")           return true;        // polled by auto-retry, too noisy
     // AJAX endpoints the homepage + history + console + guestbook pages fetch in the background
     if (url.startsWith("/stats"))   return true;
