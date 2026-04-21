@@ -1036,6 +1036,36 @@ export class EspRelay {
   async fetch(request) {
     const url = new URL(request.url);
 
+    // Worker-side load-shedding endpoints.
+    if (url.pathname === '/ping' && request.method === 'GET') {
+      const espUp = !!(this.espSocket && this.espSocket.readyState === 1);
+      return new Response(espUp ? 'pong' : 'offline', {
+        status: espUp ? 200 : 503,
+        headers: {
+          'Content-Type': 'text/plain',
+          'Cache-Control': 'no-store',
+          ...SEC_HEADERS
+        }
+      });
+    }
+
+    // /stats: serve from Worker's cached lastStats (pushed by ESP via SSE events).
+    if (url.pathname === '/stats' && request.method === 'GET') {
+      if (this.lastStats) {
+        const age = Date.now() - this.lastStatsAt;
+        return new Response(this.lastStats, {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'public, max-age=5, stale-while-revalidate=30',
+            'X-Worker-Cache-Age': String(Math.floor(age / 1000)),
+            ...SEC_HEADERS
+          }
+        });
+      }
+      // No cached stats yet; fall through to the ESP relay below.
+    }
+
     // Embeddable live status badges. Uses cached lastStats; zero ESP load.
     if (url.pathname === '/status.svg') {
       const metric = url.searchParams.get('metric') || 'uptime';

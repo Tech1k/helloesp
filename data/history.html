@@ -325,8 +325,25 @@
         if (isCurrent) html += '<div class="period-badge">in progress</div>';
         html += '</div>';
 
-        if (!data || data.samples === 0) {
+        if (!data) {
             html += '<div class="empty">No data yet for this period.</div></div>';
+            return html;
+        }
+        var hasSamples = Number.isFinite(data.samples) && data.samples > 0;
+        var hasVisitors = Number.isFinite(data.visitors) && data.visitors > 0;
+        if (!hasSamples && !hasVisitors) {
+            html += '<div class="empty">No data yet for this period.</div></div>';
+            return html;
+        }
+        // In-progress period with visitor activity but no sensor samples yet, show a minimal card instead of a mostly-zero grid.
+        if (!hasSamples && hasVisitors) {
+            html += '<div class="period-grid">';
+            html += '<div><div class="cell-label">Visitors</div><div class="cell-value">' + fmtInt(data.visitors) + '</div><div class="cell-sub">so far</div></div>';
+            if (Number.isFinite(data.guestbook) && data.guestbook > 0) {
+                html += '<div><div class="cell-label">Guestbook</div><div class="cell-value">' + fmtInt(data.guestbook) + '</div><div class="cell-sub">entries submitted</div></div>';
+            }
+            html += '</div>';
+            html += '<div class="empty" style="padding-top:8px;">Sensor averages fill in as samples collect.</div></div>';
             return html;
         }
 
@@ -334,7 +351,7 @@
         html += '<div><div class="cell-label">Visitors</div><div class="cell-value">' + fmtInt(data.visitors) + '</div></div>';
         html += '<div><div class="cell-label">Guestbook</div><div class="cell-value">' + fmtInt(data.guestbook) + '</div><div class="cell-sub">entries submitted</div></div>';
         html += '<div><div class="cell-label">Peak requests</div><div class="cell-value">' + fmtInt(data.peak_reqs) + '</div><div class="cell-sub">per 5 min</div></div>';
-        if (data.temp_c) {
+        if (data.temp_c && Number.isFinite(data.temp_c.min)) {
             var tminF = (data.temp_c.min * 9/5 + 32).toFixed(1);
             var tmaxF = (data.temp_c.max * 9/5 + 32).toFixed(1);
             var tavgF = (data.temp_c.avg * 9/5 + 32).toFixed(1);
@@ -342,17 +359,17 @@
             html += '<div class="cell-value">' + tminF + '\u2013' + tmaxF + '\u00b0F</div>';
             html += '<div class="cell-sub">avg ' + tavgF + '\u00b0F</div></div>';
         }
-        if (data.humidity) {
+        if (data.humidity && Number.isFinite(data.humidity.min)) {
             html += '<div><div class="cell-label">Humidity</div>';
             html += '<div class="cell-value">' + data.humidity.min + '\u2013' + data.humidity.max + '%</div>';
             html += '<div class="cell-sub">avg ' + data.humidity.avg + '%</div></div>';
         }
-        if (data.co2_ppm) {
+        if (data.co2_ppm && Number.isFinite(data.co2_ppm.min)) {
             html += '<div><div class="cell-label">CO\u2082</div>';
             html += '<div class="cell-value">' + data.co2_ppm.min + '\u2013' + data.co2_ppm.max + ' ppm</div>';
             html += '<div class="cell-sub">avg ' + data.co2_ppm.avg + ' ppm</div></div>';
         }
-        if (data.voc_ppb) {
+        if (data.voc_ppb && Number.isFinite(data.voc_ppb.min)) {
             html += '<div><div class="cell-label">VOC</div>';
             html += '<div class="cell-value">' + data.voc_ppb.min + '\u2013' + data.voc_ppb.max + ' ppb</div>';
             html += '<div class="cell-sub">avg ' + data.voc_ppb.avg + ' ppb</div></div>';
@@ -388,19 +405,17 @@
 
     function formatRecordDate(s) {
         if (!s || s === 'unknown') return s || '';
+        var opts = { year: 'numeric', month: 'short', day: 'numeric' };
         // Date-only: "YYYY-MM-DD". Parse as local to avoid the UTC-midnight prev-day shift.
         if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
             var p = s.split('-');
             var d = new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10));
-            return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+            return d.toLocaleDateString(undefined, opts);
         }
-        // Full ISO timestamp with timezone offset.
+        // Full ISO timestamp. Drop the hour/minute so every record formats the same way.
         var dt = new Date(s);
         if (isNaN(dt.getTime())) return s;
-        return dt.toLocaleString(undefined, {
-            year: 'numeric', month: 'short', day: 'numeric',
-            hour: 'numeric', minute: '2-digit'
-        });
+        return dt.toLocaleDateString(undefined, opts);
     }
 
     function loadRecords() {

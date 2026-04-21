@@ -1309,8 +1309,10 @@
 
     function tickerFlag(code) {
         if (!code || code.length !== 2 || code === '??') return '??';
+        var up = code.toUpperCase();
+        if (!/^[A-Z]{2}$/.test(up)) return '??';
         try {
-            var cp = code.toUpperCase().split('').map(function(c) { return 127397 + c.charCodeAt(0); });
+            var cp = up.split('').map(function(c) { return 127397 + c.charCodeAt(0); });
             return String.fromCodePoint.apply(String, cp);
         } catch (err) { return code; }
     }

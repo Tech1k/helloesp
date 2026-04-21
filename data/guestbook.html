@@ -362,7 +362,10 @@
 
     <!-- entries -->
     <div class="entries-section">
-        <div class="section-label"><i class="fa-solid fa-comment-dots"></i> Messages</div>
+        <div class="section-label">
+            <i class="fa-solid fa-comment-dots"></i> Messages
+            <span id="entries-count" style="float:right;text-transform:none;letter-spacing:0;font-size:10px;color:var(--mid);"></span>
+        </div>
         <div id="entries">
             <div class="entry-empty">Loading...</div>
         </div>
@@ -485,6 +488,19 @@
                 var data = JSON.parse(this.responseText);
                 renderEntries(data.entries, append);
                 btn.style.display = data.hasMore ? 'block' : 'none';
+                // Only update header count on first page load (not on "load more" clicks).
+                if (!append) {
+                    var countEl = document.getElementById('entries-count');
+                    if (countEl && Number.isFinite(data.total)) {
+                        var t = data.total;
+                        var c = Number.isFinite(data.countries) ? data.countries : 0;
+                        var msgWord = t === 1 ? 'message' : 'messages';
+                        var ctryWord = c === 1 ? 'country' : 'countries';
+                        countEl.textContent = c > 0
+                            ? t + ' ' + msgWord + ' from ' + c + ' ' + ctryWord
+                            : t + ' ' + msgWord;
+                    }
+                }
             } catch(e) {
                 if (!append) el.innerHTML = '<div class="entry-empty">Failed to load messages.</div>';
             }

@@ -289,19 +289,30 @@ static String periodToJson(const char* label, const PeriodStats& p) {
     j += ",\"peak_reqs\":";  j += p.peak_reqs;
     j += ",\"samples\":";    j += p.samples;
     if (p.samples > 0) {
-        j += ",\"temp_c\":{\"min\":";   j += String(p.temp_min_c, 2);
-        j += ",\"max\":";               j += String(p.temp_max_c, 2);
-        j += ",\"avg\":";               j += String((float)(p.temp_sum_c / p.samples), 2);
-        j += "},\"humidity\":{\"min\":"; j += String(p.hum_min, 1);
-        j += ",\"max\":";               j += String(p.hum_max, 1);
-        j += ",\"avg\":";               j += String((float)(p.hum_sum / p.samples), 1);
-        j += "},\"co2_ppm\":{\"min\":"; j += p.co2_min;
-        j += ",\"max\":";               j += p.co2_max;
-        j += ",\"avg\":";               j += (uint32_t)(p.co2_sum / p.samples);
-        j += "},\"voc_ppb\":{\"min\":"; j += p.voc_min;
-        j += ",\"max\":";               j += p.voc_max;
-        j += ",\"avg\":";               j += (uint32_t)(p.voc_sum / p.samples);
-        j += "}";
+        if (p.temp_min_c <= p.temp_max_c) {
+            j += ",\"temp_c\":{\"min\":";   j += String(p.temp_min_c, 2);
+            j += ",\"max\":";               j += String(p.temp_max_c, 2);
+            j += ",\"avg\":";               j += String((float)(p.temp_sum_c / p.samples), 2);
+            j += "}";
+        }
+        if (p.hum_min <= p.hum_max) {
+            j += ",\"humidity\":{\"min\":"; j += String(p.hum_min, 1);
+            j += ",\"max\":";               j += String(p.hum_max, 1);
+            j += ",\"avg\":";               j += String((float)(p.hum_sum / p.samples), 1);
+            j += "}";
+        }
+        if (p.co2_min != 0xFFFF && p.co2_max > 0) {
+            j += ",\"co2_ppm\":{\"min\":"; j += p.co2_min;
+            j += ",\"max\":";               j += p.co2_max;
+            j += ",\"avg\":";               j += (uint32_t)(p.co2_sum / p.samples);
+            j += "}";
+        }
+        if (p.voc_min != 0xFFFF && p.voc_max > 0) {
+            j += ",\"voc_ppb\":{\"min\":"; j += p.voc_min;
+            j += ",\"max\":";               j += p.voc_max;
+            j += ",\"avg\":";               j += (uint32_t)(p.voc_sum / p.samples);
+            j += "}";
+        }
     }
     j += ",\"started\":"; j += p.started_unix;
     j += "}";
@@ -686,11 +697,14 @@ static bool consoleShouldSkip(const String& url) {
     if (url.startsWith("/logs/")) return true;        // CSV data the charts fetch in the background
     if (url.startsWith("/.well-known/")) return true; // security scanners only
     if (url == "/ping")           return true;        // polled by auto-retry, too noisy
-    // AJAX endpoints the homepage + history page fetch in the background; not user page visits
-    if (url == "/stats")          return true;
-    if (url == "/countries")      return true;
-    if (url == "/records.json")   return true;
-    if (url == "/console.json")   return true;
+    // AJAX endpoints the homepage + history + console + guestbook pages fetch in the background
+    if (url.startsWith("/stats"))   return true;
+    if (url == "/countries")        return true;
+    if (url == "/records.json")     return true;
+    if (url == "/console.json")     return true;
+    if (url == "/history.json")     return true;
+    if (url == "/guestbook/entries") return true;
+    if (url == "/guestbook/submit")  return true;
     // bot-only metadata
     if (url == "/robots.txt")     return true;
     if (url == "/sitemap.xml")    return true;
@@ -743,11 +757,11 @@ static void logConsole(AsyncWebServerRequest *req, int status) {
 // bypass the 1/hour per-IP limit; this puts a ceiling on moderation-queue abuse until admin
 // clears the backlog.
 #define MAX_PENDING_GUESTBOOK 100
-struct RateEntry { IPAddress ip; unsigned long time; };
+struct RateEntry { String ip; unsigned long time; };
 RateEntry rateLimits[MAX_RATE_ENTRIES];
 int rateLimitCount = 0;
 
-bool isRateLimited(IPAddress ip) {
+bool isRateLimited(const String& ip) {
     unsigned long now = millis();
     // clean expired entries
     for (int i = rateLimitCount - 1; i >= 0; i--) {
@@ -764,6 +778,15 @@ bool isRateLimited(IPAddress ip) {
         rateLimitCount++;
     }
     return false;
+}
+
+static String clientIpString(AsyncWebServerRequest* request) {
+    if (request->hasHeader("CF-Connecting-IP")) {
+        String ip = request->header("CF-Connecting-IP");
+        ip.trim();
+        if (ip.length() > 0) return ip;
+    }
+    return request->client()->remoteIP().toString();
 }
 
 // country tracking
@@ -2687,10 +2710,12 @@ void setup() {
                 return;
             }
 
-            // count approved
+            // count approved + unique countries in one pass
             File f = SD.open("/guestbook.csv", FILE_READ);
             if (!f) { request->send(200, "application/json", "{\"entries\":[],\"hasMore\":false}"); return; }
             int totalApproved = 0;
+            uint16_t seenCountries[256];
+            int seenCountryCount = 0;
             while (f.available()) {
                 String line = f.readStringUntil('\n');
                 line.trim();
@@ -2698,7 +2723,20 @@ void setup() {
                 int c4 = line.lastIndexOf(',');
                 if (c4 < 0) continue;
                 String a = line.substring(c4 + 1); a.trim();
-                if (a == "1") totalApproved++;
+                if (a != "1") continue;
+                totalApproved++;
+                // extract country (field index 1, between first two commas)
+                int c1 = line.indexOf(',');
+                int c2 = line.indexOf(',', c1 + 1);
+                if (c1 < 0 || c2 < 0 || c2 - c1 < 2) continue;
+                String cc = line.substring(c1 + 1, c2); cc.trim();
+                if (cc.length() < 2 || cc == "??") continue;
+                uint16_t key = ((uint8_t)cc[0] << 8) | (uint8_t)cc[1];
+                bool seen = false;
+                for (int i = 0; i < seenCountryCount; i++) {
+                    if (seenCountries[i] == key) { seen = true; break; }
+                }
+                if (!seen && seenCountryCount < 256) seenCountries[seenCountryCount++] = key;
             }
             f.close();
 
@@ -2751,7 +2789,9 @@ void setup() {
                 json += "\"message\":\"" + jsonEscape(pageEntries[i].substring(c3 + 1, c4)) + "\"}";
                 first = false;
             }
-            json += "],\"hasMore\":" + String(hasMore ? "true" : "false") + "}";
+            json += "],\"hasMore\":" + String(hasMore ? "true" : "false");
+            json += ",\"total\":" + String(totalApproved);
+            json += ",\"countries\":" + String(seenCountryCount) + "}";
             request->send(200, "application/json", json);
             logConsole(request, 200);
             return;
@@ -2838,7 +2878,7 @@ void setup() {
 
         // guestbook submit
         if (url == "/guestbook/submit" && request->method() == HTTP_POST) {
-            if (isRateLimited(request->client()->remoteIP())) {
+            if (isRateLimited(clientIpString(request))) {
                 request->send(429, "text/plain", "Please wait before posting again");
                 return;
             }
