@@ -103,7 +103,7 @@ function timingSafeEqualStr(a, b) {
 const MAX_BODY = 8192;
 const RATE_LIMIT_WINDOW = 60000; // 1 min
 const RATE_LIMIT_MAX = 60;       // per IP per window
-const SSE_MAX_CLIENTS = 500;     // cap concurrent SSE connections so a flood can't exhaust DO memory
+const SSE_MAX_CLIENTS = 5000;    // up to ~25 MB of 128 MB DO memory
 
 // Weather proxy; Denver, CO is broad enough to be non-identifying (~3M metro pop)
 const WEATHER_LAT = 39.74;
@@ -139,6 +139,10 @@ export class EspRelay {
     this.sseClients = new Set();
     this.lastStats = null;  // JSON string of the most recent ESP stats push
     this.lastStatsAt = 0;   // epoch ms when lastStats was set; used to detect staleness for badges
+    this.lastCountries = null;  // JSON string of last /countries relay response
+    this.lastCountriesAt = 0;
+    this.lastRecords = null;    // JSON string of last /records.json relay response
+    this.lastRecordsAt = 0;
     this.lastWeather = null; // cached outdoor weather object
     this.deadmanAlertSent = false; // so we don't spam when offline persists past 24h
     this.backupSessions = new Map(); // seq -> { startedAt, meta, files[], currentFile, totalB64, aborted }
@@ -327,7 +331,7 @@ export class EspRelay {
     try { if (this.lastStats) stats = JSON.parse(this.lastStats); } catch (e) {}
 
     const W = 340, H = 78;
-    const chipX = 14, chipY = 12;   // chip icon position
+    const chipX = 14, chipY = 5;   // chip icon position
     const chipSize = 20;
 
     let line1Right;  // status indicator text + color
@@ -1066,6 +1070,47 @@ export class EspRelay {
       // No cached stats yet; fall through to the ESP relay below.
     }
 
+    // /countries: serve from Worker-local cache
+    if (url.pathname === '/countries' && request.method === 'GET') {
+      if (this.lastCountries) {
+        const age = Date.now() - this.lastCountriesAt;
+        const espUp = !!(this.espSocket && this.espSocket.readyState === 1);
+        // Serve from cache if (a) fresh, or (b) ESP is down (stale is better than 503).
+        if (age < 60000 || !espUp) {
+          return new Response(this.lastCountries, {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              'Cache-Control': 'public, max-age=30, stale-while-revalidate=120',
+              'X-Worker-Cache-Age': String(Math.floor(age / 1000)),
+              ...SEC_HEADERS
+            }
+          });
+        }
+      }
+      // Otherwise fall through to ESP relay.
+    }
+
+    // /records.json: records change only when a new high/low lands, so a
+    // longer cache window is safe. Same ESP-down stale rule as /countries.
+    if (url.pathname === '/records.json' && request.method === 'GET') {
+      if (this.lastRecords) {
+        const age = Date.now() - this.lastRecordsAt;
+        const espUp = !!(this.espSocket && this.espSocket.readyState === 1);
+        if (age < 300000 || !espUp) {
+          return new Response(this.lastRecords, {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              'Cache-Control': 'public, max-age=60, stale-while-revalidate=600',
+              'X-Worker-Cache-Age': String(Math.floor(age / 1000)),
+              ...SEC_HEADERS
+            }
+          });
+        }
+      }
+    }
+
     // Embeddable live status badges. Uses cached lastStats; zero ESP load.
     if (url.pathname === '/status.svg') {
       const metric = url.searchParams.get('metric') || 'uptime';
@@ -1259,6 +1304,18 @@ export class EspRelay {
 
           const pending = this.pendingRequests.get(ar.id);
           if (pending) {
+            // Cache-fill hook: stash selected endpoint responses in Worker memory.
+            if (pending.path === '/countries' && ar.status === 200) {
+              try {
+                this.lastCountries = new TextDecoder().decode(assembled);
+                this.lastCountriesAt = Date.now();
+              } catch (e) {}
+            } else if (pending.path === '/records.json' && ar.status === 200) {
+              try {
+                this.lastRecords = new TextDecoder().decode(assembled);
+                this.lastRecordsAt = Date.now();
+              } catch (e) {}
+            }
             pending.resolve(new Response(assembled.buffer, {
               status: ar.status,
               headers
@@ -1434,6 +1491,7 @@ export class EspRelay {
       }, 30000);
 
       this.pendingRequests.set(id, {
+        path: url.pathname,
         resolve: (resp) => {
           clearTimeout(timeout);
           resolve(resp);
@@ -1443,8 +1501,12 @@ export class EspRelay {
   }
 }
 
+// /guestbook/entries is cacheable on purpose: firmware sends Cache-Control:
+// max-age=30 on the unfiltered list (search skips the header). Letting the
+// edge cache honor that header means one ESP round-trip per 30s regardless
+// of visitor count.
 const NO_CACHE = ['/logs', '/admin', '/_ws', '/_stream', '/console.json',
-  '/guestbook/entries', '/guestbook/submit', '/guestbook/pending', '/guestbook/moderate'];
+  '/guestbook/submit', '/guestbook/pending', '/guestbook/moderate'];
 
 function shouldCache(pathname) {
   if (pathname === '/stats') return false;

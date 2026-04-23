@@ -262,6 +262,27 @@
             color: #fff;
         }
 
+        .gb-filter-btn.active {
+            background: var(--ink);
+            color: var(--bg);
+        }
+        .gb-count {
+            display: inline-block;
+            margin-left: 4px;
+            padding: 1px 6px;
+            font-size: 10px;
+            background: var(--faint);
+            color: var(--ink);
+            border-radius: 8px;
+            font-variant-numeric: tabular-nums;
+        }
+        .gb-filter-btn.active .gb-count {
+            background: var(--bg);
+            color: var(--ink);
+        }
+        .gb-entry.moderated { opacity: 0.4; transition: opacity 0.3s; }
+        .gb-entry.removing { opacity: 0; transition: opacity 0.3s; max-height: 0; overflow: hidden; }
+
         @media (max-width: 480px) {
             .info-grid { grid-template-columns: 1fr; }
         }
@@ -321,6 +342,12 @@
     <div class="section">
         <div class="section-title">Guestbook Moderation</div>
         <div class="card">
+            <div class="gb-filters" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+                <button class="btn btn-small gb-filter-btn" data-filter="new" onclick="setGbFilter('new')">New <span class="gb-count" id="gb-count-new"></span></button>
+                <button class="btn btn-small gb-filter-btn" data-filter="approved" onclick="setGbFilter('approved')">Approved <span class="gb-count" id="gb-count-approved"></span></button>
+                <button class="btn btn-small gb-filter-btn" data-filter="denied" onclick="setGbFilter('denied')">Denied <span class="gb-count" id="gb-count-denied"></span></button>
+                <button class="btn btn-small gb-filter-btn" data-filter="all" onclick="setGbFilter('all')">All <span class="gb-count" id="gb-count-all"></span></button>
+            </div>
             <div id="guestbook-entries"><div class="status">Loading...</div></div>
             <button class="btn btn-small" id="gb-load-more" style="display:none;margin-top:12px;" onclick="loadMoreGuestbook()">Load more</button>
         </div>
@@ -1261,35 +1288,72 @@
     }
 
     var gbPage = 1;
+    var gbFilter = 'new';  // default to what admin cares about most
+
+    function renderGbEntry(e) {
+        var statusText = e.approved === 1 ? 'approved' : (e.approved === 0 ? 'pending' : 'denied');
+        var idx = parseInt(e.idx, 10) || 0;
+        var html = '<div class="gb-entry" data-idx="' + idx + '">';
+        html += '<div class="gb-meta">' + esc(e.time) + ' / ' + esc(e.country) + ' / ' + statusText + '</div>';
+        html += '<div class="gb-message"><span class="gb-name">' + esc(e.name) + ':</span> ' + esc(e.message) + '</div>';
+        html += '<div class="gb-actions">';
+        if (e.approved !== 1) {
+            html += '<button class="btn btn-approve btn-small" onclick="moderate(' + idx + ',1)">Approve</button>';
+        }
+        if (e.approved === 0) {
+            html += '<button class="btn btn-danger btn-small" onclick="moderate(' + idx + ',2)">Deny</button>';
+        }
+        if (e.approved === 1) {
+            html += '<button class="btn btn-danger btn-small" onclick="moderate(' + idx + ',2)">Remove</button>';
+        }
+        html += '<button class="btn btn-small" style="background:var(--mid)" onclick="if(confirm(\'Delete permanently?\'))moderate(' + idx + ',3)">Delete</button>';
+        html += '</div></div>';
+        return html;
+    }
 
     function renderGuestbookEntries(entries, append) {
         var el = document.getElementById('guestbook-entries');
         var html = append ? el.innerHTML : '';
         if (entries.length === 0 && !append) {
-            el.innerHTML = '<div class="status">No entries yet.</div>';
+            el.innerHTML = '<div class="status">No entries in this view.</div>';
             return;
         }
         for (var i = 0; i < entries.length; i++) {
-            var e = entries[i];
-            var statusText = e.approved === 1 ? 'approved' : (e.approved === 0 ? 'pending' : 'denied');
-            html += '<div class="gb-entry">';
-            var idx = parseInt(e.idx, 10) || 0;
-            html += '<div class="gb-meta">' + esc(e.time) + ' / ' + esc(e.country) + ' / ' + statusText + '</div>';
-            html += '<div class="gb-message"><span class="gb-name">' + esc(e.name) + ':</span> ' + esc(e.message) + '</div>';
-            html += '<div class="gb-actions">';
-            if (e.approved !== 1) {
-                html += '<button class="btn btn-approve btn-small" onclick="moderate(' + idx + ',1)">Approve</button>';
-            }
-            if (e.approved === 0) {
-                html += '<button class="btn btn-danger btn-small" onclick="moderate(' + idx + ',2)">Deny</button>';
-            }
-            if (e.approved === 1) {
-                html += '<button class="btn btn-danger btn-small" onclick="moderate(' + idx + ',2)">Remove</button>';
-            }
-            html += '<button class="btn btn-small" style="background:var(--mid)" onclick="if(confirm(\'Delete permanently?\'))moderate(' + idx + ',3)">Delete</button>';
-            html += '</div></div>';
+            html += renderGbEntry(entries[i]);
         }
         el.innerHTML = html;
+    }
+
+    function updateGbCounts(counts) {
+        if (!counts) return;
+        gbLastServerCounts = {
+            new:      Number.isFinite(counts.new)      ? counts.new      : 0,
+            approved: Number.isFinite(counts.approved) ? counts.approved : 0,
+            denied:   Number.isFinite(counts.denied)   ? counts.denied   : 0,
+            all:      Number.isFinite(counts.all)      ? counts.all      : 0
+        };
+        var map = { 'gb-count-new': counts.new, 'gb-count-approved': counts.approved,
+                    'gb-count-denied': counts.denied, 'gb-count-all': counts.all };
+        for (var id in map) {
+            var node = document.getElementById(id);
+            if (node) node.textContent = Number.isFinite(map[id]) ? map[id] : '';
+        }
+    }
+
+    function updateGbFilterButtons() {
+        var btns = document.querySelectorAll('.gb-filter-btn');
+        for (var i = 0; i < btns.length; i++) {
+            if (btns[i].getAttribute('data-filter') === gbFilter) btns[i].classList.add('active');
+            else btns[i].classList.remove('active');
+        }
+    }
+
+    function setGbFilter(filter) {
+        if (filter === gbFilter) return;
+        gbFilter = filter;
+        gbPage = 1;
+        updateGbFilterButtons();
+        loadGuestbook(1, false);
     }
 
     function loadGuestbook(page, append) {
@@ -1306,11 +1370,12 @@
                 var data = JSON.parse(this.responseText);
                 renderGuestbookEntries(data.entries, append);
                 btn.style.display = data.hasMore ? 'block' : 'none';
+                updateGbCounts(data.counts);
             } catch(e) {
                 if (!append) el.innerHTML = '<div class="status err">Failed to parse.</div>';
             }
         };
-        xhr.open('GET', '/guestbook/pending?page=' + page, true);
+        xhr.open('GET', '/guestbook/pending?page=' + page + '&filter=' + encodeURIComponent(gbFilter), true);
         xhr.send();
     }
 
@@ -1319,23 +1384,184 @@
         loadGuestbook(gbPage, true);
     }
 
+    // After moderation, update the entry in-place instead of reloading everything.
+    // Rules by current filter:
+    // "new"      -> any action removes it from view (it's no longer new)
+    // "approved" -> approve keeps it; deny/delete removes; changes reflect in status
+    // "denied"   -> deny keeps it; approve/delete removes
+    // "all"      -> delete removes; others stay with updated status
+    function handlePostModerate(idx, newStatus) {
+        var entry = document.querySelector('.gb-entry[data-idx="' + idx + '"]');
+        if (!entry) return;
+        var shouldRemove = false;
+        if (newStatus === 3) shouldRemove = true;  // permanent delete
+        else if (gbFilter === 'new')       shouldRemove = (newStatus !== 0);
+        else if (gbFilter === 'approved')  shouldRemove = (newStatus !== 1);
+        else if (gbFilter === 'denied')    shouldRemove = (newStatus !== 2);
+        // "all" filter: never remove on status change, just update
+        if (shouldRemove) {
+            entry.classList.add('removing');
+            setTimeout(function() { if (entry.parentNode) entry.parentNode.removeChild(entry); }, 300);
+        } else {
+            // Entry stays, refresh its markup with new status. Ask server for just this entry's updated state by re-rendering inline from known values.
+            var statusName = newStatus === 1 ? 'approved' : (newStatus === 0 ? 'pending' : 'denied');
+            var metaNode = entry.querySelector('.gb-meta');
+            if (metaNode) {
+                var parts = metaNode.textContent.split(' / ');
+                if (parts.length >= 3) metaNode.textContent = parts[0] + ' / ' + parts[1] + ' / ' + statusName;
+            }
+            // Update action buttons to reflect new state
+            var actionsNode = entry.querySelector('.gb-actions');
+            if (actionsNode) {
+                var html = '';
+                if (newStatus !== 1) {
+                    html += '<button class="btn btn-approve btn-small" onclick="moderate(' + idx + ',1)">Approve</button>';
+                }
+                if (newStatus === 0) {
+                    html += '<button class="btn btn-danger btn-small" onclick="moderate(' + idx + ',2)">Deny</button>';
+                }
+                if (newStatus === 1) {
+                    html += '<button class="btn btn-danger btn-small" onclick="moderate(' + idx + ',2)">Remove</button>';
+                }
+                html += '<button class="btn btn-small" style="background:var(--mid)" onclick="if(confirm(\'Delete permanently?\'))moderate(' + idx + ',3)">Delete</button>';
+                actionsNode.innerHTML = html;
+            }
+        }
+    }
+
+    // Client-side batching: rapid clicks queue into a pending batch
+    var gbPendingOps = [];     // [{ idx, status }]
+    var gbBatchTimer = null;
+    var gbOptimisticDeltas = { new: 0, approved: 0, denied: 0, all: 0 };
+    var gbLastServerCounts = { new: 0, approved: 0, denied: 0, all: 0 };
+
     function moderate(idx, status) {
+        // Capture old status from the DOM for accurate optimistic count delta.
+        var entry = document.querySelector('.gb-entry[data-idx="' + idx + '"]');
+        var oldStatus = null;
+        if (entry) {
+            var metaNode = entry.querySelector('.gb-meta');
+            if (metaNode) {
+                var parts = metaNode.textContent.split(' / ');
+                if (parts.length >= 3) {
+                    var s = parts[2].trim();
+                    if      (s === 'pending')  oldStatus = 0;
+                    else if (s === 'approved') oldStatus = 1;
+                    else if (s === 'denied')   oldStatus = 2;
+                }
+            }
+        }
+
+        handlePostModerate(idx, status);
+        applyOptimisticCountDelta(oldStatus, status);
+
+        // Queue for batch
+        gbPendingOps.push({ idx: idx, status: status });
+        if (gbBatchTimer) clearTimeout(gbBatchTimer);
+        gbBatchTimer = setTimeout(flushGbBatch, 500);
+    }
+
+    function applyOptimisticCountDelta(oldStatus, newStatus) {
+        if (oldStatus === null) return;
+        if (newStatus === 3) {
+            // permanent delete: remove from old-status bucket and from all
+            if      (oldStatus === 0) gbOptimisticDeltas.new--;
+            else if (oldStatus === 1) gbOptimisticDeltas.approved--;
+            else if (oldStatus === 2) gbOptimisticDeltas.denied--;
+            gbOptimisticDeltas.all--;
+        } else if (oldStatus !== newStatus) {
+            if      (oldStatus === 0)  gbOptimisticDeltas.new--;
+            else if (oldStatus === 1)  gbOptimisticDeltas.approved--;
+            else if (oldStatus === 2)  gbOptimisticDeltas.denied--;
+            if      (newStatus === 0)  gbOptimisticDeltas.new++;
+            else if (newStatus === 1)  gbOptimisticDeltas.approved++;
+            else if (newStatus === 2)  gbOptimisticDeltas.denied++;
+        }
+        refreshGbCountsFromOptimistic();
+    }
+
+    function refreshGbCountsFromOptimistic() {
+        var nodes = {
+            'gb-count-new':      gbLastServerCounts.new      + gbOptimisticDeltas.new,
+            'gb-count-approved': gbLastServerCounts.approved + gbOptimisticDeltas.approved,
+            'gb-count-denied':   gbLastServerCounts.denied   + gbOptimisticDeltas.denied,
+            'gb-count-all':      gbLastServerCounts.all      + gbOptimisticDeltas.all
+        };
+        for (var id in nodes) {
+            var el = document.getElementById(id);
+            if (el) el.textContent = Math.max(0, nodes[id]);
+        }
+    }
+
+    function flushGbBatch() {
+        gbBatchTimer = null;
+        if (gbPendingOps.length === 0) return;
+        var batch = gbPendingOps;
+        gbPendingOps = [];
+
+        var seenIdx = {};
+        var dedup = [];
+        for (var i = batch.length - 1; i >= 0; i--) {
+            if (!seenIdx[batch[i].idx]) {
+                seenIdx[batch[i].idx] = true;
+                dedup.unshift(batch[i]);
+            }
+        }
+        var opsStr = dedup.map(function(op) { return op.idx + ':' + op.status; }).join(',');
+
         var xhr = new XMLHttpRequest();
         xhr.onreadystatechange = function() {
             if (this.readyState !== 4) return;
             if (this.status !== 200) {
-                alert('Moderation failed: ' + (this.responseText || ('HTTP ' + this.status)));
+                alert('Moderation batch failed (' + batch.length + ' ops): ' +
+                      (this.responseText || ('HTTP ' + this.status)) +
+                      '\nReloading to reconcile.');
+                gbOptimisticDeltas = { new: 0, approved: 0, denied: 0, all: 0 };
+                loadGuestbook(1, false);
                 return;
             }
-            gbPage = 1;
-            loadGuestbook(1, false);
+            gbOptimisticDeltas = { new: 0, approved: 0, denied: 0, all: 0 };
+            var hadDeletes = false;
+            try {
+                var r = JSON.parse(this.responseText);
+                hadDeletes = !!r.deletes;
+            } catch(e) {}
+            if (hadDeletes) {
+                loadGuestbook(1, false);
+            } else {
+                refreshGbCounts();
+            }
         };
         xhr.onerror = function() {
-            alert('Moderation failed: network error');
+            alert('Moderation batch: network error. Reloading.');
+            gbOptimisticDeltas = { new: 0, approved: 0, denied: 0, all: 0 };
+            loadGuestbook(1, false);
         };
-        xhr.open('POST', '/guestbook/moderate', true);
+        xhr.open('POST', '/guestbook/moderate-batch', true);
         xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-        xhr.send('idx=' + idx + '&status=' + status);
+        xhr.send('ops=' + encodeURIComponent(opsStr));
+    }
+
+    // Fetch fresh counts from server without reloading the entry list
+    function refreshGbCounts() {
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4 || this.status !== 200) return;
+            try {
+                var data = JSON.parse(this.responseText);
+                if (data.counts) {
+                    gbLastServerCounts = {
+                        new: data.counts.new || 0,
+                        approved: data.counts.approved || 0,
+                        denied: data.counts.denied || 0,
+                        all: data.counts.all || 0
+                    };
+                    updateGbCounts(data.counts);
+                }
+            } catch(e) {}
+        };
+        xhr.open('GET', '/guestbook/pending?page=1&filter=' + encodeURIComponent(gbFilter), true);
+        xhr.send();
     }
 
     function loadErrorLog() {
@@ -1732,6 +1958,7 @@
 
     // Init
     loadDeviceInfo();
+    updateGbFilterButtons();
     loadGuestbook(1, false);
     loadFiles('/');
     loadBackupStatus();

@@ -365,7 +365,7 @@
             html += '<div class="cell-sub">avg ' + data.humidity.avg + '%</div></div>';
         }
         if (data.co2_ppm && Number.isFinite(data.co2_ppm.min)) {
-            html += '<div><div class="cell-label">CO\u2082</div>';
+            html += '<div><div class="cell-label"><abbr title="Equivalent CO2 estimated from VOC levels (CCS811 MOX sensor, not a true NDIR reading).">eCO\u2082</abbr></div>';
             html += '<div class="cell-value">' + data.co2_ppm.min + '\u2013' + data.co2_ppm.max + ' ppm</div>';
             html += '<div class="cell-sub">avg ' + data.co2_ppm.avg + ' ppm</div></div>';
         }
@@ -427,7 +427,7 @@
                 var v = isInt ? String(rec.value) : (+rec.value).toFixed(1);
                 rows.push({ label: label, value: v + suffix, at: rec.at });
             }
-            row('Highest CO\u2082',      data.highest_co2,       ' ppm',      true);
+            row('Highest eCO\u2082',      data.highest_co2,       ' ppm',      true);
             row('Hottest recorded',      data.highest_temp_f,    '\u00b0F',   false);
             row('Coldest recorded',      data.lowest_temp_f,     '\u00b0F',   false);
             row('Busiest day',           data.most_visitors_day, ' visitors', true);

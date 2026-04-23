@@ -797,7 +797,7 @@
         </div>
         <!-- air -->
         <div class="stat">
-            <div class="stat-label"><i class="fa-solid fa-wind"></i> CO&#x2082;</div>
+            <div class="stat-label"><i class="fa-solid fa-wind"></i> <abbr title="Equivalent CO₂ estimated from VOC levels (CCS811 MOX sensor, not a true NDIR reading).">eCO&#x2082;</abbr></div>
             <div class="stat-value loading" id="co2"></div>
             <div class="stat-sub" id="co2_sub"></div>
         </div>
@@ -870,7 +870,7 @@
             <button class="chart-btn active" data-metric="temperature_c" data-label="Temperature (°C)">Temp</button>
             <button class="chart-btn" data-metric="humidity_percent" data-label="Humidity (%)">Humidity</button>
             <button class="chart-btn" data-metric="heat_index_c" data-label="Heat Index (°C)">Heat Index</button>
-            <button class="chart-btn" data-metric="co2_ppm" data-label="CO₂ (ppm)">CO&#x2082;</button>
+            <button class="chart-btn" data-metric="co2_ppm" data-label="eCO₂ (ppm)" title="Equivalent CO₂ estimated from VOC levels (CCS811 MOX sensor, not a true NDIR reading).">eCO&#x2082;</button>
             <button class="chart-btn" data-metric="voc_ppb" data-label="VOC (ppb)">VOC</button>
             <button class="chart-btn" data-metric="requests_interval" data-label="Requests / 5 min">Requests</button>
             <button class="chart-btn" data-metric="rssi" data-label="Signal (dBm)">Signal</button>
@@ -1234,7 +1234,7 @@
                 if (alert && alertText && s.sensors) {
                     var bad = [];
                     if (s.sensors.bme_ok === false) bad.push('BME280 (temperature, humidity, pressure)');
-                    if (s.sensors.ccs_ok === false) bad.push('CCS811 (CO\u2082, VOC)');
+                    if (s.sensors.ccs_ok === false) bad.push('CCS811 (eCO\u2082, VOC)');
                     if (bad.length > 0) {
                         alertText.textContent = ' Sensor not responding: ' + bad.join(' and ') +
                             '. Showing last known values until it recovers.';

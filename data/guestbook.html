@@ -222,6 +222,198 @@
             margin-bottom: 6px;
         }
 
+        .entry-meta-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .entry-link {
+            background: none;
+            border: 1px solid var(--faint);
+            padding: 4px 8px;
+            cursor: pointer;
+            color: var(--mid);
+            font-size: 12px;
+            font-family: inherit;
+            border-radius: 3px;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            transition: color 0.15s, border-color 0.15s, background 0.15s;
+        }
+        .entry-link:hover {
+            color: var(--ink);
+            border-color: var(--mid);
+            background: var(--bg);
+        }
+        .entry-copy .entry-link-label::before { content: 'Copy link'; }
+        .entry-copy.copied {
+            color: #27ae60;
+            border-color: #27ae60;
+        }
+        .entry-copy.copied .entry-link-label::before { content: 'Copied!'; }
+        .entry-share .entry-link-label::before { content: 'Share'; }
+        @media (max-width: 480px) {
+            .entry-link .entry-link-label { display: none; }
+            .entry-copy.copied .entry-link-label {
+                display: inline;
+                font-size: 11px;
+            }
+        }
+
+        /* share popover (opened by the share button) */
+
+        .share-popover {
+            position: absolute;
+            z-index: 20;
+            background: var(--bg);
+            border: 1px solid var(--ink);
+            padding: 6px;
+            display: flex;
+            gap: 2px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+        }
+        .share-popover a {
+            color: var(--mid);
+            text-decoration: none;
+            font-size: 14px;
+            padding: 6px 10px;
+            border-radius: 2px;
+            transition: color 0.15s, background 0.15s;
+        }
+        .share-popover a:hover {
+            color: var(--ink);
+            background: var(--faint);
+        }
+
+        /* search */
+
+        .search-bar {
+            margin-bottom: 20px;
+            position: relative;
+        }
+
+        .search-bar input {
+            width: 100%;
+            background: var(--bg);
+            border: 1px solid var(--faint);
+            color: var(--ink);
+            font-family: inherit;
+            font-size: 13px;
+            padding: 10px 32px 10px 12px;
+        }
+
+        .search-bar input:focus {
+            outline: none;
+            border-color: var(--mid);
+        }
+
+        .search-bar input::-webkit-search-cancel-button {
+            -webkit-appearance: none;
+            appearance: none;
+        }
+
+        .search-clear {
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            color: var(--mid);
+            cursor: pointer;
+            font-size: 14px;
+            padding: 4px 6px;
+            display: none;
+        }
+        .search-clear:hover { color: var(--ink); }
+
+        /* pinned entry (permalink target) */
+
+        #pinned-wrap {
+            display: none;
+            margin-bottom: 28px;
+        }
+        #pinned-wrap.show { display: block; }
+
+        .pinned-label {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 10px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--mid);
+            margin-bottom: 8px;
+        }
+        .pinned-dismiss {
+            background: none;
+            border: none;
+            color: var(--mid);
+            font-family: inherit;
+            font-size: 10px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            cursor: pointer;
+            padding: 0;
+        }
+        .pinned-dismiss:hover { color: var(--ink); }
+
+        #pinned-entry {
+            border: 1px solid var(--faint);
+            background: rgba(38, 134, 230, 0.06);
+            padding: 16px;
+        }
+        #pinned-entry .entry { border: none; padding: 0; }
+
+        .pinned-error {
+            font-size: 12px;
+            color: var(--mid);
+            border: 1px solid var(--faint);
+            padding: 12px 14px;
+            font-style: italic;
+        }
+
+        /* copy-link fallback popup (shown only if clipboard and execCommand both fail) */
+
+        .copy-fallback {
+            position: absolute;
+            z-index: 20;
+            background: var(--bg);
+            border: 1px solid var(--ink);
+            padding: 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+        }
+        .copy-fallback input {
+            background: transparent;
+            border: none;
+            color: var(--ink);
+            font-family: inherit;
+            font-size: 11px;
+            width: 240px;
+            outline: none;
+            padding: 2px 4px;
+        }
+        .copy-fallback-hint {
+            font-size: 10px;
+            color: var(--mid);
+            white-space: nowrap;
+        }
+        .copy-fallback-close {
+            background: none;
+            border: none;
+            color: var(--mid);
+            cursor: pointer;
+            font-size: 14px;
+            padding: 0 4px;
+            line-height: 1;
+        }
+        .copy-fallback-close:hover { color: var(--ink); }
+
         .entry-name {
             font-size: 14px;
             font-weight: 600;
@@ -366,6 +558,17 @@
             <i class="fa-solid fa-comment-dots"></i> Messages
             <span id="entries-count" style="float:right;text-transform:none;letter-spacing:0;font-size:10px;color:var(--mid);"></span>
         </div>
+        <div id="pinned-wrap">
+            <div class="pinned-label">
+                <span id="pinned-label-text">Linked message</span>
+                <button class="pinned-dismiss" id="pinned-dismiss" type="button">Show all</button>
+            </div>
+            <div id="pinned-entry"></div>
+        </div>
+        <div class="search-bar">
+            <input type="search" id="gb-search" placeholder="Search messages..." autocomplete="off" maxlength="64">
+            <button class="search-clear" id="search-clear" type="button" aria-label="Clear search">&times;</button>
+        </div>
         <div id="entries">
             <div class="entry-empty">Loading...</div>
         </div>
@@ -451,27 +654,76 @@
     }
 
     var currentPage = 1;
+    var currentQuery = '';
+    var searchTimer = null;
+    var permalinkTarget = '';  // ID currently being scrolled to
+
+    // Permalink anchor: each entry has a 8-char base32 ID
+    function validId(s) {
+        return typeof s === 'string' && /^[0-9a-hjkmnp-tv-z]{8}$/.test(s);
+    }
+    function entryAnchorId(id) {
+        return String(id || '');
+    }
+
+    // Build the HTML for a single entry
+    function entryHtml(e) {
+        if (!validId(e.id)) return '';  // Firmware should always send an ID
+        var aid = entryAnchorId(e.id);
+        var h = '';
+        h += '<div class="entry" id="' + aid + '" data-id="' + esc(e.id)
+           + '" data-name="' + esc(e.name) + '" data-message="' + esc(e.message) + '">';
+        h += '<div class="entry-header">';
+        h += '<span class="entry-name">' + esc(e.name);
+        if (e.country && e.country !== '??') h += ' <span class="entry-country">' + esc(e.country) + '</span>';
+        h += '</span>';
+        h += '<span class="entry-meta-row">';
+        h += '<span class="entry-meta">' + formatDate(e.time) + '</span>';
+        h += '<button class="entry-link entry-copy" type="button" title="Copy link to this message" aria-label="Copy link">'
+           + '<i class="fa-solid fa-link"></i>'
+           + '<span class="entry-link-label"></span>'
+           + '</button>';
+        h += '<button class="entry-link entry-share" type="button" title="Share this message" aria-label="Share">'
+           + '<i class="fa-solid fa-share-nodes"></i>'
+           + '<span class="entry-link-label"></span>'
+           + '</button>';
+        h += '</span>';
+        h += '</div>';
+        h += '<div class="entry-message">' + esc(e.message) + '</div>';
+        h += '</div>';
+        return h;
+    }
 
     function renderEntries(entries, append) {
         var el = document.getElementById('entries');
         var html = append ? el.innerHTML : '';
         if (entries.length === 0 && !append) {
-            el.innerHTML = '<div class="entry-empty">No messages yet. Be the first!</div>';
+            var msg = currentQuery
+                ? 'No messages match "' + esc(currentQuery) + '".'
+                : 'No messages yet. Be the first!';
+            el.innerHTML = '<div class="entry-empty">' + msg + '</div>';
             return;
         }
-        for (var i = 0; i < entries.length; i++) {
-            var e = entries[i];
-            html += '<div class="entry">';
-            html += '<div class="entry-header">';
-            html += '<span class="entry-name">' + esc(e.name);
-            if (e.country && e.country !== '??') html += ' <span class="entry-country">' + esc(e.country) + '</span>';
-            html += '</span>';
-            html += '<span class="entry-meta">' + formatDate(e.time) + '</span>';
-            html += '</div>';
-            html += '<div class="entry-message">' + esc(e.message) + '</div>';
-            html += '</div>';
-        }
+        for (var i = 0; i < entries.length; i++) html += entryHtml(entries[i]);
         el.innerHTML = html;
+    }
+
+    function updateHeaderCount(data) {
+        var countEl = document.getElementById('entries-count');
+        if (!countEl || !Number.isFinite(data.total)) return;
+        if (currentQuery && Number.isFinite(data.matching)) {
+            var m = data.matching;
+            var mWord = m === 1 ? 'match' : 'matches';
+            countEl.textContent = m + ' ' + mWord + ' of ' + data.total;
+            return;
+        }
+        var t = data.total;
+        var c = Number.isFinite(data.countries) ? data.countries : 0;
+        var msgWord = t === 1 ? 'message' : 'messages';
+        var ctryWord = c === 1 ? 'country' : 'countries';
+        countEl.textContent = c > 0
+            ? t + ' ' + msgWord + ' from ' + c + ' ' + ctryWord
+            : t + ' ' + msgWord;
     }
 
     function loadEntries(page, append) {
@@ -488,24 +740,14 @@
                 var data = JSON.parse(this.responseText);
                 renderEntries(data.entries, append);
                 btn.style.display = data.hasMore ? 'block' : 'none';
-                // Only update header count on first page load (not on "load more" clicks).
-                if (!append) {
-                    var countEl = document.getElementById('entries-count');
-                    if (countEl && Number.isFinite(data.total)) {
-                        var t = data.total;
-                        var c = Number.isFinite(data.countries) ? data.countries : 0;
-                        var msgWord = t === 1 ? 'message' : 'messages';
-                        var ctryWord = c === 1 ? 'country' : 'countries';
-                        countEl.textContent = c > 0
-                            ? t + ' ' + msgWord + ' from ' + c + ' ' + ctryWord
-                            : t + ' ' + msgWord;
-                    }
-                }
+                if (!append) updateHeaderCount(data);
             } catch(e) {
                 if (!append) el.innerHTML = '<div class="entry-empty">Failed to load messages.</div>';
             }
         };
-        xhr.open('GET', '/guestbook/entries?page=' + page, true);
+        var qs = '/guestbook/entries?page=' + page;
+        if (currentQuery) qs += '&q=' + encodeURIComponent(currentQuery);
+        xhr.open('GET', qs, true);
         xhr.send();
     }
 
@@ -514,7 +756,294 @@
         loadEntries(currentPage, true);
     }
 
-    loadEntries(1, false);
+    // Search
+    var searchInput = document.getElementById('gb-search');
+    var searchClear = document.getElementById('search-clear');
+    searchInput.addEventListener('input', function() {
+        var q = this.value.trim();
+        searchClear.style.display = q ? 'block' : 'none';
+        if (searchTimer) clearTimeout(searchTimer);
+        searchTimer = setTimeout(function() {
+            // Searching overrides any pinned entry
+            if (permalinkTarget) {
+                clearPinned();
+                if (location.hash) history.replaceState(null, '', '/guestbook');
+            }
+            currentQuery = q;
+            currentPage = 1;
+            loadEntries(1, false);
+        }, 250);
+    });
+    searchClear.addEventListener('click', function() {
+        searchInput.value = '';
+        searchClear.style.display = 'none';
+        if (searchTimer) clearTimeout(searchTimer);
+        currentQuery = '';
+        currentPage = 1;
+        loadEntries(1, false);
+    });
+
+    // On HTTPS we use the clipboard API. On plain HTTP (LAN) we fall back to
+    // the old document.execCommand('copy') trick. If both fail the user gets
+    // a small popup with the URL pre-selected so they can copy it manually.
+    function copyToClipboard(text, anchorBtn, onSuccess) {
+        var secure = (typeof window.isSecureContext === 'boolean')
+                   ? window.isSecureContext
+                   : (location.protocol === 'https:' || location.hostname === 'localhost');
+        if (secure && navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(onSuccess, function() {
+                if (tryExecCommandCopy(text)) onSuccess();
+                else showCopyFallback(text, anchorBtn);
+            });
+            return;
+        }
+        if (tryExecCommandCopy(text)) { onSuccess(); return; }
+        showCopyFallback(text, anchorBtn);
+    }
+
+    function tryExecCommandCopy(text) {
+        try {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.top = '0';
+            ta.style.left = '0';
+            ta.style.width = '1px';
+            ta.style.height = '1px';
+            ta.style.opacity = '0';
+            ta.setAttribute('readonly', '');
+            document.body.appendChild(ta);
+            ta.select();
+            var ok = false;
+            try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+            document.body.removeChild(ta);
+            return ok;
+        } catch (e) { return false; }
+    }
+
+    function showCopyFallback(text, anchorBtn) {
+        var existing = document.querySelector('.copy-fallback');
+        if (existing && existing._dismiss) existing._dismiss();
+
+        var pop = document.createElement('div');
+        pop.className = 'copy-fallback';
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.readOnly = true;
+        input.value = text;
+        var hint = document.createElement('span');
+        hint.className = 'copy-fallback-hint';
+        hint.textContent = 'press Ctrl+C';
+        var close = document.createElement('button');
+        close.className = 'copy-fallback-close';
+        close.type = 'button';
+        close.setAttribute('aria-label', 'Close');
+        close.innerHTML = '&times;';
+        pop.appendChild(input);
+        pop.appendChild(hint);
+        pop.appendChild(close);
+
+        var rect = anchorBtn.getBoundingClientRect();
+        pop.style.top  = (window.scrollY + rect.bottom + 4) + 'px';
+        pop.style.left = Math.max(8, window.scrollX + rect.right - 320) + 'px';
+        document.body.appendChild(pop);
+        setTimeout(function() { input.focus(); input.select(); }, 0);
+
+        var onOutside = function(e) { if (!pop.contains(e.target)) dismiss(); };
+        var dismiss = function() {
+            document.removeEventListener('click', onOutside, true);
+            if (pop.parentNode) pop.parentNode.removeChild(pop);
+        };
+        pop._dismiss = dismiss;
+        close.addEventListener('click', dismiss);
+        setTimeout(function() { document.addEventListener('click', onOutside, true); }, 0);
+    }
+
+    function handleEntryButtonClick(e) {
+        var copyBtn  = e.target.closest('.entry-copy');
+        var shareBtn = e.target.closest('.entry-share');
+        var btn = copyBtn || shareBtn;
+        if (!btn) return;
+        var entry = btn.closest('.entry');
+        if (!entry) return;
+        var id = entry.getAttribute('data-id');
+        if (!validId(id)) return;
+        var url = location.origin + '/guestbook#' + entryAnchorId(id);
+
+        if (copyBtn) {
+            copyToClipboard(url, btn, function() {
+                btn.classList.add('copied');
+                setTimeout(function() { btn.classList.remove('copied'); }, 1200);
+            });
+            return;
+        }
+
+        // Toggle the share popover. Same button twice = close. Different
+        // entry = move to the new one.
+        var existing = document.querySelector('.share-popover');
+        var existingAnchor = existing ? existing._anchor : null;
+        if (existing && existing._dismiss) existing._dismiss();
+        if (existingAnchor === btn) return;
+
+        var name = entry.getAttribute('data-name') || '';
+        var msg  = entry.getAttribute('data-message') || '';
+        showSharePopover(btn, { id: id, name: name, message: msg, url: url });
+    }
+    document.getElementById('entries').addEventListener('click', handleEntryButtonClick);
+    document.getElementById('pinned-entry').addEventListener('click', handleEntryButtonClick);
+
+    // Small panel of platform icons anchored below the share button. Each
+    // icon opens that platform's share intent URL in a new tab.
+    function showSharePopover(anchorBtn, entry) {
+        var existing = document.querySelector('.share-popover');
+        if (existing && existing._dismiss) existing._dismiss();
+
+        // Cap at 200 chars; Twitter etc. auto-shorten the URL so that leaves
+        // enough room for the quote plus name.
+        var shareTitle = entry.name + ' on HelloESP';
+        var shareText  = '"' + entry.message + '" - ' + entry.name + ' on HelloESP';
+        if (shareText.length > 200) shareText = shareText.substring(0, 197) + '...';
+
+        var u = encodeURIComponent(entry.url);
+        var t = encodeURIComponent(shareText);
+        var ti = encodeURIComponent(shareTitle);
+        var targets = [
+            { icon: 'fa-brands fa-x-twitter',  label: 'X',
+              href: 'https://twitter.com/intent/tweet?url=' + u + '&text=' + t },
+            { icon: 'fa-brands fa-reddit-alien', label: 'Reddit',
+              href: 'https://www.reddit.com/submit?url=' + u + '&title=' + ti },
+            { icon: 'fa-brands fa-facebook-f', label: 'Facebook',
+              href: 'https://www.facebook.com/sharer/sharer.php?u=' + u },
+            { icon: 'fa-brands fa-hacker-news', label: 'Hacker News',
+              href: 'https://news.ycombinator.com/submitlink?u=' + u + '&t=' + ti }
+        ];
+
+        var pop = document.createElement('div');
+        pop.className = 'share-popover';
+        targets.forEach(function(tg) {
+            var a = document.createElement('a');
+            a.href = tg.href;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            a.setAttribute('aria-label', 'Share to ' + tg.label);
+            a.title = 'Share to ' + tg.label;
+            a.innerHTML = '<i class="' + tg.icon + '"></i>';
+            pop.appendChild(a);
+        });
+
+        // Append hidden so we can measure width, then clamp into the viewport
+        // before revealing. 8px gutter on each side so the popover never hugs
+        // the edge on narrow screens.
+        var rect = anchorBtn.getBoundingClientRect();
+        pop.style.top = (window.scrollY + rect.bottom + 4) + 'px';
+        pop.style.left = '0px';
+        pop.style.visibility = 'hidden';
+        document.body.appendChild(pop);
+        var popW = pop.offsetWidth;
+        var vw = document.documentElement.clientWidth;
+        var left = rect.left;
+        if (left + popW > vw - 8) left = vw - 8 - popW;
+        if (left < 8) left = 8;
+        pop.style.left = (window.scrollX + left) + 'px';
+        pop.style.visibility = '';
+
+        // Clicks on share buttons fall through to the entry click handler,
+        // which handles toggle and switch-entry for us.
+        var onOutside = function(ev) {
+            if (ev.target.closest('.entry-share')) return;
+            if (!pop.contains(ev.target)) dismiss();
+        };
+        var dismiss = function() {
+            document.removeEventListener('click', onOutside, true);
+            if (pop.parentNode) pop.parentNode.removeChild(pop);
+        };
+        pop._dismiss = dismiss;
+        pop._anchor = anchorBtn;
+        // Close after the user picks a platform.
+        pop.addEventListener('click', function(ev) {
+            if (ev.target.closest('a')) setTimeout(dismiss, 0);
+        });
+        setTimeout(function() { document.addEventListener('click', onOutside, true); }, 0);
+    }
+
+    function clearPinned() {
+        permalinkTarget = '';
+        var wrap = document.getElementById('pinned-wrap');
+        wrap.classList.remove('show');
+        document.getElementById('pinned-entry').innerHTML = '';
+    }
+
+    function showPinnedError(msg) {
+        var wrap = document.getElementById('pinned-wrap');
+        document.getElementById('pinned-label-text').textContent = 'Linked message';
+        document.getElementById('pinned-entry').innerHTML =
+            '<div class="pinned-error">' + esc(msg) + '</div>';
+        wrap.classList.add('show');
+    }
+
+    function showPinnedEntry(entry) {
+        var html = entryHtml(entry);
+        if (!html) { showPinnedError('Could not load linked message.'); return; }
+        var wrap = document.getElementById('pinned-wrap');
+        document.getElementById('pinned-label-text').textContent = 'Linked message';
+        document.getElementById('pinned-entry').innerHTML = html;
+        wrap.classList.add('show');
+    }
+
+    function resolvePermalink() {
+        var h = location.hash || '';
+        if (!h || h.length < 2) return false;
+        var raw = h.substring(1).toLowerCase();
+        if (!validId(raw)) return false;
+        permalinkTarget = raw;
+
+        // Always load the normal list below
+        currentQuery = '';
+        searchInput.value = '';
+        searchClear.style.display = 'none';
+        currentPage = 1;
+        loadEntries(1, false);
+
+        // Placeholder while the locate round-trip completes
+        document.getElementById('pinned-label-text').textContent = 'Linked message';
+        document.getElementById('pinned-entry').innerHTML =
+            '<div class="pinned-error">Loading...</div>';
+        document.getElementById('pinned-wrap').classList.add('show');
+
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status !== 200) { showPinnedError('Could not load linked message.'); return; }
+            try {
+                var data = JSON.parse(this.responseText);
+                if (!data.found || !data.entry) {
+                    showPinnedError('That message is not available (it may have been deleted or is not approved).');
+                    return;
+                }
+                showPinnedEntry(data.entry);
+            } catch (e) {
+                showPinnedError('Could not load linked message.');
+            }
+        };
+        xhr.onerror = function() { showPinnedError('Network error loading linked message.'); };
+        xhr.open('GET', '/guestbook/locate?id=' + encodeURIComponent(raw), true);
+        xhr.send();
+        return true;
+    }
+
+    document.getElementById('pinned-dismiss').addEventListener('click', function() {
+        history.replaceState(null, '', '/guestbook');
+        clearPinned();
+    });
+
+    window.addEventListener('hashchange', function() {
+        clearPinned();
+        resolvePermalink();
+    });
+
+    if (!resolvePermalink()) {
+        loadEntries(1, false);
+    }
 
     // smooth cross-page navigation when supported
     if (document.startViewTransition) {
