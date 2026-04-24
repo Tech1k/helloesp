@@ -65,7 +65,14 @@ function maintenanceResponse(until, message) {
     etaLine = `Back in about ${mins} ${mins === 1 ? 'minute' : 'minutes'}.`;
     retryAfter = Math.min(3600, mins * 60);
   }
-  const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="robots" content="noindex">${FAVICON}<title>Maintenance / HelloESP</title><style>${PAGE_CSS}</style></head><body>${SITE_NAME_LINK}<main><h1>Maintenance</h1><p class="lede">${lede}</p><p>${etaLine}</p><p><a href="/">Retry</a><a href="https://github.com/Tech1k/helloesp">GitHub</a></p><p class="status">Checking<span class="dot" aria-hidden="true"></span></p><p class="note">HelloESP runs entirely on an ESP32. Planned work is in progress. The page will refresh automatically when the site is back.</p></main>${RETRY_JS}</body></html>`;
+  // Include the absolute unix ms in a data attribute so client JS can render
+  // the "back at" time in the visitor's local timezone, regardless of where
+  // they are. Falls back to the relative phrase if JS is disabled.
+  const localTimeJs = `<script>(function(){var el=document.getElementById('back-at');if(!el)return;var t=parseInt(el.getAttribute('data-until'),10);if(!t)return;try{el.textContent=' (around '+new Date(t).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})+' your time)';}catch(e){}})();</script>`;
+  const backAtSpan = remainingMs >= 60000
+    ? `<span id="back-at" data-until="${until}"></span>`
+    : '';
+  const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="robots" content="noindex">${FAVICON}<title>Maintenance / HelloESP</title><style>${PAGE_CSS}</style></head><body>${SITE_NAME_LINK}<main><h1>Maintenance</h1><p class="lede">${lede}</p><p>${etaLine}${backAtSpan}</p><p><a href="/">Retry</a><a href="https://github.com/Tech1k/helloesp">GitHub</a></p><p class="status">Checking<span class="dot" aria-hidden="true"></span></p><p class="note">HelloESP runs entirely on an ESP32. Planned work is in progress. The page will refresh automatically when the site is back.</p></main>${localTimeJs}${RETRY_JS}</body></html>`;
   return new Response(html, {
     status: 503,
     headers: {
@@ -284,6 +291,42 @@ export class EspRelay {
     return { state: 'live', color: '#2686e6' };
   }
 
+  buildCurlCard() {
+    let s = null;
+    try { if (this.lastStats) s = JSON.parse(this.lastStats); } catch (e) {}
+    const fmtNum = (v) => (Number.isFinite(v) ? Math.round(v).toLocaleString() : '—');
+    const uptime = s && s.uptime ? String(s.uptime) : '—';
+    const tempF  = s && s.temperature && Number.isFinite(s.temperature.fahrenheit)
+        ? s.temperature.fahrenheit.toFixed(1) + '°F' : '—';
+    const visitors  = s ? fmtNum(s.visitors) : '—';
+    const countries = s ? fmtNum(s.countries) : '—';
+    const co2  = s ? fmtNum(s.co2_ppm) + ' ppm (eCO₂)' : '—';
+    const lines = [
+      '',
+      '   _   _      _ _        _____ ____  ____',
+      '  | | | | ___| | |  ___  | ____/ ___|| _ \\',
+      '  | |_| |/ _ \\ | |/ _ \\|  _| \\_\\| |_) |',
+      '  |  _  |  __/ | | (_) | |___ ___)  |  __/',
+      '  |_| |_|\\___|_|_|\\___/|_____|____/|_|',
+      '',
+      '  A website running on an ESP32 on a wall in Colorado.',
+      '',
+      '  Uptime:     ' + uptime,
+      '  Indoor:     ' + tempF,
+      '  Air:        ' + co2,
+      '  Visitors:   ' + visitors + ' all-time',
+      '  Countries:  ' + countries,
+      '',
+      '  Web:     https://helloesp.com',
+      '  Source:  https://github.com/Tech1k/helloesp',
+      '  RSS:     https://helloesp.com/guestbook.rss',
+      '',
+      '  (You asked for it with curl. Nice.)',
+      ''
+    ];
+    return lines.join('\n');
+  }
+
   buildStatusBadge(metric) {
     const s = this.badgeState();
     let stats = null;
@@ -408,9 +451,12 @@ export class EspRelay {
       if (msg.event === 'stats_update') {
         if (msg.data) {
           const enriched = this.enrichStats(msg.data);
+          // lastStats is served to new SSE joins, /stats HTTP, and the status
+          // badge; we don't want a stale `clients` count baked into any of those.
           this.lastStats = JSON.stringify(enriched);
           this.lastStatsAt = Date.now();
-          this.broadcastEvent('stats', this.lastStats);
+          const live = { ...enriched, clients: this.sseClients.size };
+          this.broadcastEvent('stats', JSON.stringify(live));
         }
         return;
       }
@@ -1152,9 +1198,16 @@ export class EspRelay {
       this.sseClients.add(writer);
       // make sure the alarm is ticking so dead-client sweeps run
       this._ensureAlarm(30000);
-      // immediately send the most recent cached stats so new clients don't wait 5s
+      // immediately send the most recent cached stats so new clients don't wait 5s.
+      // Inject a fresh `clients` count since lastStats doesn't carry it.
       if (this.lastStats) {
-        const payload = new TextEncoder().encode(`event: stats\ndata: ${this.lastStats}\n\n`);
+        let snapshot = this.lastStats;
+        try {
+          const obj = JSON.parse(this.lastStats);
+          obj.clients = this.sseClients.size;
+          snapshot = JSON.stringify(obj);
+        } catch (e) {}
+        const payload = new TextEncoder().encode(`event: stats\ndata: ${snapshot}\n\n`);
         writer.write(payload).catch(() => this.sseClients.delete(writer));
       } else {
         // send a zero-length comment so the connection is established promptly
@@ -1384,6 +1437,23 @@ export class EspRelay {
     // maintenance window takes precedence over offline, so planned work shows the right page
     if (Date.now() < this.maintenanceUntil) {
       return maintenanceResponse(this.maintenanceUntil, this.maintenanceMessage);
+    }
+
+    // curl / wget / httpie landing on / get a text/plain ASCII card pulled
+    // from the cached stats. Zero ESP load, works when the device is down.
+    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '')) {
+      const ua = (request.headers.get('User-Agent') || '').toLowerCase();
+      const wantsText = /\b(curl|wget|httpie|libwww-perl|powershell)\b/.test(ua);
+      if (wantsText) {
+        return new Response(this.buildCurlCard(), {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Cache-Control': 'public, max-age=30',
+            ...SEC_HEADERS
+          }
+        });
+      }
     }
 
     // Short-circuit /stats from the Worker-side cache. lastStats is refreshed every 5s by the

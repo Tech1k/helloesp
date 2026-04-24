@@ -357,6 +357,30 @@
             .ticker-cta { display: none; }
         }
 
+        /* live-presence indicator (hidden when alone) */
+        .presence {
+            float: right;
+            font-size: 10px;
+            letter-spacing: 0.06em;
+            text-transform: none;
+            color: var(--mid);
+            font-weight: normal;
+            opacity: 0.8;
+        }
+        .presence-dot {
+            display: inline-block;
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: #4fc08d;
+            margin-right: 4px;
+            vertical-align: 1px;
+        }
+
+        /* latest-message teaser uses the .live-ticker shell; spans flex-row */
+        #latest-body .teaser-name { font-weight: 600; flex-shrink: 0; }
+        #latest-body .teaser-country { color: var(--mid); font-size: 11px; flex-shrink: 0; }
+        #latest-body .teaser-msg { color: var(--mid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
         /* section label */
 
         .section-label {
@@ -366,6 +390,15 @@
             color: var(--mid);
             margin-bottom: 16px;
         }
+
+        .section-rss {
+            color: var(--mid);
+            opacity: 0.5;
+            text-decoration: none;
+            margin-left: 6px;
+            transition: opacity 0.15s, color 0.15s;
+        }
+        .section-rss:hover { opacity: 1; color: var(--ink); }
 
         /* date picker */
 
@@ -648,10 +681,6 @@
             content: ' \2022 ';
             margin: 0 2px;
         }
-        @media (max-width: 480px) {
-            .served { display: none; }
-        }
-
         /* dark mode */
 
         @media (prefers-color-scheme: dark) {
@@ -742,7 +771,7 @@
 
     <div class="response-time" id="response_time"></div>
 
-    <div class="sensor-alert" id="sensor_alert">
+    <div class="sensor-alert" id="sensor_alert" role="status">
         <i class="fa-solid fa-triangle-exclamation"></i><span id="sensor_alert_text"></span>
     </div>
 
@@ -757,6 +786,7 @@
         <div class="stat">
             <div class="stat-label"><i class="fa-regular fa-clock"></i> Uptime</div>
             <div class="stat-value loading" id="uptime"></div>
+            <div class="stat-sub" id="uptime_sub"></div>
         </div>
         <div class="stat">
             <div class="stat-label"><i class="fa-solid fa-wifi"></i> Signal</div>
@@ -797,7 +827,7 @@
         </div>
         <!-- air -->
         <div class="stat">
-            <div class="stat-label"><i class="fa-solid fa-wind"></i> <abbr title="Equivalent CO₂ estimated from VOC levels (CCS811 MOX sensor, not a true NDIR reading).">eCO&#x2082;</abbr></div>
+            <div class="stat-label" style="text-transform: none !important ;"><i class="fa-solid fa-wind"></i> <abbr title="Equivalent CO₂ estimated from VOC levels (CCS811 MOX sensor, not a true NDIR reading).">eCO&#x2082;</abbr></div>
             <div class="stat-value loading" id="co2"></div>
             <div class="stat-sub" id="co2_sub"></div>
         </div>
@@ -841,10 +871,22 @@
         </div>
     </section>
 
-    <div class="section-label"><i class="fa-solid fa-bolt"></i> Live activity</div>
+    <div class="section-label">
+        <i class="fa-solid fa-bolt"></i> Live activity
+        <span class="presence" id="presence" hidden></span>
+    </div>
     <a class="live-ticker" href="/console" aria-label="See full live console">
         <span class="ticker-body" id="ticker-body"><span class="ticker-empty">Waiting for a visit...</span></span>
         <span class="ticker-cta">See all &rarr;</span>
+    </a>
+
+    <!-- latest guestbook message -->
+    <div class="section-label" id="latest-label" hidden>
+        <i class="fa-solid fa-comment-dots"></i> Latest message
+    </div>
+    <a class="live-ticker" href="/guestbook" id="latest-teaser" aria-label="Read the full guestbook" hidden>
+        <span class="ticker-body" id="latest-body"></span>
+        <span class="ticker-cta">Read all &rarr;</span>
     </a>
 
     <!-- countries -->
@@ -870,7 +912,7 @@
             <button class="chart-btn active" data-metric="temperature_c" data-label="Temperature (°C)">Temp</button>
             <button class="chart-btn" data-metric="humidity_percent" data-label="Humidity (%)">Humidity</button>
             <button class="chart-btn" data-metric="heat_index_c" data-label="Heat Index (°C)">Heat Index</button>
-            <button class="chart-btn" data-metric="co2_ppm" data-label="eCO₂ (ppm)" title="Equivalent CO₂ estimated from VOC levels (CCS811 MOX sensor, not a true NDIR reading).">eCO&#x2082;</button>
+            <button class="chart-btn" data-metric="co2_ppm" data-label="eCO₂ (ppm)" style="text-transform: none !important;" title="Equivalent CO₂ estimated from VOC levels (CCS811 MOX sensor, not a true NDIR reading).">eCO&#x2082;</button>
             <button class="chart-btn" data-metric="voc_ppb" data-label="VOC (ppb)">VOC</button>
             <button class="chart-btn" data-metric="requests_interval" data-label="Requests / 5 min">Requests</button>
             <button class="chart-btn" data-metric="rssi" data-label="Signal (dBm)">Signal</button>
@@ -922,7 +964,7 @@
 
     <!-- changelog -->
     <div class="log">
-        <div class="section-label"><i class="fa-solid fa-list"></i> Changelog</div>
+        <div class="section-label"><i class="fa-solid fa-list"></i> Changelog <a class="section-rss" href="/changelog.rss" aria-label="Subscribe to changelog via RSS" title="Subscribe via RSS"><i class="fa-solid fa-rss"></i></a></div>
         <div class="log-entry">
             <div class="log-date">Apr 19, 2026</div>
             <div class="log-text">Public relaunch on a fresh ESP32. Full rebuild: air quality sensors, historical charts, guestbook with moderation, admin panel, OLED dashboard, daily off-site backups, and a Cloudflare Worker relay so it can live on WiFi without a tunnel.</div>
@@ -1165,6 +1207,18 @@
         try {
             var el;
 
+            // Presence indicator: hide when alone
+            var presenceEl = document.getElementById('presence');
+            if (presenceEl) {
+                var n = Number.isFinite(s.clients) ? s.clients : 0;
+                if (n > 1) {
+                    presenceEl.innerHTML = '<span class="presence-dot"></span>' + n + ' reading';
+                    presenceEl.hidden = false;
+                } else {
+                    presenceEl.hidden = true;
+                }
+            }
+
             el = document.getElementById('uptime');
                 if (el) { el.classList.remove('loading'); el.textContent = formatUptime(s.uptime); }
 
@@ -1316,6 +1370,21 @@
             return String.fromCodePoint.apply(String, cp);
         } catch (err) { return code; }
     }
+    // Full country name from a 2-letter code, via Intl.DisplayNames when
+    // available. Used for hover tooltips; falls back to the code itself.
+    var _regionNames;
+    try { _regionNames = new Intl.DisplayNames(['en'], { type: 'region' }); }
+    catch (e) { _regionNames = null; }
+    function regionName(code) {
+        if (!code || !/^[A-Za-z]{2}$/.test(code)) return '';
+        try {
+            if (_regionNames) {
+                var n = _regionNames.of(code.toUpperCase());
+                if (n && n !== code.toUpperCase()) return n;
+            }
+        } catch (e) {}
+        return '';
+    }
     function tickerAgo(unixTime) {
         var delta = Math.max(0, Math.floor(Date.now() / 1000) - unixTime);
         if (delta < 5)    return 'now';
@@ -1332,7 +1401,7 @@
         }
         var e = tickerEntry;
         var html = '';
-        html += '<span class="ticker-flag" title="' + esc(e.country) + '">' + tickerFlag(e.country) + '</span>';
+        html += '<span class="ticker-flag" title="' + esc(regionName(e.country) || e.country) + '">' + tickerFlag(e.country) + '</span>';
         html += '<span class="ticker-method">' + esc(e.method) + '</span>';
         var pathSafe = document.createElement('span');
         pathSafe.className = 'ticker-path';
@@ -1421,6 +1490,60 @@
     .then(function(r) { return r.ok ? r.json() : Promise.reject(r.status); })
     .then(function(data) { worldData = data; loadCountries(); })
     .catch(function() {});
+
+    // Latest guestbook message teaser
+    (function loadLatestEntry() {
+        fetch('/guestbook/entries?page=1').then(function(r) {
+            return r.ok ? r.json() : null;
+        }).then(function(data) {
+            if (!data || !Array.isArray(data.entries) || data.entries.length === 0) return;
+            var e = data.entries[0];
+            if (!e.name || !e.message) return;
+            var body = document.getElementById('latest-body');
+            if (!body) return;
+            body.textContent = '';
+
+            var name = document.createElement('span');
+            name.className = 'teaser-name';
+            name.textContent = e.name;
+            body.appendChild(name);
+
+            if (e.country && e.country !== '??') {
+                var c = document.createElement('span');
+                c.className = 'teaser-country';
+                var flag = tickerFlag(e.country);
+                var prefix = (flag && flag !== '??') ? flag + ' ' : '';
+                c.textContent = prefix + e.country;
+                c.title = regionName(e.country) || e.country;
+                body.appendChild(c);
+            }
+
+            var msg = document.createElement('span');
+            msg.className = 'teaser-msg';
+            var text = String(e.message);
+            if (text.length > 120) text = text.substring(0, 117) + '...';
+            msg.textContent = text;
+            body.appendChild(msg);
+
+            document.getElementById('latest-label').hidden = false;
+            document.getElementById('latest-teaser').hidden = false;
+        }).catch(function() {});
+    })();
+
+    // Uptime "Best" substat: pulls longest_uptime_d from /records.json
+    (function loadBestUptime() {
+        fetch('/records.json').then(function(r) {
+            return r.ok ? r.json() : null;
+        }).then(function(data) {
+            if (!data) return;
+            var el = document.getElementById('uptime_sub');
+            if (!el) return;
+            var best = data.longest_uptime_d;
+            if (best && best.set && Number.isFinite(best.value) && best.value > 0) {
+                el.textContent = 'Best: ' + Math.round(best.value) + 'd';
+            }
+        }).catch(function() {});
+    })();
 
     // ISO 3166-1 numeric to alpha-2 lookup (common ones)
     var numToAlpha2 = {"004":"AF","008":"AL","012":"DZ","020":"AD","024":"AO","028":"AG","032":"AR","036":"AU","040":"AT","044":"BS","048":"BH","050":"BD","051":"AM","056":"BE","060":"BM","064":"BT","068":"BO","070":"BA","072":"BW","076":"BR","084":"BZ","090":"SB","096":"BN","100":"BG","104":"MM","108":"BI","112":"BY","116":"KH","120":"CM","124":"CA","140":"CF","144":"LK","148":"TD","152":"CL","156":"CN","158":"TW","170":"CO","174":"KM","178":"CG","180":"CD","188":"CR","191":"HR","192":"CU","196":"CY","203":"CZ","204":"BJ","208":"DK","214":"DO","218":"EC","818":"EG","222":"SV","226":"GQ","231":"ET","232":"ER","233":"EE","234":"FO","242":"FJ","246":"FI","250":"FR","258":"PF","262":"DJ","266":"GA","268":"GE","270":"GM","275":"PS","276":"DE","288":"GH","300":"GR","308":"GD","316":"GU","320":"GT","324":"GN","328":"GY","332":"HT","340":"HN","344":"HK","348":"HU","352":"IS","356":"IN","360":"ID","364":"IR","368":"IQ","372":"IE","376":"IL","380":"IT","384":"CI","388":"JM","392":"JP","398":"KZ","400":"JO","404":"KE","408":"KP","410":"KR","414":"KW","417":"KG","418":"LA","422":"LB","426":"LS","428":"LV","430":"LR","434":"LY","438":"LI","440":"LT","442":"LU","450":"MG","454":"MW","458":"MY","462":"MV","466":"ML","470":"MT","478":"MR","480":"MU","484":"MX","492":"MC","496":"MN","498":"MD","499":"ME","504":"MA","508":"MZ","512":"OM","516":"NA","520":"NR","524":"NP","528":"NL","540":"NC","554":"NZ","558":"NI","562":"NE","566":"NG","578":"NO","586":"PK","591":"PA","598":"PG","600":"PY","604":"PE","608":"PH","616":"PL","620":"PT","630":"PR","634":"QA","642":"RO","643":"RU","646":"RW","682":"SA","686":"SN","688":"RS","694":"SL","702":"SG","703":"SK","704":"VN","705":"SI","706":"SO","710":"ZA","716":"ZW","724":"ES","728":"SS","729":"SD","740":"SR","748":"SZ","752":"SE","756":"CH","760":"SY","762":"TJ","764":"TH","768":"TG","776":"TO","780":"TT","784":"AE","788":"TN","792":"TR","795":"TM","800":"UG","804":"UA","807":"MK","826":"GB","834":"TZ","840":"US","854":"BF","858":"UY","860":"UZ","862":"VE","887":"YE","894":"ZM"};
@@ -1546,7 +1669,13 @@
                 for (var i = 0; i < entries.length; i++) {
                     var code = entries[i].code;
                     var isUnknown = code === '??';
-                    var name = isUnknown ? 'Unknown' : (codeToName[code] || code);
+                    // Prefer topojson-derived name (matches the map labels).
+                    // Fall back to Intl.DisplayNames so codes without a
+                    // topojson entry (or if the CDN failed to load) still get
+                    // a real name on hover.
+                    var name = isUnknown
+                        ? 'Unknown'
+                        : (codeToName[code] || regionName(code) || code);
                     var label = isUnknown ? '?' : code;
                     html += '<div class="country-tag" title="' + esc(name) + '"><span class="cc">' + esc(label) + '</span> ' + entries[i].count + '</div>';
                 }
@@ -1606,9 +1735,11 @@
     }
 
     function parseTime(ts) {
-        var t = ts.replace('T', ' ').replace('Z', '');
-        var parts = t.split(' ');
-        return parts[1] ? parts[1].substring(0, 5) : ts;
+        if (!ts) return '';
+        var dt = new Date(ts);
+        if (isNaN(dt.getTime())) return ts;
+        // Chart labels show the viewer's local time, not the ESP's timezone.
+        return dt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
     }
 
     function esc(str) {

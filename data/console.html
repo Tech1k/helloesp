@@ -216,7 +216,6 @@
             margin: 0 2px;
         }
         @media (max-width: 480px) {
-            .served { display: none; }
             .row { grid-template-columns: 58px 28px 50px 1fr 44px; gap: 8px; }
         }
 
@@ -251,9 +250,9 @@
         Static files, admin routes, and 404s don't show up here.
     </p>
 
-    <div class="indicator"><span class="dot"></span><span id="status-text">Listening</span></div>
+    <div class="indicator" role="status"><span class="dot"></span><span id="status-text">Listening</span></div>
 
-    <div class="feed" id="feed"><div class="empty">Waiting for activity...</div></div>
+    <div class="feed" id="feed" role="log" aria-label="Live page visit feed"><div class="empty">Waiting for activity...</div></div>
 </main>
 
 <footer>

@@ -135,6 +135,15 @@
             margin-bottom: 12px;
         }
 
+        .section-rss {
+            color: var(--mid);
+            opacity: 0.5;
+            text-decoration: none;
+            margin-left: 6px;
+            transition: opacity 0.15s, color 0.15s;
+        }
+        .section-rss:hover { opacity: 1; color: var(--ink); }
+
         .form-card {
             border: 1px solid var(--faint);
             padding: 20px;
@@ -488,10 +497,6 @@
             content: ' \2022 ';
             margin: 0 2px;
         }
-        @media (max-width: 480px) {
-            .served { display: none; }
-        }
-
         /* dark mode */
 
         @media (prefers-color-scheme: dark) {
@@ -510,6 +515,100 @@
         @media (max-width: 480px) {
             .entry-header { flex-direction: column; gap: 4px; }
         }
+        /* print layout: strip everything interactive, format the entry list
+           for paper. Only prints what's currently loaded on screen. */
+        @media print {
+            body { background: #fff; color: #000; }
+            .top-nav,
+            .form-section,
+            .search-bar,
+            #pinned-wrap,
+            .entry-link,
+            .section-rss,
+            .pagination,
+            footer { display: none !important; }
+            main { max-width: none; padding: 0; }
+            h1 { font-size: 22pt; margin-bottom: 4pt; }
+            .desc { font-size: 10pt; margin-bottom: 18pt; color: #444; }
+            .section-label { font-size: 9pt; margin-bottom: 8pt; }
+            #entries-count { color: #444; }
+            .entry { border-top: 1pt solid #bbb; page-break-inside: avoid; padding: 8pt 0; }
+            .entry-name { font-size: 11pt; }
+            .entry-country { color: #555; }
+            .entry-meta { color: #555; }
+            .entry-message { font-size: 10pt; }
+            .print-stamp {
+                display: block;
+                font-size: 9pt;
+                color: #555;
+                margin-bottom: 14pt;
+            }
+            @page { margin: 0.5in 0.6in; }
+        }
+        /* hidden off-print */
+        .print-stamp { display: none; }
+
+        /* pagination */
+        .pagination {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            margin-top: 24px;
+            flex-wrap: wrap;
+            font-size: 12px;
+        }
+        .pagination[hidden] { display: none; }
+        .page-btn,
+        .page-num {
+            background: none;
+            border: 1px solid var(--faint);
+            color: var(--mid);
+            font-family: inherit;
+            font-size: 12px;
+            padding: 6px 10px;
+            cursor: pointer;
+            border-radius: 3px;
+            min-width: 32px;
+            text-align: center;
+            transition: color 0.15s, border-color 0.15s, background 0.15s;
+        }
+        .page-btn:hover,
+        .page-num:hover {
+            color: var(--ink);
+            border-color: var(--mid);
+        }
+        .page-btn[disabled] {
+            opacity: 0.4;
+            cursor: default;
+            color: var(--mid);
+            border-color: var(--faint);
+        }
+        .page-btn[disabled]:hover {
+            color: var(--mid);
+            border-color: var(--faint);
+        }
+        .page-num.current {
+            color: var(--ink);
+            border-color: var(--ink);
+            font-weight: 600;
+            cursor: default;
+        }
+        .page-numbers {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex-wrap: wrap;
+        }
+        .page-gap {
+            color: var(--mid);
+            padding: 0 4px;
+            user-select: none;
+        }
+        @media (max-width: 480px) {
+            .page-btn,
+            .page-num { padding: 6px 8px; font-size: 11px; min-width: 28px; }
+        }
     </style>
 </head>
 <body>
@@ -524,6 +623,7 @@
     </nav>
 
     <h1>Guestbook</h1>
+    <span class="print-stamp" id="print-stamp"></span>
 
     <p class="desc">
         You visited a website running on a microcontroller.
@@ -545,9 +645,10 @@
                 <div class="char-count"><span id="msg-count">0</span>/200</div>
             </div>
             <button class="btn" id="gb-submit" onclick="submitEntry()">Submit</button>
-            <div class="status" id="gb-status"></div>
+            <div class="status" id="gb-status" role="status"></div>
             <div style="font-size:11px;color:var(--mid);margin-top:14px;line-height:1.6;">
-                Keep it civil. Spam, harassment, and advertising won't be approved.
+                Keep it civil. Spam, harassment, and advertising won't be approved.<br>
+                Messages are typically reviewed within a few hours.
             </div>
         </div>
     </div>
@@ -556,9 +657,10 @@
     <div class="entries-section">
         <div class="section-label">
             <i class="fa-solid fa-comment-dots"></i> Messages
+            <a class="section-rss" href="/guestbook.rss" aria-label="Subscribe to guestbook via RSS" title="Subscribe via RSS"><i class="fa-solid fa-rss"></i></a>
             <span id="entries-count" style="float:right;text-transform:none;letter-spacing:0;font-size:10px;color:var(--mid);"></span>
         </div>
-        <div id="pinned-wrap">
+        <div id="pinned-wrap" aria-live="polite">
             <div class="pinned-label">
                 <span id="pinned-label-text">Linked message</span>
                 <button class="pinned-dismiss" id="pinned-dismiss" type="button">Show all</button>
@@ -572,7 +674,11 @@
         <div id="entries">
             <div class="entry-empty">Loading...</div>
         </div>
-        <button class="btn" id="load-more" style="display:none;margin-top:16px;" onclick="loadMore()">Load more</button>
+        <nav class="pagination" id="pagination" aria-label="Guestbook pagination" hidden>
+            <button class="page-btn page-prev" id="page-prev" type="button">&larr; Prev</button>
+            <span class="page-numbers" id="page-numbers"></span>
+            <button class="page-btn page-next" id="page-next" type="button">Next &rarr;</button>
+        </nav>
     </div>
 </main>
 
@@ -646,10 +752,38 @@
         return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
+    // Country code helpers. Feature-detect Intl.DisplayNames once; older
+    // browsers just fall back to showing the 2-letter code as the name.
+    var _regionNames;
+    try { _regionNames = new Intl.DisplayNames(['en'], { type: 'region' }); }
+    catch (e) { _regionNames = null; }
+    function countryName(code) {
+        if (!code || code === '??' || !/^[A-Za-z]{2}$/.test(code)) return '';
+        try {
+            if (_regionNames) {
+                var n = _regionNames.of(code.toUpperCase());
+                if (n && n !== code.toUpperCase()) return n;
+            }
+        } catch (e) {}
+        return code.toUpperCase();
+    }
+    function countryFlag(code) {
+        if (!code || !/^[A-Za-z]{2}$/.test(code) || code === '??') return '';
+        var up = code.toUpperCase();
+        try {
+            return String.fromCodePoint(
+                127397 + up.charCodeAt(0),
+                127397 + up.charCodeAt(1));
+        } catch (e) { return ''; }
+    }
+
     function formatDate(iso) {
         try {
             var d = new Date(iso);
-            return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+            return d.toLocaleString(undefined, {
+                year: 'numeric', month: 'long', day: 'numeric',
+                hour: 'numeric', minute: '2-digit'
+            });
         } catch(e) { return iso; }
     }
 
@@ -675,7 +809,13 @@
            + '" data-name="' + esc(e.name) + '" data-message="' + esc(e.message) + '">';
         h += '<div class="entry-header">';
         h += '<span class="entry-name">' + esc(e.name);
-        if (e.country && e.country !== '??') h += ' <span class="entry-country">' + esc(e.country) + '</span>';
+        if (e.country && e.country !== '??') {
+            var flag = countryFlag(e.country);
+            var fullName = countryName(e.country) || e.country;
+            h += ' <span class="entry-country" title="' + esc(fullName) + '">'
+               + (flag ? flag + ' ' : '')
+               + esc(e.country) + '</span>';
+        }
         h += '</span>';
         h += '<span class="entry-meta-row">';
         h += '<span class="entry-meta">' + formatDate(e.time) + '</span>';
@@ -726,23 +866,32 @@
             : t + ' ' + msgWord;
     }
 
-    function loadEntries(page, append) {
+    // Pagination:
+    //   - loadEntries always replaces the current list (no more appending)
+    //   - URL carries the current page in ?page=N (so refresh/back work)
+    //   - renderPagination draws the Prev / 1 2 3 ... N / Next strip
+    function loadEntries(page) {
         var xhr = new XMLHttpRequest();
         xhr.onreadystatechange = function() {
             if (this.readyState !== 4) return;
             var el = document.getElementById('entries');
-            var btn = document.getElementById('load-more');
             if (this.status !== 200) {
-                if (!append) el.innerHTML = '<div class="entry-empty">Failed to load messages.</div>';
+                el.innerHTML = '<div class="entry-empty">Failed to load messages.</div>';
+                renderPagination(0, 0);
                 return;
             }
             try {
                 var data = JSON.parse(this.responseText);
-                renderEntries(data.entries, append);
-                btn.style.display = data.hasMore ? 'block' : 'none';
-                if (!append) updateHeaderCount(data);
+                renderEntries(data.entries, false);
+                updateHeaderCount(data);
+                var totalMatching = currentQuery
+                    ? (Number.isFinite(data.matching) ? data.matching : 0)
+                    : (Number.isFinite(data.total) ? data.total : 0);
+                var totalPages = Math.max(1, Math.ceil(totalMatching / 20));
+                renderPagination(page, totalPages);
             } catch(e) {
-                if (!append) el.innerHTML = '<div class="entry-empty">Failed to load messages.</div>';
+                el.innerHTML = '<div class="entry-empty">Failed to load messages.</div>';
+                renderPagination(0, 0);
             }
         };
         var qs = '/guestbook/entries?page=' + page;
@@ -751,9 +900,62 @@
         xhr.send();
     }
 
-    function loadMore() {
-        currentPage++;
-        loadEntries(currentPage, true);
+    function goToPage(n) {
+        if (n < 1 || n === currentPage) return;
+        currentPage = n;
+        // Preserve hash permalink (if any) and search term in the URL.
+        var q = currentQuery ? '&q=' + encodeURIComponent(currentQuery) : '';
+        var url = '/guestbook?page=' + n + q + (location.hash || '');
+        try { history.pushState({ page: n }, '', url); } catch (e) {}
+        loadEntries(n);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function renderPagination(current, totalPages) {
+        var nav = document.getElementById('pagination');
+        var nums = document.getElementById('page-numbers');
+        var prev = document.getElementById('page-prev');
+        var next = document.getElementById('page-next');
+        if (!nav || !nums || !prev || !next) return;
+        if (totalPages <= 1) { nav.hidden = true; return; }
+        nav.hidden = false;
+
+        prev.disabled = current <= 1;
+        next.disabled = current >= totalPages;
+        prev.onclick = function() { goToPage(current - 1); };
+        next.onclick = function() { goToPage(current + 1); };
+
+        // Build the number strip: always show page 1, the current page +/- 1,
+        // and the last page. Insert a gap marker where a range is skipped.
+        var pages = [];
+        var add = function(n) { if (pages[pages.length - 1] !== n) pages.push(n); };
+        add(1);
+        if (current - 1 > 1) pages.push(null);   // gap marker
+        for (var p = Math.max(2, current - 1); p <= Math.min(totalPages - 1, current + 1); p++) add(p);
+        if (current + 1 < totalPages - 1) pages.push(null);
+        if (totalPages > 1) add(totalPages);
+
+        nums.innerHTML = '';
+        pages.forEach(function(p) {
+            if (p === null) {
+                var gap = document.createElement('span');
+                gap.className = 'page-gap';
+                gap.textContent = '...';
+                nums.appendChild(gap);
+                return;
+            }
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'page-num' + (p === current ? ' current' : '');
+            b.textContent = p;
+            if (p === current) {
+                b.setAttribute('aria-current', 'page');
+                b.disabled = true;
+            } else {
+                b.onclick = function() { goToPage(p); };
+            }
+            nums.appendChild(b);
+        });
     }
 
     // Search
@@ -771,7 +973,11 @@
             }
             currentQuery = q;
             currentPage = 1;
-            loadEntries(1, false);
+            // Reset URL to page 1 (plus the query if present) so Back goes
+            // back to the pre-search state cleanly.
+            var url = '/guestbook' + (q ? '?page=1&q=' + encodeURIComponent(q) : '');
+            try { history.pushState({ page: 1 }, '', url); } catch (e) {}
+            loadEntries(1);
         }, 250);
     });
     searchClear.addEventListener('click', function() {
@@ -780,7 +986,8 @@
         if (searchTimer) clearTimeout(searchTimer);
         currentQuery = '';
         currentPage = 1;
-        loadEntries(1, false);
+        try { history.pushState({ page: 1 }, '', '/guestbook'); } catch (e) {}
+        loadEntries(1);
     });
 
     // On HTTPS we use the clipboard API. On plain HTTP (LAN) we fall back to
@@ -997,12 +1204,14 @@
         if (!validId(raw)) return false;
         permalinkTarget = raw;
 
-        // Always load the normal list below
+        // Always load the normal list below. If the URL also has ?page=N
+        // we honor it so a permalink+page combo (e.g. shared "see this
+        // entry, page 5 of the archive") works.
         currentQuery = '';
         searchInput.value = '';
         searchClear.style.display = 'none';
-        currentPage = 1;
-        loadEntries(1, false);
+        currentPage = readInitialPage();
+        loadEntries(currentPage);
 
         // Placeholder while the locate round-trip completes
         document.getElementById('pinned-label-text').textContent = 'Linked message';
@@ -1041,8 +1250,42 @@
         resolvePermalink();
     });
 
+    // Parse ?page=N and ?q=... from the URL on first load and on back/forward.
+    function readInitialPage() {
+        try {
+            var params = new URLSearchParams(location.search);
+            var n = parseInt(params.get('page') || '1', 10);
+            if (!Number.isFinite(n) || n < 1) n = 1;
+            return n;
+        } catch (e) { return 1; }
+    }
+    function readInitialQuery() {
+        try {
+            var params = new URLSearchParams(location.search);
+            return (params.get('q') || '').trim().substring(0, 64);
+        } catch (e) { return ''; }
+    }
+
+    window.addEventListener('popstate', function() {
+        // Back/forward button navigation: re-sync from the URL.
+        var q = readInitialQuery();
+        var n = readInitialPage();
+        currentQuery = q;
+        currentPage = n;
+        searchInput.value = q;
+        searchClear.style.display = q ? 'block' : 'none';
+        clearPinned();
+        loadEntries(n);
+    });
+
     if (!resolvePermalink()) {
-        loadEntries(1, false);
+        currentQuery = readInitialQuery();
+        currentPage = readInitialPage();
+        if (currentQuery) {
+            searchInput.value = currentQuery;
+            searchClear.style.display = 'block';
+        }
+        loadEntries(currentPage);
     }
 
     // smooth cross-page navigation when supported
@@ -1068,6 +1311,15 @@
             var el = document.getElementById('served-time');
             if (el) el.textContent = ms + ' ms';
         } catch (e) {}
+    });
+
+    // Stamp the printed page with today's date + source URL.
+    window.addEventListener('beforeprint', function() {
+        var stamp = document.getElementById('print-stamp');
+        if (!stamp) return;
+        var today = new Date().toLocaleDateString(undefined,
+            { year: 'numeric', month: 'long', day: 'numeric' });
+        stamp.textContent = 'Printed from helloesp.com/guestbook on ' + today;
     });
 </script>
 

@@ -724,6 +724,8 @@ static bool consoleShouldSkip(const String& url) {
 static void logConsole(AsyncWebServerRequest *req, int status) {
     String url = req->url();
     if (consoleShouldSkip(url)) return;
+    // HEAD requests are monitoring probes / CDN health checks, not real page visits
+    if (req->method() == HTTP_HEAD) return;
 
     // LED blinks on any page visit. Sits above the CF-header/404 filters
     // so LAN tests and 404s still blink.
@@ -764,7 +766,7 @@ static void logConsole(AsyncWebServerRequest *req, int status) {
 // Cap on pending (unmoderated) guestbook entries. A determined attacker rotating IPs can
 // bypass the 1/hour per-IP limit; this puts a ceiling on moderation-queue abuse until admin
 // clears the backlog.
-#define MAX_PENDING_GUESTBOOK 100
+#define MAX_PENDING_GUESTBOOK 1000
 struct RateEntry { String ip; unsigned long time; };
 RateEntry rateLimits[MAX_RATE_ENTRIES];
 int rateLimitCount = 0;
@@ -4539,6 +4541,22 @@ void loop() {
     // contention and connect() up to 10s on handshake, which freezes the OLED
     // and starves sensor reads. Every WS code path below checks this flag.
     bool busyWithUpload = lastUploadChunkMs && (millis() - lastUploadChunkMs < UPLOAD_QUIET_MS);
+
+    // On the transition to busy (upload just started), proactively close the
+    // WS so the Worker sees a clean socket close instead of a dangling idle
+    // connection, and reset the fail counter so post-upload reconnect starts
+    // fresh rather than resuming an in-progress escalation. Without this,
+    // uploads rolled into a 4-fails-restart after the quiet window.
+    static bool wasBusyWithUpload = false;
+    if (busyWithUpload && !wasBusyWithUpload) {
+        Serial.println("[ws] upload in progress, closing WS until it finishes");
+        if (wsConnected || wsClient.connected()) {
+            wsClient.stop();
+            wsConnected = false;
+        }
+        wsReconnectFails = 0;
+    }
+    wasBusyWithUpload = busyWithUpload;
 
     static bool wasWifiUp = true;
     static unsigned long wifiDownSince = 0;

@@ -991,7 +991,12 @@
                 var overallLabel = r.overall === 'pass' ? 'All good'
                                  : r.overall === 'warn' ? (r.warns + ' warning' + (r.warns === 1 ? '' : 's'))
                                  : (r.fails + ' failure' + (r.fails === 1 ? '' : 's'));
-                status.textContent = overallLabel + ' \u00b7 ' + r.at;
+                var atLocal = r.at;
+                try {
+                    var atDt = new Date(r.at);
+                    if (!isNaN(atDt.getTime())) atLocal = atDt.toLocaleString();
+                } catch (e) {}
+                status.textContent = overallLabel + ' \u00b7 ' + atLocal;
                 status.className = 'status ' + (r.overall === 'pass' ? 'ok' : r.overall === 'warn' ? '' : 'err');
                 var html = '<table style="width:100%;border-collapse:collapse;">';
                 for (var i = 0; i < r.tests.length; i++) {

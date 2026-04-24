@@ -226,10 +226,6 @@
             content: ' \2022 ';
             margin: 0 2px;
         }
-        @media (max-width: 480px) {
-            .served { display: none; }
-        }
-
         @media (prefers-color-scheme: dark) {
             :root {
                 --bg: #111110;
@@ -365,7 +361,7 @@
             html += '<div class="cell-sub">avg ' + data.humidity.avg + '%</div></div>';
         }
         if (data.co2_ppm && Number.isFinite(data.co2_ppm.min)) {
-            html += '<div><div class="cell-label"><abbr title="Equivalent CO2 estimated from VOC levels (CCS811 MOX sensor, not a true NDIR reading).">eCO\u2082</abbr></div>';
+            html += '<div><div class="cell-label"><abbr title="Equivalent CO2 estimated from VOC levels (CCS811 MOX sensor, not a true NDIR reading)." style="text-transform: none !important;">eCO\u2082</abbr></div>';
             html += '<div class="cell-value">' + data.co2_ppm.min + '\u2013' + data.co2_ppm.max + ' ppm</div>';
             html += '<div class="cell-sub">avg ' + data.co2_ppm.avg + ' ppm</div></div>';
         }
@@ -427,7 +423,7 @@
                 var v = isInt ? String(rec.value) : (+rec.value).toFixed(1);
                 rows.push({ label: label, value: v + suffix, at: rec.at });
             }
-            row('Highest eCO\u2082',      data.highest_co2,       ' ppm',      true);
+            row('Highest eCO\u2082',     data.highest_co2,       ' ppm',      true);
             row('Hottest recorded',      data.highest_temp_f,    '\u00b0F',   false);
             row('Coldest recorded',      data.lowest_temp_f,     '\u00b0F',   false);
             row('Busiest day',           data.most_visitors_day, ' visitors', true);
@@ -436,7 +432,7 @@
             var html = '<div style="border-top:1px solid var(--faint);">';
             rows.forEach(function(r) {
                 html += '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--faint);gap:12px;flex-wrap:wrap;">';
-                html += '<div><div style="font-size:11px;color:var(--mid);text-transform:uppercase;letter-spacing:0.06em;">' + esc(r.label) + '</div>';
+                html += '<div><div style="font-size:11px;color:var(--mid);text-transform:uppercase;letter-spacing:0.06em;">' + esc(r.label).replace('eCO₂', '<span style="text-transform:none;letter-spacing:0;">eCO₂</span>') + '</div>';
                 html += '<div style="font-size:15px;font-weight:500;margin-top:2px;">' + esc(r.value) + '</div></div>';
                 html += '<div style="font-size:11px;color:var(--mid);">' + esc(formatRecordDate(r.at)) + '</div>';
                 html += '</div>';
