@@ -35,6 +35,19 @@ bindings = [
 binding = "BACKUP"
 bucket_name = "helloesp-backup"
 
+# Cloudflare Workers AI binding powers /guestbook/translate via the
+# @cf/meta/m2m100-1.2b multilingual model. Free tier (~10k neurons/day) is
+# sufficient for this workload; translations are cached per (id, targetLang)
+# in DO storage so each unique pair costs one neuron at most.
+[ai]
+binding = "AI"
+
+# Worker observability: tail logs and traces visible in the dashboard.
+# head_sampling_rate=1 keeps 100% of traces; lower if traffic ever scales.
+[observability]
+enabled = true
+head_sampling_rate = 1
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["EspRelay"]

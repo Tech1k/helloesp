@@ -55,11 +55,40 @@
             color: var(--mid);
             letter-spacing: 0.1em;
             text-transform: uppercase;
-            margin-bottom: 40px;
+            margin-bottom: 24px;
         }
 
+        /* Table of contents: sticky pill bar at the top of the page so you
+           don't have to scroll/Ctrl-F to find a section. Wraps to multiple
+           lines on narrow screens. */
+        .toc {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 36px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--faint);
+        }
+        .toc a {
+            font-size: 10px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--mid);
+            text-decoration: none;
+            padding: 5px 10px;
+            border: 1px solid var(--faint);
+            border-radius: 3px;
+            transition: color 0.15s, border-color 0.15s;
+        }
+        .toc a:hover { color: var(--ink); border-color: var(--ink); }
+        .toc a.danger { color: var(--danger); border-color: rgba(192, 57, 43, 0.3); }
+        .toc a.danger:hover { border-color: var(--danger); }
+
+        /* Account for sticky/scroll-jump anchors so headers don't end up
+           glued to the very top of the viewport on click-jump. */
         .section {
             margin-bottom: 40px;
+            scroll-margin-top: 12px;
         }
 
         .section-title {
@@ -283,6 +312,113 @@
         .gb-entry.moderated { opacity: 0.4; transition: opacity 0.3s; }
         .gb-entry.removing { opacity: 0; transition: opacity 0.3s; max-height: 0; overflow: hidden; }
 
+        .gb-entry.is-reply {
+            margin-left: 20px;
+            padding-left: 12px;
+            border-left: 2px solid var(--faint);
+        }
+
+        .gb-translate {
+            display: inline-block;
+            font-size: 10px;
+            color: var(--mid);
+            background: none;
+            border: 1px solid var(--faint);
+            padding: 2px 8px;
+            border-radius: 8px;
+            margin-left: 6px;
+            font-family: inherit;
+            letter-spacing: 0.03em;
+            text-decoration: none;
+        }
+        .gb-translate:hover { color: var(--ink); border-color: var(--mid); }
+
+        .gb-pagination {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            margin-top: 16px;
+            flex-wrap: wrap;
+            font-size: 11px;
+        }
+        .gb-pagination[hidden] { display: none; }
+        .gb-page-btn,
+        .gb-page-num {
+            background: none;
+            border: 1px solid var(--faint);
+            color: var(--mid);
+            font-family: inherit;
+            font-size: 11px;
+            padding: 5px 9px;
+            cursor: pointer;
+            border-radius: 3px;
+            min-width: 28px;
+            text-align: center;
+        }
+        .gb-page-btn:hover,
+        .gb-page-num:hover { color: var(--ink); border-color: var(--mid); }
+        .gb-page-btn[disabled] { opacity: 0.4; cursor: default; }
+        .gb-page-num.current {
+            color: var(--ink);
+            border-color: var(--ink);
+            font-weight: 600;
+            cursor: default;
+        }
+        .gb-page-numbers {
+            display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+        }
+        .gb-page-gap { color: var(--mid); padding: 0 4px; user-select: none; }
+        .gb-page-jump {
+            display: flex; align-items: center; gap: 6px;
+            color: var(--mid); font-size: 10px; margin-left: 8px;
+        }
+        .gb-page-jump[hidden] { display: none; }
+        .gb-page-jump input {
+            width: 44px; background: none; border: 1px solid var(--faint);
+            color: var(--ink); font-family: inherit; font-size: 11px;
+            padding: 4px 5px; border-radius: 3px; text-align: center;
+            -moz-appearance: textfield; appearance: textfield;
+        }
+        .gb-page-jump input::-webkit-outer-spin-button,
+        .gb-page-jump input::-webkit-inner-spin-button {
+            -webkit-appearance: none; margin: 0;
+        }
+        .gb-page-jump input:focus { outline: none; border-color: var(--mid); }
+        .gb-reply-to {
+            display: inline-block;
+            font-size: 10px;
+            letter-spacing: 0.03em;
+            color: var(--mid);
+            background: var(--faint);
+            padding: 2px 8px;
+            border-radius: 8px;
+            margin-bottom: 6px;
+            font-variant-numeric: tabular-nums;
+            cursor: pointer;
+            border: none;
+            font-family: inherit;
+            transition: background 0.15s, color 0.15s;
+        }
+        .gb-reply-to:hover { color: var(--ink); }
+        .gb-reply-to.open { background: var(--ink); color: var(--bg); }
+        .gb-reply-to.open code { color: var(--bg); }
+        .gb-reply-to code {
+            font-family: inherit;
+            color: var(--ink);
+        }
+        .gb-parent {
+            margin: 0 0 8px 0;
+            padding: 8px 10px;
+            border-left: 2px solid var(--mid);
+            background: var(--faint);
+            font-size: 11px;
+            line-height: 1.5;
+        }
+        .gb-parent-meta { font-size: 10px; color: var(--mid); margin-bottom: 2px; }
+        .gb-parent-loading,
+        .gb-parent-error { font-size: 11px; color: var(--mid); font-style: italic; }
+
         @media (max-width: 480px) {
             .info-grid { grid-template-columns: 1fr; }
         }
@@ -303,8 +439,24 @@
     <h1>Admin</h1>
     <div class="subtitle" id="admin-version">HelloESP Admin</div>
 
+    <nav class="toc" aria-label="Sections">
+        <a href="#sec-info">Info</a>
+        <a href="#sec-health">Health</a>
+        <a href="#sec-worker" id="toc-worker">Worker</a>
+        <a href="#sec-moderation">Moderation</a>
+        <a href="#sec-selftest">Self-Test</a>
+        <a href="#sec-sensorlog">Sensor Log</a>
+        <a href="#sec-errors">Errors</a>
+        <a href="#sec-files">Files</a>
+        <a href="#sec-backup">Backup</a>
+        <a href="#maintenance-section" id="toc-maintenance">Maintenance</a>
+        <a href="#sec-firmware" class="danger">Firmware</a>
+        <a href="#sec-data" class="danger">Data</a>
+        <a href="#sec-device" class="danger">Device</a>
+    </nav>
+
     <!-- device info -->
-    <div class="section">
+    <div class="section" id="sec-info">
         <div class="section-title">Device Info</div>
         <div class="card">
             <div class="info-grid" id="device-info">
@@ -314,7 +466,7 @@
     </div>
 
     <!-- device health -->
-    <div class="section">
+    <div class="section" id="sec-health">
         <div class="section-title">Device Health</div>
         <div class="card">
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
@@ -333,13 +485,13 @@
     </div>
 
     <!-- worker link -->
-    <div class="section">
+    <div class="section" id="sec-worker">
         <div class="section-title">Worker Link</div>
         <div class="card" id="worker-status"><div class="status">Loading...</div></div>
     </div>
 
     <!-- guestbook -->
-    <div class="section">
+    <div class="section" id="sec-moderation">
         <div class="section-title">Guestbook Moderation</div>
         <div class="card">
             <div class="gb-filters" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
@@ -349,12 +501,39 @@
                 <button class="btn btn-small gb-filter-btn" data-filter="all" onclick="setGbFilter('all')">All <span class="gb-count" id="gb-count-all"></span></button>
             </div>
             <div id="guestbook-entries"><div class="status">Loading...</div></div>
-            <button class="btn btn-small" id="gb-load-more" style="display:none;margin-top:12px;" onclick="loadMoreGuestbook()">Load more</button>
+            <nav class="gb-pagination" id="gb-pagination" aria-label="Guestbook pagination" hidden>
+                <button class="gb-page-btn" id="gb-page-prev" type="button">&larr; Prev</button>
+                <span class="gb-page-numbers" id="gb-page-numbers"></span>
+                <button class="gb-page-btn" id="gb-page-next" type="button">Next &rarr;</button>
+                <form class="gb-page-jump" id="gb-page-jump" hidden>
+                    <label for="gb-page-jump-input">Page</label>
+                    <input type="number" id="gb-page-jump-input" min="1" step="1" aria-label="Jump to page">
+                    <span>of <span id="gb-page-jump-total">1</span></span>
+                </form>
+            </nav>
+        </div>
+    </div>
+
+    <!-- self-test (moved up: more frequent than logs) -->
+    <div class="section" id="sec-selftest">
+        <div class="section-title">Self-Test</div>
+        <div class="card">
+            <div style="font-size:12px;color:var(--mid);margin-bottom:12px;">
+                Runs through every subsystem. Good to check before a vacation or right after an OTA flash.
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+                <button class="btn btn-small" onclick="runSelfTest(this)">Run self-test</button>
+                <button class="btn btn-small" onclick="scanI2C(this)">Scan I&sup2;C bus</button>
+                <button class="btn btn-small" id="test-email-btn" onclick="sendTestEmail(this)">Send test email</button>
+            </div>
+            <div class="status" id="selftest-status"></div>
+            <div id="selftest-results" style="margin-top:12px;display:none;font-size:12px;"></div>
+            <div class="status" id="test-email-status"></div>
         </div>
     </div>
 
     <!-- log viewer -->
-    <div class="section">
+    <div class="section" id="sec-sensorlog">
         <div class="section-title">Today's Sensor Log</div>
         <div class="card">
             <button class="btn btn-small" id="log-viewer-btn" onclick="loadLogViewer()">Load</button>
@@ -364,7 +543,7 @@
     </div>
 
     <!-- error log -->
-    <div class="section">
+    <div class="section" id="sec-errors">
         <div class="section-title">Error Log</div>
         <div class="card">
             <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
@@ -378,25 +557,8 @@
         </div>
     </div>
 
-    <!-- self-test -->
-    <div class="section">
-        <div class="section-title">Self-Test</div>
-        <div class="card">
-            <div style="font-size:12px;color:var(--mid);margin-bottom:12px;">
-                Runs through every subsystem. Good to check before a vacation or right after an OTA flash.
-            </div>
-            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
-                <button class="btn btn-small" onclick="runSelfTest()">Run self-test</button>
-                <button class="btn btn-small" id="test-email-btn" onclick="sendTestEmail()">Send test email</button>
-            </div>
-            <div class="status" id="selftest-status"></div>
-            <div id="selftest-results" style="margin-top:12px;display:none;font-size:12px;"></div>
-            <div class="status" id="test-email-status"></div>
-        </div>
-    </div>
-
     <!-- files -->
-    <div class="section">
+    <div class="section" id="sec-files">
         <div class="section-title">SD Card Files</div>
         <div class="card">
             <div class="breadcrumb" id="breadcrumb"></div>
@@ -413,7 +575,7 @@
     </div>
 
     <!-- backup / restore -->
-    <div class="section">
+    <div class="section" id="sec-backup">
         <div class="section-title">SD Card Backup & Restore</div>
         <div class="card">
             <button class="btn" id="backup-btn" onclick="startBackup()">Download Full Backup (.zip)</button>
@@ -421,7 +583,7 @@
             <div class="status" id="backup-status"></div>
             <div style="border-top:1px solid var(--faint);margin:16px 0;"></div>
             <input type="file" id="restore-file" accept=".zip">
-            <button class="btn" id="restore-btn" onclick="startRestore()">Restore from Backup</button>
+            <button class="btn btn-danger" id="restore-btn" onclick="startRestore()">Restore from Backup</button>
             <div class="progress" id="restore-progress" style="display:none"><div class="progress-bar" id="restore-bar"></div></div>
             <div class="status" id="restore-status"></div>
             <div id="r2-backup-section">
@@ -432,8 +594,8 @@
             </div>
             <div id="r2-status" style="font-size:12px;color:var(--mid);margin-bottom:10px;padding:10px;background:var(--faint);border-radius:4px;">Loading backup status...</div>
             <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
-                <button class="btn btn-small" onclick="sendBackupEmail()">Run backup now</button>
-                <button class="btn btn-small" onclick="runR2Healthcheck()">Test R2 liveness</button>
+                <button class="btn btn-small" onclick="sendBackupEmail(this)">Run backup now</button>
+                <button class="btn btn-small" onclick="runR2Healthcheck(this)">Test R2 liveness</button>
                 <button class="btn btn-small" onclick="loadBackupStatus()">Refresh status</button>
                 <a class="btn btn-small" href="https://dash.cloudflare.com/?to=/:account/r2/overview" target="_blank" rel="noopener">Browse R2 bucket &rarr;</a>
             </div>
@@ -459,19 +621,37 @@
         </div>
     </div>
 
-    <!-- ota -->
-    <div class="section">
-        <div class="section-title">Firmware Update (OTA)</div>
+    <!-- firmware (OTA + Recovery combined) -->
+    <div class="section" id="sec-firmware">
+        <div class="section-title">Firmware</div>
         <div class="card">
+            <div style="font-weight:500;margin-bottom:8px;">Over-the-Air Update</div>
+            <div style="font-size:12px;color:var(--mid);margin-bottom:10px;">
+                Upload a .bin and flash directly. Best when the network is reliable;
+                use the SD-flash path below for flaky links.
+            </div>
             <input type="file" id="ota-file" accept=".bin">
             <button class="btn" id="ota-btn" onclick="uploadOTA()">Upload Firmware</button>
             <div class="progress" id="ota-progress"><div class="progress-bar" id="ota-bar"></div></div>
             <div class="status" id="ota-status"></div>
         </div>
+        <div class="card">
+            <div style="font-weight:500;margin-bottom:8px;">Recovery / SD-Flash</div>
+            <div style="font-size:12px;color:var(--mid);margin-bottom:10px;">
+                Upload .bin files to <code>/fw/</code> via the file manager, then flash them from SD here.
+                More reliable than OTA over a flaky network (upload + flash are separate steps).
+            </div>
+            <div style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px;">
+                <button class="btn btn-small" onclick="loadFirmwareList()">Refresh list</button>
+                <button class="btn btn-small btn-danger" id="rollback-btn" onclick="rollbackFirmware()" disabled>Rollback to previous partition</button>
+            </div>
+            <div id="firmware-list" style="font-size:12px;"></div>
+            <div class="status" id="firmware-status"></div>
+        </div>
     </div>
 
     <!-- data management -->
-    <div class="section">
+    <div class="section" id="sec-data">
         <div class="section-title">Data Management</div>
         <div class="card">
             <div style="margin-bottom:16px;">
@@ -485,6 +665,18 @@
                 <button class="btn btn-small btn-danger" onclick="resetCounter('all')">All</button>
             </div>
             <div class="status" id="reset-status"></div>
+            <div style="font-size:12px;color:var(--mid);margin:18px 0 10px;">Repair monthly/yearly counters from existing weekly archives. Use after a stats reset to recover lost month/year totals.</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                <button class="btn btn-small" onclick="repairPeriods(this)">Repair from weekly archives</button>
+                <button class="btn btn-small" onclick="fixRecordTimestamps(this)">Fix truncated record timestamps</button>
+                <button class="btn btn-small" onclick="sanitizeCsvs(this)">Drop out-of-spec CSV rows</button>
+            </div>
+            <div class="status" id="repair-status"></div>
+            <div style="font-size:12px;color:var(--mid);margin:18px 0 10px;">Snake leaderboard (Worker-side, public top 10):</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                <button class="btn btn-small btn-danger" onclick="clearSnakeLeaderboard()">Clear leaderboard</button>
+            </div>
+            <div class="status" id="snake-clear-status"></div>
         </div>
     </div>
 
@@ -492,6 +684,10 @@
     <div class="section" id="maintenance-section" style="display:none;">
         <div class="section-title">Maintenance Mode</div>
         <div class="card">
+            <div id="maintenance-current" style="display:none;padding:10px 12px;border-radius:4px;background:rgba(192,107,0,0.1);border:1px solid #c06b00;color:#c06b00;font-size:12px;line-height:1.6;margin-bottom:14px;">
+                <strong>Maintenance active.</strong>
+                <span id="maintenance-current-detail"></span>
+            </div>
             <div style="font-size:12px;color:var(--mid);line-height:1.7;margin-bottom:14px;">
                 Shows a maintenance page to public visitors via the Cloudflare Worker.
                 Auto-expires when the window ends.
@@ -511,10 +707,10 @@
     </div>
 
     <!-- reboot -->
-    <div class="section">
+    <div class="section" id="sec-device">
         <div class="section-title">Device</div>
         <div class="card">
-            <button class="btn btn-danger" onclick="reboot()">Reboot ESP32</button>
+            <button class="btn btn-danger" id="reboot-btn" onclick="reboot()">Reboot ESP32</button>
             <div class="status" id="reboot-status"></div>
         </div>
     </div>
@@ -526,6 +722,9 @@
             <span style="font-size:12px;font-weight:600;" id="editor-filename"></span>
             <button class="btn btn-small" onclick="closeEditor()">Close</button>
         </div>
+        <div id="editor-paired-banner" style="display:none;padding:8px 10px;border-radius:4px;background:rgba(192,107,0,0.1);border:1px solid #c06b00;color:#c06b00;font-size:11px;line-height:1.5;margin-bottom:10px;">
+            <strong>Heads-up:</strong> this file has a <code>.gz</code> companion. Saving here updates the source but leaves the <code>.gz</code> stale, so the device may keep serving the OLD content (gzip is preferred when available). After saving, re-upload the matching <code>.html.gz</code> too, or delete the <code>.gz</code> if you don't need gzip-serving for this file.
+        </div>
         <textarea id="editor-textarea" style="width:100%;height:60vh;font-family:inherit;font-size:12px;background:var(--bg);color:var(--ink);border:1px solid var(--faint);padding:10px;resize:vertical;tab-size:4;"></textarea>
         <div style="margin-top:12px;display:flex;gap:8px;align-items:center;">
             <button class="btn" id="editor-save" onclick="saveEditor()">Save</button>
@@ -536,6 +735,17 @@
 
 <script>
     var currentPath = '/';
+
+    // Typed-confirmation for the most destructive actions (firmware flash,
+    // rollback, full data wipe, SD restore). Forces deliberation so
+    // accidental clicks can't blow past it. Returns true if user typed the
+    // exact phrase. Use plain confirm() for routine confirmations.
+    function dangerConfirm(actionLabel, expectedPhrase) {
+        var typed = prompt(actionLabel +
+            '\n\nThis is destructive. Type "' + expectedPhrase + '" to proceed.');
+        if (typed === null) return false;
+        return typed.trim() === expectedPhrase;
+    }
 
     function formatSize(bytes) {
         if (bytes < 1024) return bytes + ' B';
@@ -568,16 +778,21 @@
         loadFiles(path);
     }
 
+    var loadFilesSeq = 0;
     function loadFiles(path) {
         var status = document.getElementById('files-status');
         var list = document.getElementById('file-list');
         status.textContent = 'Loading...';
         status.className = 'status';
         list.innerHTML = '';
+        // Token guard: a slow response from a previous loadFiles() can't
+        // overwrite a newer view if the user double-navigates the breadcrumb.
+        var seq = ++loadFilesSeq;
 
         var xhr = new XMLHttpRequest();
         xhr.onreadystatechange = function() {
             if (this.readyState !== 4) return;
+            if (seq !== loadFilesSeq) return;
             if (this.status === 200) {
                 var files = JSON.parse(this.responseText);
                 buildBreadcrumb(path);
@@ -603,6 +818,14 @@
                     var nameSpan = document.createElement('span');
                     nameSpan.className = 'file-name' + (f.dir ? ' dir' : '');
                     nameSpan.textContent = f.name;
+                    if (f.paired) {
+                        // Annotate gzip-pair files so the admin sees the relationship
+                        // before deciding to delete or replace either half.
+                        nameSpan.title = f.gz
+                            ? 'gzip companion of ' + f.name.replace(/\.gz$/, '') + ' (delete this and gzip-serve breaks until rebuild)'
+                            : 'paired with ' + f.name + '.gz; deleting only this leaves an orphan .gz';
+                        nameSpan.style.borderBottom = '1px dotted var(--mid)';
+                    }
 
                     if (f.dir) {
                         (function(name) {
@@ -639,21 +862,40 @@
                             var editBtn = document.createElement('button');
                             editBtn.className = 'btn btn-small';
                             editBtn.textContent = 'Edit';
-                            (function(name) {
+                            (function(name, hasPairedGz) {
                                 var filePath = (path === '/' ? '/' : path + '/') + name;
-                                editBtn.onclick = function() { openEditor(filePath); };
-                            })(f.name);
+                                editBtn.onclick = function() { openEditor(filePath, hasPairedGz); };
+                            })(f.name, f.paired && !f.gz);
                             actions.appendChild(editBtn);
+                        } else if (isText && f.size >= 512000) {
+                            // Render a disabled Edit affordance so the user
+                            // sees WHY edit is unavailable rather than just a
+                            // missing button.
+                            var editBtnDisabled = document.createElement('button');
+                            editBtnDisabled.className = 'btn btn-small';
+                            editBtnDisabled.textContent = 'Edit (>500KB)';
+                            editBtnDisabled.disabled = true;
+                            editBtnDisabled.title = 'File too large for in-browser editor; download and edit locally.';
+                            actions.appendChild(editBtnDisabled);
                         }
                     }
 
                     var delBtn = document.createElement('button');
                     delBtn.className = 'btn btn-danger btn-small';
                     delBtn.textContent = 'Delete';
-                    (function(name, isDir) {
+                    (function(name, isDir, paired, isGz) {
                         var itemPath = (path === '/' ? '/' : path + '/') + name;
-                        delBtn.onclick = function() { isDir ? deleteFolder(itemPath) : deleteFile(itemPath); };
-                    })(f.name, f.dir);
+                        delBtn.onclick = function() {
+                            if (paired) {
+                                var sibling = isGz ? name.replace(/\.gz$/, '') : (name + '.gz');
+                                var msg = isGz
+                                    ? 'This is the gzip companion of ' + sibling + '. Deleting it breaks gzip-serve until you rebuild. Continue?'
+                                    : 'A gzip companion (' + sibling + ') exists. Deleting only this leaves an orphan .gz. Continue?';
+                                if (!confirm(msg)) return;
+                            }
+                            isDir ? deleteFolder(itemPath) : deleteFile(itemPath);
+                        };
+                    })(f.name, f.dir, f.paired, f.gz);
                     actions.appendChild(delBtn);
 
                     li.appendChild(nameSpan);
@@ -706,6 +948,13 @@
     function createFolder() {
         var name = prompt('Folder name:');
         if (!name) return;
+        name = name.trim();
+        // Reject obvious shapes that could traverse out of currentPath. The
+        // server validates too; this is for early UX feedback.
+        if (!/^[A-Za-z0-9._-]{1,64}$/.test(name) || name === '.' || name === '..') {
+            alert('Invalid name. Use letters, digits, ".", "_", "-" only (max 64 chars).');
+            return;
+        }
 
         var path = (currentPath === '/' ? '/' : currentPath + '/') + name;
         var xhr = new XMLHttpRequest();
@@ -736,6 +985,10 @@
 
         var totalFiles = input.files.length;
         var completed = 0;
+        // Set on the first confirmed overwrite of a multi-file batch so the
+        // user doesn't have to click "Replace?" once per file. Per-batch
+        // scope: resets next time uploadFiles() is called.
+        var replaceAllForBatch = false;
         progress.style.display = 'block';
         status.textContent = 'Uploading 1/' + totalFiles + '...';
         status.className = 'status';
@@ -748,10 +1001,13 @@
                 loadFiles(currentPath);
                 return;
             }
+            doUpload(input.files[completed], false);
+        }
 
-            var file = input.files[completed];
+        function doUpload(file, overwrite) {
             var formData = new FormData();
             formData.append('path', currentPath);
+            if (overwrite) formData.append('overwrite', '1');
             formData.append('file', file);
 
             var xhr = new XMLHttpRequest();
@@ -764,6 +1020,33 @@
             };
             xhr.onreadystatechange = function() {
                 if (this.readyState !== 4) return;
+                if (this.status === 409 && !overwrite) {
+                    // Single-file upload: simple yes/no on this one file.
+                    // Multi-file batch: first conflict offers "replace all
+                    // remaining" (OK) vs "skip this and decide per-file"
+                    // (Cancel). Saves N-1 confirms when the user clearly
+                    // means to push a fresh data/ directory over the device.
+                    var ans;
+                    if (replaceAllForBatch) {
+                        ans = true;
+                    } else if (totalFiles > 1) {
+                        var remaining = totalFiles - completed;
+                        ans = confirm('"' + file.name + '" already exists.\n\n' +
+                                      'OK: replace this and the remaining ' + (remaining - 1) + ' file(s).\n' +
+                                      'Cancel: skip this one (you\'ll be asked again for the next conflict).');
+                        if (ans) replaceAllForBatch = true;
+                    } else {
+                        ans = confirm('"' + file.name + '" already exists. Replace it?');
+                    }
+                    if (ans) {
+                        doUpload(file, true);
+                    } else {
+                        completed++;
+                        status.textContent = 'Skipped ' + file.name + '; ' + Math.min(completed + 1, totalFiles) + '/' + totalFiles + '...';
+                        uploadNext();
+                    }
+                    return;
+                }
                 completed++;
                 status.textContent = 'Uploading ' + Math.min(completed + 1, totalFiles) + '/' + totalFiles + '...';
                 uploadNext();
@@ -795,6 +1078,7 @@
         progress.style.display = 'block';
         status.textContent = 'Uploading firmware...';
         status.className = 'status';
+        window.activeOtaUpload = true;  // beforeunload guard
 
         var xhr = new XMLHttpRequest();
         xhr.upload.onprogress = function(e) {
@@ -808,6 +1092,7 @@
         };
         xhr.onreadystatechange = function() {
             if (this.readyState !== 4) return;
+            window.activeOtaUpload = false;  // request settled, drop guard
             if (this.status === 200 && this.responseText.indexOf('success') !== -1) {
                 status.textContent = 'Firmware uploaded. Rebooting...';
                 status.className = 'status ok';
@@ -815,7 +1100,11 @@
                 status.textContent = 'Rebooting with new firmware...';
                 status.className = 'status ok';
             } else {
-                status.textContent = 'OTA failed: ' + this.responseText;
+                // Truncate responseText: an HTML 404/500 page can be many KB
+                // and shouldn't fill the status div.
+                var detail = (this.responseText || '').slice(0, 200);
+                if (this.responseText && this.responseText.length > 200) detail += '...';
+                status.textContent = 'OTA failed (HTTP ' + this.status + '): ' + detail;
                 status.className = 'status err';
                 btn.disabled = false;
             }
@@ -824,15 +1113,199 @@
         xhr.send(formData);
     }
 
-    function reboot() {
-        if (!confirm('Reboot the ESP32?')) return;
+    function loadFirmwareList() {
+        var listEl = document.getElementById('firmware-list');
+        var rollbackBtn = document.getElementById('rollback-btn');
+        var status = document.getElementById('firmware-status');
+        listEl.textContent = 'Loading...';
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status !== 200) {
+                listEl.textContent = 'Failed to load firmware list.';
+                return;
+            }
+            try {
+                var data = JSON.parse(this.responseText);
+                rollbackBtn.disabled = !data.canRollBack;
+                if (!data.files || data.files.length === 0) {
+                    listEl.innerHTML = '<div style="color:var(--mid);">No .bin files in /fw/ yet. Upload one via the file manager below (path: <code>/fw/</code>).</div>';
+                    return;
+                }
+                var html = '<div style="margin-bottom:6px;color:var(--mid);">Available on SD:</div>';
+                data.files.sort(function(a, b) { return b.mtime - a.mtime; });
+                for (var i = 0; i < data.files.length; i++) {
+                    var f = data.files[i];
+                    var sizeKb = (f.size / 1024).toFixed(1);
+                    var when = f.mtime > 0 ? new Date(f.mtime * 1000).toLocaleString() : '';
+                    // Buttons are wired via addEventListener after innerHTML is
+                    // set so quotes / backslashes / odd chars in firmware
+                    // names can't break out of an onclick="..." string and
+                    // can't escape a CSS attribute selector.
+                    html += '<div class="fw-row" style="padding:6px 0;border-bottom:1px solid var(--faint);" data-fw-idx="' + i + '">'
+                         + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">'
+                         + '<div><code>' + esc(f.name) + '</code>'
+                         + '<div style="font-size:10px;color:var(--mid);">' + sizeKb + ' KB'
+                         + (when ? ' &middot; ' + esc(when) : '')
+                         + '</div></div>'
+                         + '<div style="display:flex;gap:6px;">'
+                         + '<button class="btn btn-small" data-fw-action="verify">Verify</button>'
+                         + '<button class="btn btn-small" data-fw-action="flash">Flash</button>'
+                         + '</div></div>'
+                         + '<div class="fw-hash" style="font-size:10px;color:var(--mid);margin-top:4px;font-family:monospace;word-break:break-all;"></div>'
+                         + '</div>';
+                }
+                listEl.innerHTML = html;
+                // Wire buttons by index lookup; closures capture the original
+                // file object, never re-encoding the name through HTML.
+                var rows = listEl.querySelectorAll('.fw-row');
+                rows.forEach(function(row) {
+                    var idx = parseInt(row.getAttribute('data-fw-idx'), 10);
+                    var f = data.files[idx];
+                    if (!f) return;
+                    row.querySelector('[data-fw-action="verify"]').addEventListener('click', function() { verifyFirmware(f.name, row); });
+                    row.querySelector('[data-fw-action="flash"]').addEventListener('click', function() { flashFirmwareFromSD(f.name); });
+                });
+            } catch (e) {
+                listEl.textContent = 'Parse error.';
+            }
+        };
+        xhr.open('GET', '/admin/firmware-list', true);
+        xhr.send();
+    }
+
+    function flashFirmwareFromSD(name) {
+        if (!dangerConfirm('Flash /fw/' + name + '. Device will reboot once flashing completes (30-60s). A bad .bin will brick boot until physically reflashed.', 'FLASH')) return;
+        var status = document.getElementById('firmware-status');
+        status.textContent = 'Scheduling flash...';
+        status.className = 'status';
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status === 200) {
+                status.textContent = 'Flash scheduled. Device will reboot on success. ' + this.responseText;
+                status.className = 'status ok';
+            } else {
+                status.textContent = 'Flash request failed: ' + (this.responseText || 'HTTP ' + this.status);
+                status.className = 'status err';
+            }
+        };
+        xhr.open('POST', '/admin/flash-from-sd', true);
+        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+        xhr.send('path=/fw/' + encodeURIComponent(name));
+    }
+
+    // Trigger SHA256 computation for a firmware .bin on SD, then poll
+    // until the result is ready. Used to verify that a PC-side sha256sum
+    // matches what actually landed on the ESP, catches upload corruption.
+    // The row is passed in directly to avoid a CSS attribute selector with
+    // a filename that could contain quotes.
+    function verifyFirmware(name, row) {
+        var path = '/fw/' + name;
+        if (!row) return;
+        var hashEl = row.querySelector('.fw-hash');
+        // Tag a per-click sequence so a fast double-click's stale poll
+        // can't clobber the live one.
+        var seq = (parseInt(row.getAttribute('data-verify-seq'), 10) || 0) + 1;
+        row.setAttribute('data-verify-seq', String(seq));
+        hashEl.textContent = 'Starting checksum...';
+        hashEl.style.color = 'var(--mid)';
+
+        var post = new XMLHttpRequest();
+        post.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status === 409) {
+                hashEl.textContent = 'Another checksum running; auto-retrying in 3s...';
+                setTimeout(function() {
+                    // Recurse with the same row so the seq guard updates.
+                    if (parseInt(row.getAttribute('data-verify-seq'), 10) === seq) {
+                        verifyFirmware(name, row);
+                    }
+                }, 3000);
+                return;
+            }
+            if (this.status !== 202 && this.status !== 200) {
+                hashEl.textContent = 'Error: ' + (this.responseText || 'HTTP ' + this.status);
+                return;
+            }
+            hashEl.textContent = 'Computing SHA256 (~6s for 1.5MB)...';
+            pollVerifyResult(path, hashEl, row, seq, 0);
+        };
+        post.open('POST', '/admin/firmware-sha256', true);
+        post.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+        post.send('path=' + encodeURIComponent(path));
+    }
+
+    function pollVerifyResult(path, hashEl, row, seq, tries) {
+        // Bail if a newer verify started on this row.
+        if (row && parseInt(row.getAttribute('data-verify-seq'), 10) !== seq) return;
+        if (tries > 40) {  // 40 × 500ms = 20s cap, more than enough for 1.5MB
+            hashEl.textContent = 'Checksum timed out.';
+            return;
+        }
+        var get = new XMLHttpRequest();
+        get.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (row && parseInt(row.getAttribute('data-verify-seq'), 10) !== seq) return;
+            if (this.status === 200) {
+                // Build hex display via DOM nodes so the response can never
+                // be reinterpreted as HTML even though it's expected hex.
+                hashEl.textContent = '';
+                var label = document.createElement('span');
+                label.style.color = 'var(--ink)';
+                label.textContent = 'SHA256: ';
+                hashEl.appendChild(label);
+                hashEl.appendChild(document.createTextNode(this.responseText.trim()));
+                hashEl.style.color = 'var(--ink)';
+            } else if (this.status === 202 || this.status === 404) {
+                setTimeout(function() { pollVerifyResult(path, hashEl, row, seq, tries + 1); }, 500);
+            } else {
+                hashEl.textContent = 'Checksum failed: ' + (this.responseText || 'HTTP ' + this.status);
+            }
+        };
+        get.open('GET', '/admin/firmware-sha256-result?path=' + encodeURIComponent(path), true);
+        get.send();
+    }
+
+    function rollbackFirmware() {
+        if (!dangerConfirm('Roll back to the previous firmware partition. The currently-running firmware stays intact and can be returned to by rolling back again. Device will reboot.', 'ROLLBACK')) return;
+        var status = document.getElementById('firmware-status');
+        status.textContent = 'Scheduling rollback...';
+        status.className = 'status';
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status === 200) {
+                status.textContent = 'Rollback scheduled. Device will reboot.';
+                status.className = 'status ok';
+            } else {
+                status.textContent = 'Rollback failed: ' + (this.responseText || 'HTTP ' + this.status);
+                status.className = 'status err';
+            }
+        };
+        xhr.open('POST', '/admin/rollback', true);
+        xhr.send();
+    }
+
+    function reboot(skipConfirm) {
+        if (!skipConfirm && !confirm('Reboot the ESP32?')) return;
         var status = document.getElementById('reboot-status');
+        var btn = document.getElementById('reboot-btn');
+        if (btn) btn.disabled = true;
 
         var xhr = new XMLHttpRequest();
         xhr.onreadystatechange = function() {
             if (this.readyState !== 4) return;
-            status.textContent = 'Rebooting...';
-            status.className = 'status ok';
+            // 0 = network error or connection cut by reboot itself (expected),
+            // 200 = accepted, anything else means the request didn't take.
+            if (this.status === 200 || this.status === 0) {
+                status.textContent = 'Rebooting...';
+                status.className = 'status ok';
+            } else {
+                status.textContent = 'Reboot failed: ' + (this.responseText || ('HTTP ' + this.status));
+                status.className = 'status err';
+                if (btn) btn.disabled = false;
+            }
         };
         xhr.open('POST', '/admin/reboot', true);
         xhr.send();
@@ -908,27 +1381,74 @@
             // advertise buttons that would just error out.
             var mSection = document.getElementById('maintenance-section');
             if (mSection) mSection.style.display = d.worker_configured ? '' : 'none';
+            // Hide TOC entries that would jump to hidden/empty sections on
+            // LAN-only installs.
+            var tocMaint = document.getElementById('toc-maintenance');
+            if (tocMaint) tocMaint.style.display = d.worker_configured ? '' : 'none';
+            var tocWorker = document.getElementById('toc-worker');
+            if (tocWorker) tocWorker.style.display = d.worker_configured ? '' : 'none';
             var mStatus = document.getElementById('maintenance-status');
             if (mStatus && d.worker_configured && !d.worker_connected) {
                 mStatus.textContent = 'Worker link is down right now. Try again in a few seconds.';
                 mStatus.className = 'status err';
+            }
+            // "Currently active" banner: visible whenever the locally-tracked
+            // window hasn't expired. Worker is authoritative; this is just so
+            // admin sees state at a glance instead of having to open helloesp.com.
+            var mCurrent = document.getElementById('maintenance-current');
+            var mDetail  = document.getElementById('maintenance-current-detail');
+            if (mCurrent && mDetail) {
+                if (d.maintenance_active && d.maintenance_until_unix) {
+                    var endsAt = new Date(d.maintenance_until_unix * 1000);
+                    var nowMs  = Date.now();
+                    var remainMin = Math.max(0, Math.round((endsAt.getTime() - nowMs) / 60000));
+                    var endStr = endsAt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+                    var msg = d.maintenance_message ? ' Message: "' + d.maintenance_message + '".' : '';
+                    mDetail.textContent = ' Ends at ' + endStr + ' (~' + remainMin + ' min remaining).' + msg;
+                    mCurrent.style.display = '';
+                } else {
+                    mCurrent.style.display = 'none';
+                }
             }
             var r2Section = document.getElementById('r2-backup-section');
             if (r2Section) r2Section.style.display = d.worker_configured ? '' : 'none';
             var testEmailBtn = document.getElementById('test-email-btn');
             if (testEmailBtn) testEmailBtn.style.display = d.worker_configured ? '' : 'none';
 
-            renderSparkline('heap-spark', d.health_heap || []);
-            renderSparkline('rssi-spark', d.health_rssi || []);
-            document.getElementById('heap-current').textContent = 'Now: ' + formatSize(d.free_heap);
-            document.getElementById('rssi-current').textContent = 'Now: ' + d.rssi + ' dBm';
+            renderSparkline('heap-spark', d.health_heap || [], function(v, i, n) {
+                var ago = Math.round((n - 1 - i) * 60 / Math.max(1, n - 1));
+                return formatSize(v) + ' · ' + (ago === 0 ? 'now' : ago + 'm ago');
+            });
+            renderSparkline('rssi-spark', d.health_rssi || [], function(v, i, n) {
+                var ago = Math.round((n - 1 - i) * 60 / Math.max(1, n - 1));
+                return v + ' dBm · ' + (ago === 0 ? 'now' : ago + 'm ago');
+            });
+
+            var heapEl = document.getElementById('heap-current');
+            var heapLine = formatSize(d.free_heap) + ' free';
+            if (Array.isArray(d.health_heap) && d.health_heap.length) {
+                heapLine += ', ' + formatSize(Math.min.apply(null, d.health_heap)) + ' low past hour';
+            }
+            if (typeof d.min_free_heap === 'number' && d.min_free_heap > 0) {
+                heapLine += ', ' + formatSize(d.min_free_heap) + ' low since boot';
+            }
+            heapEl.textContent = heapLine;
+
+            var rssiEl = document.getElementById('rssi-current');
+            var rssiLine = d.rssi + ' dBm';
+            if (Array.isArray(d.health_rssi) && d.health_rssi.length) {
+                var rMin = Math.min.apply(null, d.health_rssi);
+                var rMax = Math.max.apply(null, d.health_rssi);
+                rssiLine += ', ' + rMin + ' to ' + rMax + ' past hour';
+            }
+            rssiEl.textContent = rssiLine;
             renderWorkerStatus(d);
         };
         xhr.open('GET', '/admin/info', true);
         xhr.send();
     }
 
-    function renderSparkline(svgId, data) {
+    function renderSparkline(svgId, data, labelFn) {
         var svg = document.getElementById(svgId);
         if (!svg) return;
         if (!data || data.length < 2) {
@@ -940,12 +1460,25 @@
         var min = Math.min.apply(null, data);
         var max = Math.max.apply(null, data);
         if (max === min) { max = min + 1; }
-        var pts = data.map(function(v, i) {
+        var coords = data.map(function(v, i) {
             var x = (i / (data.length - 1)) * W;
             var y = H - 4 - ((v - min) / (max - min)) * (H - 8);
-            return x.toFixed(1) + ',' + y.toFixed(1);
-        }).join(' ');
-        svg.innerHTML = '<polyline points="' + pts + '" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>';
+            return { x: x, y: y };
+        });
+        var pts = coords.map(function(p) { return p.x.toFixed(1) + ',' + p.y.toFixed(1); }).join(' ');
+        // Invisible hover targets at each sample point. Native browser
+        // tooltips show via <title> children; no JS event wiring needed.
+        // Radius 6 gives comfortable click/hover targets even when samples
+        // are densely packed.
+        var hovers = '';
+        for (var i = 0; i < data.length; i++) {
+            var label = labelFn ? labelFn(data[i], i, data.length) : String(data[i]);
+            hovers += '<circle cx="' + coords[i].x.toFixed(1) + '" cy="' + coords[i].y.toFixed(1) +
+                      '" r="6" fill="transparent"><title>' +
+                      String(label).replace(/&/g, '&amp;').replace(/</g, '&lt;') +
+                      '</title></circle>';
+        }
+        svg.innerHTML = '<polyline points="' + pts + '" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>' + hovers;
     }
 
     function renderWorkerStatus(d) {
@@ -968,8 +1501,10 @@
         el.innerHTML = html;
     }
 
-    function runSelfTest() {
-        var btn = event && event.target;
+    function runSelfTest(btn) {
+        // Older callers used global window.event; the inline onclick now
+        // passes `this` directly so this works in browsers that don't
+        // expose window.event.
         if (btn) btn.disabled = true;
         var status = document.getElementById('selftest-status');
         var out = document.getElementById('selftest-results');
@@ -1021,26 +1556,136 @@
         xhr.send();
     }
 
-    function sendBackupEmail() {
-        var btn = event && event.target;
-        var status = document.getElementById('email-backup-status');
-        status.textContent = 'Queuing...';
-        status.className = 'status';
+    function scanI2C(btn) {
         if (btn) btn.disabled = true;
+        var status = document.getElementById('selftest-status');
+        var out = document.getElementById('selftest-results');
+        status.textContent = 'Scanning...';
+        status.className = 'status';
+        out.style.display = 'none';
+        out.innerHTML = '';
         var xhr = new XMLHttpRequest();
         xhr.onreadystatechange = function() {
             if (this.readyState !== 4) return;
             if (btn) btn.disabled = false;
-            if (this.status === 200) {
-                status.textContent = this.responseText || 'Queued';
-                status.className = 'status ok';
-                setTimeout(loadBackupStatus, 2000); // refresh card after R2 commit
-            } else {
-                status.textContent = 'Failed (HTTP ' + this.status + '): ' + this.responseText;
+            if (this.status !== 200) {
+                status.textContent = 'I²C scan failed (HTTP ' + this.status + ')';
+                status.className = 'status err';
+                return;
+            }
+            try {
+                var r = JSON.parse(this.responseText);
+                var atLocal = r.at;
+                try {
+                    var atDt = new Date(r.at);
+                    if (!isNaN(atDt.getTime())) atLocal = atDt.toLocaleString();
+                } catch (e) {}
+                var label = r.count + ' device' + (r.count === 1 ? '' : 's') + ' found';
+                status.textContent = label + ' · ' + atLocal;
+                status.className = 'status ' + (r.count > 0 ? 'ok' : 'err');
+                if (r.count === 0) {
+                    out.innerHTML = '<div style="color:var(--mid);">No I²C devices responded. Check wiring, pull-ups, and SDA/SCL pin assignments.</div>';
+                } else {
+                    var html = '<table style="width:100%;border-collapse:collapse;">';
+                    for (var i = 0; i < r.devices.length; i++) {
+                        var d = r.devices[i];
+                        html += '<tr>';
+                        html += '<td style="padding:4px 12px 4px 0;font-family:monospace;font-weight:500;">' + esc(d.addr) + '</td>';
+                        html += '<td style="padding:4px 0;color:var(--mid);">' + esc(d.name) + '</td>';
+                        html += '</tr>';
+                    }
+                    html += '</table>';
+                    out.innerHTML = html;
+                }
+                out.style.display = 'block';
+            } catch (e) {
+                status.textContent = 'I²C scan response was invalid';
                 status.className = 'status err';
             }
         };
-        xhr.open('POST', '/admin/backup-now', true);
+        xhr.open('GET', '/admin/i2cscan', true);
+        xhr.send();
+    }
+
+    function sendBackupEmail(btn) {
+        var status = document.getElementById('email-backup-status');
+        status.textContent = 'Queuing...';
+        status.className = 'status';
+        if (btn) btn.disabled = true;
+        // Snapshot the prior commit's date+ago via JSON, not by scraping
+        // rendered text. Same endpoint as the live status card.
+        var probe = new XMLHttpRequest();
+        probe.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            var baseline = { date: '', ago: -1 };
+            if (this.status === 200) {
+                try {
+                    var s = JSON.parse(this.responseText);
+                    baseline.date = s.r2_committed_date || '';
+                    baseline.ago = (typeof s.r2_committed_ago_s === 'number') ? s.r2_committed_ago_s : -1;
+                } catch (e) {}
+            }
+            // Now fire the trigger.
+            var xhr = new XMLHttpRequest();
+            xhr.onreadystatechange = function() {
+                if (this.readyState !== 4) return;
+                if (this.status === 200) {
+                    status.textContent = this.responseText || 'Queued';
+                    status.className = 'status ok';
+                    // Keep button disabled until the poll either lands a fresh
+                    // commit or times out, so the user can't queue duplicates.
+                    pollBackupCommit(baseline, 0, btn, status);
+                } else {
+                    status.textContent = 'Failed (HTTP ' + this.status + '): ' + this.responseText;
+                    status.className = 'status err';
+                    if (btn) btn.disabled = false;
+                }
+            };
+            xhr.open('POST', '/admin/backup-now', true);
+            xhr.send();
+        };
+        probe.open('GET', '/admin/backup-status', true);
+        probe.send();
+    }
+
+    // Poll until /admin/backup-status reports a fresher commit than the
+    // baseline, or up to ~30s. Re-enables the trigger button when done so the
+    // user can't double-fire while a commit is in flight.
+    function pollBackupCommit(baseline, attempt, btn, status) {
+        if (attempt > 12) {  // 12 × 2.5s = 30s cap
+            loadBackupStatus();
+            if (btn) btn.disabled = false;
+            if (status) {
+                status.textContent = 'Trigger sent, but no commit landed within 30s. Check Worker logs.';
+                status.className = 'status err';
+            }
+            return;
+        }
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status === 200) {
+                try {
+                    var s = JSON.parse(this.responseText);
+                    var newDate = s.r2_committed_date || '';
+                    var newAgo = (typeof s.r2_committed_ago_s === 'number') ? s.r2_committed_ago_s : -1;
+                    // Fresher = different date OR (same date but smaller "ago").
+                    var fresh = (newDate && newDate !== baseline.date) ||
+                                (newAgo >= 0 && (baseline.ago < 0 || newAgo < baseline.ago));
+                    if (fresh) {
+                        loadBackupStatus();
+                        if (btn) btn.disabled = false;
+                        if (status) {
+                            status.textContent = 'Backup committed.';
+                            status.className = 'status ok';
+                        }
+                        return;
+                    }
+                } catch (e) {}
+            }
+            setTimeout(function() { pollBackupCommit(baseline, attempt + 1, btn, status); }, 2500);
+        };
+        xhr.open('GET', '/admin/backup-status', true);
         xhr.send();
     }
 
@@ -1059,8 +1704,7 @@
         return (bytes / (1024*1024)).toFixed(2) + ' MB';
     }
 
-    function sendTestEmail() {
-        var btn = event && event.target;
+    function sendTestEmail(btn) {
         var status = document.getElementById('test-email-status');
         status.textContent = 'Sending test email via Worker...';
         status.className = 'status';
@@ -1081,10 +1725,10 @@
                     var r = JSON.parse(this.responseText);
                     if (r.at_unix && r.at_unix > baseline) {
                         if (r.pass) {
-                            status.textContent = 'Sent - ' + esc(r.detail) + ' (check your inbox)';
+                            status.textContent = 'Sent - ' + (r.detail || '') + ' (check your inbox)';
                             status.className = 'status ok';
                         } else {
-                            status.textContent = 'FAILED - ' + esc(r.detail);
+                            status.textContent = 'FAILED - ' + (r.detail || '');
                             status.className = 'status err';
                         }
                         if (btn) btn.disabled = false;
@@ -1126,8 +1770,7 @@
         baseXhr.send();
     }
 
-    function runR2Healthcheck() {
-        var btn = event && event.target;
+    function runR2Healthcheck(btn) {
         var status = document.getElementById('r2-healthcheck-status');
         status.textContent = 'Running PUT/GET/DELETE against R2...';
         status.className = 'status';
@@ -1150,10 +1793,10 @@
                     // Fresh result has a newer at_unix than baseline
                     if (r.at_unix && r.at_unix > baseline) {
                         if (r.pass) {
-                            status.textContent = 'R2 healthy - ' + esc(r.detail);
+                            status.textContent = 'R2 healthy - ' + (r.detail || '');
                             status.className = 'status ok';
                         } else {
-                            status.textContent = 'R2 FAIL - ' + esc(r.detail);
+                            status.textContent = 'R2 FAIL - ' + (r.detail || '');
                             status.className = 'status err';
                         }
                         if (btn) btn.disabled = false;
@@ -1263,7 +1906,13 @@
             }
             confirmMsg += '\nCannot be undone. Archived stats files are not touched.';
 
-            if (!confirm(confirmMsg)) {
+            // Each reset target wipes irreversible state, so all four require
+            // typed confirmation (was previously only "all"). Visitors total
+            // alone is a year of accumulated data; countries map drops every
+            // tracked location; periods dump the current week/month/year
+            // aggregates. None of these are recoverable from a misclick.
+            var ok = dangerConfirm(confirmMsg, 'RESET');
+            if (!ok) {
                 status.textContent = '';
                 status.className = 'status';
                 return;
@@ -1286,6 +1935,230 @@
         probe.send();
     }
 
+    function repairPeriods(btn) {
+        var status = document.getElementById('repair-status');
+        if (!confirm('Rebuild monthly and yearly counters from existing weekly archive files?\n\nThis sums all weekly archives into the current month and year totals, then re-adds the in-progress week. Use this after a stats reset to recover lost history.\n\nSafe to run multiple times (idempotent).')) return;
+        if (btn) btn.disabled = true;
+        status.textContent = 'Repairing...';
+        status.className = 'status';
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (btn) btn.disabled = false;
+            if (this.status !== 200) {
+                status.textContent = 'Repair failed (HTTP ' + this.status + ')';
+                status.className = 'status err';
+                return;
+            }
+            try {
+                var r = JSON.parse(this.responseText);
+                if (!r.ok) {
+                    status.textContent = 'Repair failed: ' + (r.error || 'unknown');
+                    status.className = 'status err';
+                    return;
+                }
+                status.textContent = 'Done · year=' + r.weeks_year + ' weeks aggregated, month=' +
+                                     r.weeks_month + ' weeks · month visitors=' + r.month_visitors +
+                                     ', year visitors=' + r.year_visitors;
+                status.className = 'status ok';
+            } catch (e) {
+                status.textContent = 'Invalid response';
+                status.className = 'status err';
+            }
+        };
+        xhr.open('POST', '/admin/repair-periods', true);
+        xhr.send();
+    }
+
+    function sanitizeCsvs(btn) {
+        var status = document.getElementById('repair-status');
+        if (!confirm('Scan all daily sensor CSV logs and drop rows with out-of-spec BME280 values?\n\nA row is dropped if its temperature, humidity, or pressure column is outside BME280 spec (e.g. a 148°C glitch from a bus error). Other columns aren\'t validated.\n\nProcesses one file per request to avoid timeouts. Atomic per-file rewrite. Safe to re-run.')) return;
+        if (btn) btn.disabled = true;
+        status.textContent = 'Listing CSV files...';
+        status.className = 'status';
+
+        function postOnce(body, cb) {
+            var xhr = new XMLHttpRequest();
+            xhr.timeout = 30000;
+            xhr.onreadystatechange = function() {
+                if (this.readyState !== 4) return;
+                if (this.status !== 200) { cb(null, 'HTTP ' + this.status); return; }
+                try { cb(JSON.parse(this.responseText), null); }
+                catch (e) { cb(null, 'invalid response'); }
+            };
+            xhr.ontimeout = function() { cb(null, 'request timed out'); };
+            xhr.open('POST', '/admin/sanitize-csvs', true);
+            if (body) {
+                xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+                xhr.send(body);
+            } else {
+                xhr.send();
+            }
+        }
+
+        // Phase 1: get the list of files.
+        postOnce(null, function(list, err) {
+            if (err || !list || !list.ok) {
+                if (btn) btn.disabled = false;
+                status.textContent = 'List failed: ' + (err || list && list.error || 'unknown');
+                status.className = 'status err';
+                return;
+            }
+            if (!list.files || list.files.length === 0) {
+                if (btn) btn.disabled = false;
+                status.textContent = 'No CSV files found in /logs';
+                status.className = 'status ok';
+                return;
+            }
+            // Phase 2: process each file sequentially.
+            var totalScanned = 0, totalDropped = 0, filesWithDrops = 0;
+            var i = 0;
+            function next() {
+                if (i >= list.files.length) {
+                    if (btn) btn.disabled = false;
+                    var msg = 'Done · scanned ' + totalScanned + ' rows across ' +
+                              list.files.length + ' file' + (list.files.length === 1 ? '' : 's');
+                    if (totalDropped > 0) {
+                        msg += ' · dropped ' + totalDropped + ' bad row' +
+                               (totalDropped === 1 ? '' : 's') + ' from ' +
+                               filesWithDrops + ' file' + (filesWithDrops === 1 ? '' : 's');
+                    } else {
+                        msg += ' · no bad rows found (already clean)';
+                    }
+                    status.textContent = msg;
+                    status.className = 'status ok';
+                    return;
+                }
+                status.textContent = 'Scanning ' + (i + 1) + '/' + list.files.length + ': ' + list.files[i];
+                postOnce('file=' + encodeURIComponent(list.files[i]), function(r, err) {
+                    if (err || !r || !r.ok) {
+                        if (btn) btn.disabled = false;
+                        status.textContent = 'Failed on ' + list.files[i] + ': ' + (err || r && r.error || 'unknown');
+                        status.className = 'status err';
+                        return;
+                    }
+                    totalScanned += r.rows_scanned || 0;
+                    if (r.rows_dropped > 0) {
+                        totalDropped += r.rows_dropped;
+                        filesWithDrops++;
+                    }
+                    i++;
+                    next();
+                });
+            }
+            next();
+        });
+    }
+
+    function fixRecordTimestamps(btn) {
+        var status = document.getElementById('repair-status');
+        if (!confirm('Pad truncated Hall of Fame timestamp offsets (e.g. -060 → -0600)?\n\nReads /stats/records.json, fixes any 3-digit timezone offsets to 4 digits, atomically writes back. One-time repair after the at[24] buffer fix.\n\nSafe to run multiple times.')) return;
+        if (btn) btn.disabled = true;
+        status.textContent = 'Fixing timestamps...';
+        status.className = 'status';
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (btn) btn.disabled = false;
+            if (this.status !== 200) {
+                status.textContent = 'Fix failed (HTTP ' + this.status + ')';
+                status.className = 'status err';
+                return;
+            }
+            try {
+                var r = JSON.parse(this.responseText);
+                if (!r.ok) {
+                    status.textContent = 'Fix failed: ' + (r.error || 'unknown');
+                    status.className = 'status err';
+                    return;
+                }
+                if (r.fixes === 0) {
+                    status.textContent = 'No truncated timestamps found (already clean)';
+                    status.className = 'status ok';
+                } else {
+                    status.textContent = 'Done · ' + r.fixes + ' timestamp' + (r.fixes === 1 ? '' : 's') + ' padded';
+                    status.className = 'status ok';
+                }
+            } catch (e) {
+                status.textContent = 'Invalid response';
+                status.className = 'status err';
+            }
+        };
+        xhr.open('POST', '/admin/fix-record-timestamps', true);
+        xhr.send();
+    }
+
+    function clearSnakeLeaderboard() {
+        var status = document.getElementById('snake-clear-status');
+        if (!dangerConfirm('Clear the public Snake leaderboard?\n\nDeletes all scores, initials, and dates from Worker storage. Cannot be undone.', 'CLEAR')) {
+            status.textContent = '';
+            status.className = 'status';
+            return;
+        }
+        status.textContent = 'Sending clear signal to Worker...';
+        status.className = 'status';
+        // Snapshot prior at_unix so we can detect when a fresh result lands.
+        // Only trust the baseline if the probe actually returned 200; if it
+        // didn't, leave baselineAt at 0 and accept ANY result as fresh, since
+        // we have no idea what the prior state was.
+        var baselineAt = 0;
+        var probe = new XMLHttpRequest();
+        probe.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status === 200) {
+                try {
+                    var d = JSON.parse(this.responseText);
+                    if (d && typeof d.at_unix === 'number') baselineAt = d.at_unix;
+                } catch (e) {}
+            }
+            // Now fire the trigger.
+            var xhr = new XMLHttpRequest();
+            xhr.onreadystatechange = function() {
+                if (this.readyState !== 4) return;
+                if (this.status !== 200) {
+                    status.textContent = this.responseText || ('HTTP ' + this.status);
+                    status.className = 'status err';
+                    return;
+                }
+                status.textContent = 'Waiting for Worker confirmation...';
+                pollSnakeClearResult(baselineAt, 0);
+            };
+            xhr.open('POST', '/admin/snake-clear', true);
+            xhr.send();
+        };
+        probe.open('GET', '/admin/snake-clear-result', true);
+        probe.send();
+    }
+
+    function pollSnakeClearResult(baselineAt, attempt) {
+        var status = document.getElementById('snake-clear-status');
+        if (attempt > 12) {  // 12 × 1s = 12s timeout
+            status.textContent = 'No confirmation from Worker (timed out). Leaderboard may or may not have cleared.';
+            status.className = 'status err';
+            return;
+        }
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            try {
+                var d = JSON.parse(this.responseText);
+                if (d && typeof d.at_unix === 'number' && d.at_unix > baselineAt) {
+                    if (d.ok) {
+                        status.textContent = 'Leaderboard cleared.';
+                        status.className = 'status ok';
+                    } else {
+                        status.textContent = 'Worker reported failure clearing leaderboard.';
+                        status.className = 'status err';
+                    }
+                    return;
+                }
+            } catch (e) {}
+            setTimeout(function() { pollSnakeClearResult(baselineAt, attempt + 1); }, 1000);
+        };
+        xhr.open('GET', '/admin/snake-clear-result', true);
+        xhr.send();
+    }
+
     function esc(str) {
         var d = document.createElement('div');
         d.textContent = str == null ? '' : String(str);
@@ -1294,12 +2167,106 @@
 
     var gbPage = 1;
     var gbFilter = 'new';  // default to what admin cares about most
+    var gbTotalPages = 1;  // updated from server counts on each load
+
+    // Translation helpers (subset of guestbook.html's version). Admin uses
+    // these ONLY to decide whether to show a "Translate" link (the link goes
+    // to Google Translate, opens in a new tab). The inline LLM translate
+    // path used by public visitors on guestbook.html is NOT used here:
+    // admin is LAN-only and cross-origin POST to the Worker endpoint was
+    // brittle. Google Translate over a plain href is reliable everywhere.
+    var userLocale = (navigator.language || 'en').split('-')[0].toLowerCase();
+    function guessLatinLang(text) {
+        if (!text) return null;
+        if (/[ąćęłńśźż]/i.test(text)) return 'pl';
+        if (/[äöüß]/i.test(text))     return 'de';
+        if (/[ñ¿¡]/.test(text))       return 'es';
+        if (/[àâæçéèêëîïôœùû]/i.test(text)) return 'fr';
+        if (/[ãõ]/i.test(text))       return 'pt';
+        return null;
+    }
+    function detectScript(text) {
+        if (!text) return 'latin';
+        var counts = { latin: 0, cyrillic: 0, cjk: 0, arabic: 0, hebrew: 0,
+                       devanagari: 0, thai: 0, greek: 0 };
+        for (var i = 0; i < text.length; i++) {
+            var c = text.charCodeAt(i);
+            if (c < 0x80) {
+                if ((c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A)) counts.latin++;
+            }
+            else if (c >= 0x0370 && c <= 0x03FF) counts.greek++;
+            else if (c >= 0x0400 && c <= 0x04FF) counts.cyrillic++;
+            else if (c >= 0x0590 && c <= 0x05FF) counts.hebrew++;
+            else if (c >= 0x0600 && c <= 0x06FF) counts.arabic++;
+            else if (c >= 0x0900 && c <= 0x097F) counts.devanagari++;
+            else if (c >= 0x0E00 && c <= 0x0E7F) counts.thai++;
+            else if ((c >= 0x3040 && c <= 0x30FF) || (c >= 0x3400 && c <= 0x9FFF)
+                  || (c >= 0xAC00 && c <= 0xD7AF)) counts.cjk++;
+            else if ((c >= 0x00C0 && c <= 0x024F) || (c >= 0x1E00 && c <= 0x1EFF)) counts.latin++;
+        }
+        var best = 'latin', bestN = 0;
+        for (var k in counts) { if (counts[k] > bestN) { bestN = counts[k]; best = k; } }
+        return bestN === 0 ? 'latin' : best;
+    }
+    var localeScriptMap = {
+        ru: 'cyrillic', uk: 'cyrillic', bg: 'cyrillic', sr: 'cyrillic',
+        mk: 'cyrillic', be: 'cyrillic', kk: 'cyrillic',
+        zh: 'cjk', ja: 'cjk', ko: 'cjk',
+        ar: 'arabic', fa: 'arabic', ur: 'arabic',
+        he: 'hebrew', yi: 'hebrew',
+        hi: 'devanagari', mr: 'devanagari', ne: 'devanagari',
+        th: 'thai', el: 'greek'
+    };
+    var userScript = localeScriptMap[userLocale] || 'latin';
+    function shouldOfferTranslate(message) {
+        if (detectScript(message) !== userScript) return true;
+        var guess = guessLatinLang(message);
+        if (guess && guess !== userLocale) return true;
+        return false;
+    }
+
+    function formatLocalTime(iso) {
+        try {
+            var d = new Date(iso);
+            return d.toLocaleString(undefined, {
+                year: 'numeric', month: 'short', day: 'numeric',
+                hour: 'numeric', minute: '2-digit'
+            });
+        } catch (e) { return iso; }
+    }
 
     function renderGbEntry(e) {
         var statusText = e.approved === 1 ? 'approved' : (e.approved === 0 ? 'pending' : 'denied');
         var idx = parseInt(e.idx, 10) || 0;
-        var html = '<div class="gb-entry" data-idx="' + idx + '">';
-        html += '<div class="gb-meta">' + esc(e.time) + ' / ' + esc(e.country) + ' / ' + statusText + '</div>';
+        var isReply = !!(e.reply_to && e.reply_to.length);
+        var cls = isReply ? 'gb-entry is-reply' : 'gb-entry';
+        // data-status is the canonical status read by moderate() and
+        // handlePostModerate(); the visible meta text is for display only.
+        // Previously both paths re-parsed by `split(' / ')` which broke any
+        // time the meta format ever changed.
+        var html = '<div class="' + cls + '" data-idx="' + idx + '" data-status="' + e.approved + '">';
+        html += '<div class="gb-meta">' + esc(formatLocalTime(e.time)) + ' / ' + esc(e.country) + ' / ' + statusText;
+        if (shouldOfferTranslate(e.message || '')) {
+            // Link-to-Google-Translate approach. Admin is LAN-only; the
+            // inline LLM translate endpoint lives on the Worker and requires
+            // cross-origin POST from the LAN admin page, which has been
+            // brittle. Linking out to Google Translate with the text
+            // pre-filled works reliably on any network, no CORS, no API
+            // spend. Opens in new tab so moderator can glance + return.
+            var gtUrl = 'https://translate.google.com/?sl=auto&tl='
+                      + encodeURIComponent(userLocale)
+                      + '&op=translate&text='
+                      + encodeURIComponent(e.message || '');
+            html += '<a class="gb-translate" href="' + esc(gtUrl)
+                  + '" target="_blank" rel="noopener noreferrer">Translate</a>';
+        }
+        html += '</div>';
+        if (isReply) {
+            html += '<button type="button" class="gb-reply-to" data-parent="' + esc(e.reply_to) + '" aria-expanded="false">'
+                 + String.fromCharCode(8617)
+                 + ' Reply to <code>' + esc(e.reply_to) + '</code></button>';
+            html += '<div class="gb-parent" data-parent-box="' + esc(e.reply_to) + '" hidden></div>';
+        }
         html += '<div class="gb-message"><span class="gb-name">' + esc(e.name) + ':</span> ' + esc(e.message) + '</div>';
         html += '<div class="gb-actions">';
         if (e.approved !== 1) {
@@ -1311,7 +2278,7 @@
         if (e.approved === 1) {
             html += '<button class="btn btn-danger btn-small" onclick="moderate(' + idx + ',2)">Remove</button>';
         }
-        html += '<button class="btn btn-small" style="background:var(--mid)" onclick="if(confirm(\'Delete permanently?\'))moderate(' + idx + ',3)">Delete</button>';
+        html += '<button class="btn btn-small" style="background:var(--mid)" onclick="if(confirm(\'Replace this entry with a [removed] placeholder? Name and message will be cleared; any replies stay visible.\'))moderate(' + idx + ',3)">Delete</button>';
         html += '</div></div>';
         return html;
     }
@@ -1328,6 +2295,58 @@
         }
         el.innerHTML = html;
     }
+
+    // Lazy-expand a reply's parent. Click pill -> fetch /guestbook/locate once,
+    // cache the rendered HTML on the box element, toggle visibility thereafter.
+    // (Translate link is a plain <a target="_blank">, no click handler needed.)
+    (function() {
+        var host = document.getElementById('guestbook-entries');
+        if (!host) return;
+        host.addEventListener('click', function(ev) {
+            var pill = ev.target.closest('.gb-reply-to');
+            if (!pill) return;
+            var parentId = pill.getAttribute('data-parent');
+            if (!parentId) return;
+            var entry = pill.closest('.gb-entry');
+            var box = entry && entry.querySelector('.gb-parent[data-parent-box="' + parentId + '"]');
+            if (!box) return;
+            if (!box.hidden) {
+                box.hidden = true;
+                pill.classList.remove('open');
+                pill.setAttribute('aria-expanded', 'false');
+                return;
+            }
+            box.hidden = false;
+            pill.classList.add('open');
+            pill.setAttribute('aria-expanded', 'true');
+            if (box.getAttribute('data-loaded') === '1') return;
+            box.innerHTML = '<div class="gb-parent-loading">Loading original...</div>';
+            var xhr = new XMLHttpRequest();
+            xhr.onreadystatechange = function() {
+                if (this.readyState !== 4) return;
+                if (this.status !== 200) {
+                    box.innerHTML = '<div class="gb-parent-error">Could not load parent entry.</div>';
+                    return;
+                }
+                try {
+                    var data = JSON.parse(this.responseText);
+                    if (!data.found || !data.entry) {
+                        box.innerHTML = '<div class="gb-parent-error">Parent not found (may be unapproved or deleted).</div>';
+                        return;
+                    }
+                    var p = data.entry;
+                    box.innerHTML =
+                        '<div class="gb-parent-meta">' + esc(formatLocalTime(p.time)) + ' / ' + esc(p.country) + ' / page ' + (data.page || 1) + '</div>'
+                      + '<div><span class="gb-name">' + esc(p.name) + ':</span> ' + esc(p.message) + '</div>';
+                    box.setAttribute('data-loaded', '1');
+                } catch (e) {
+                    box.innerHTML = '<div class="gb-parent-error">Could not parse parent entry.</div>';
+                }
+            };
+            xhr.open('GET', '/guestbook/locate?id=' + encodeURIComponent(parentId), true);
+            xhr.send();
+        });
+    })();
 
     function updateGbCounts(counts) {
         if (!counts) return;
@@ -1361,12 +2380,14 @@
         loadGuestbook(1, false);
     }
 
+    var loadGuestbookSeq = 0;
     function loadGuestbook(page, append) {
+        var seq = ++loadGuestbookSeq;
         var xhr = new XMLHttpRequest();
         xhr.onreadystatechange = function() {
             if (this.readyState !== 4) return;
+            if (seq !== loadGuestbookSeq) return;  // newer load in flight; drop stale response
             var el = document.getElementById('guestbook-entries');
-            var btn = document.getElementById('gb-load-more');
             if (this.status !== 200) {
                 if (!append) el.innerHTML = '<div class="status err">Failed to load.</div>';
                 return;
@@ -1374,8 +2395,19 @@
             try {
                 var data = JSON.parse(this.responseText);
                 renderGuestbookEntries(data.entries, append);
-                btn.style.display = data.hasMore ? 'block' : 'none';
                 updateGbCounts(data.counts);
+                // Compute total pages from the filter-specific count. Server
+                // paginates at 20/page. We don't trust `hasMore` alone for
+                // building the number strip since we need the end page too.
+                var totalForFilter = 0;
+                if (data.counts) {
+                    if      (gbFilter === 'new')      totalForFilter = data.counts.new      || 0;
+                    else if (gbFilter === 'approved') totalForFilter = data.counts.approved || 0;
+                    else if (gbFilter === 'denied')   totalForFilter = data.counts.denied   || 0;
+                    else                              totalForFilter = data.counts.all      || 0;
+                }
+                gbTotalPages = Math.max(1, Math.ceil(totalForFilter / 20));
+                renderGbPagination(page, gbTotalPages);
             } catch(e) {
                 if (!append) el.innerHTML = '<div class="status err">Failed to parse.</div>';
             }
@@ -1384,10 +2416,97 @@
         xhr.send();
     }
 
-    function loadMoreGuestbook() {
-        gbPage++;
-        loadGuestbook(gbPage, true);
+    // Switch pages. Flushes any pending moderation batch first so its
+    // optimistic state doesn't get stranded by the nav; the user's approvals
+    // on the old page still land on the server.
+    function goToGbPage(page) {
+        if (page < 1) page = 1;
+        if (page > gbTotalPages) page = gbTotalPages;
+        if (gbPendingOps.length > 0) {
+            if (gbBatchTimer) { clearTimeout(gbBatchTimer); gbBatchTimer = null; }
+            flushGbBatch();
+        }
+        gbPage = page;
+        loadGuestbook(page, false);
+        var el = document.getElementById('guestbook-entries');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
+
+    function renderGbPagination(current, totalPages) {
+        var nav = document.getElementById('gb-pagination');
+        var nums = document.getElementById('gb-page-numbers');
+        var prev = document.getElementById('gb-page-prev');
+        var next = document.getElementById('gb-page-next');
+        var jump = document.getElementById('gb-page-jump');
+        var jumpInput = document.getElementById('gb-page-jump-input');
+        var jumpTotal = document.getElementById('gb-page-jump-total');
+        if (!nav || !nums || !prev || !next) return;
+        if (totalPages <= 1) { nav.hidden = true; return; }
+        nav.hidden = false;
+
+        prev.disabled = current <= 1;
+        next.disabled = current >= totalPages;
+        prev.onclick = function() { goToGbPage(current - 1); };
+        next.onclick = function() { goToGbPage(current + 1); };
+
+        // Build number strip: 1, current +/- 2, totalPages, with gaps where skipped.
+        var pages = [];
+        var add = function(n) { if (pages[pages.length - 1] !== n) pages.push(n); };
+        add(1);
+        if (current - 2 > 2) pages.push(null);
+        for (var p = Math.max(2, current - 2); p <= Math.min(totalPages - 1, current + 2); p++) add(p);
+        if (current + 2 < totalPages - 1) pages.push(null);
+        if (totalPages > 1) add(totalPages);
+
+        if (jump && jumpInput && jumpTotal) {
+            if (totalPages >= 10) {
+                jumpTotal.textContent = totalPages;
+                jumpInput.max = totalPages;
+                jumpInput.value = current;
+                jump.hidden = false;
+            } else {
+                jump.hidden = true;
+            }
+        }
+
+        nums.innerHTML = '';
+        pages.forEach(function(p) {
+            if (p === null) {
+                var gap = document.createElement('span');
+                gap.className = 'gb-page-gap';
+                gap.textContent = '...';
+                nums.appendChild(gap);
+                return;
+            }
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'gb-page-num' + (p === current ? ' current' : '');
+            b.textContent = p;
+            if (p === current) {
+                b.setAttribute('aria-current', 'page');
+                b.disabled = true;
+            } else {
+                b.onclick = function() { goToGbPage(p); };
+            }
+            nums.appendChild(b);
+        });
+    }
+
+    // Jump-to-page submission
+    (function() {
+        var jumpForm = document.getElementById('gb-page-jump');
+        if (!jumpForm) return;
+        jumpForm.addEventListener('submit', function(ev) {
+            ev.preventDefault();
+            var input = document.getElementById('gb-page-jump-input');
+            if (!input) return;
+            var p = parseInt(input.value, 10);
+            if (!Number.isFinite(p)) return;
+            if (p < 1) p = 1;
+            if (p > gbTotalPages) p = gbTotalPages;
+            goToGbPage(p);
+        });
+    })();
 
     // After moderation, update the entry in-place instead of reloading everything.
     // Rules by current filter:
@@ -1410,8 +2529,11 @@
         } else {
             // Entry stays, refresh its markup with new status. Ask server for just this entry's updated state by re-rendering inline from known values.
             var statusName = newStatus === 1 ? 'approved' : (newStatus === 0 ? 'pending' : 'denied');
+            entry.setAttribute('data-status', String(newStatus));
             var metaNode = entry.querySelector('.gb-meta');
             if (metaNode) {
+                // Update only the trailing status segment; rest of the meta
+                // (time / country) is preserved by reusing the original text.
                 var parts = metaNode.textContent.split(' / ');
                 if (parts.length >= 3) metaNode.textContent = parts[0] + ' / ' + parts[1] + ' / ' + statusName;
             }
@@ -1428,7 +2550,7 @@
                 if (newStatus === 1) {
                     html += '<button class="btn btn-danger btn-small" onclick="moderate(' + idx + ',2)">Remove</button>';
                 }
-                html += '<button class="btn btn-small" style="background:var(--mid)" onclick="if(confirm(\'Delete permanently?\'))moderate(' + idx + ',3)">Delete</button>';
+                html += '<button class="btn btn-small" style="background:var(--mid)" onclick="if(confirm(\'Replace this entry with a [removed] placeholder? Name and message will be cleared; any replies stay visible.\'))moderate(' + idx + ',3)">Delete</button>';
                 actionsNode.innerHTML = html;
             }
         }
@@ -1441,29 +2563,29 @@
     var gbLastServerCounts = { new: 0, approved: 0, denied: 0, all: 0 };
 
     function moderate(idx, status) {
-        // Capture old status from the DOM for accurate optimistic count delta.
+        // Capture old status from the entry's data-status attribute (set by
+        // renderGbEntry + kept in sync by handlePostModerate). Reading the
+        // attribute is decoupled from the meta-line display format.
         var entry = document.querySelector('.gb-entry[data-idx="' + idx + '"]');
         var oldStatus = null;
         if (entry) {
-            var metaNode = entry.querySelector('.gb-meta');
-            if (metaNode) {
-                var parts = metaNode.textContent.split(' / ');
-                if (parts.length >= 3) {
-                    var s = parts[2].trim();
-                    if      (s === 'pending')  oldStatus = 0;
-                    else if (s === 'approved') oldStatus = 1;
-                    else if (s === 'denied')   oldStatus = 2;
-                }
+            var ds = entry.getAttribute('data-status');
+            if (ds !== null && ds !== '') {
+                var n = parseInt(ds, 10);
+                if (n === 0 || n === 1 || n === 2) oldStatus = n;
             }
         }
 
         handlePostModerate(idx, status);
         applyOptimisticCountDelta(oldStatus, status);
 
-        // Queue for batch
+        // Queue for batch. 1500ms debounce collapses rapid-fire clicks into
+        // one CSV rewrite. Each rewrite is expensive (full read + write +
+        // rename + fsync) and can hold the server task long enough to starve
+        // the WS keepalive, so fewer-bigger beats more-smaller here.
         gbPendingOps.push({ idx: idx, status: status });
         if (gbBatchTimer) clearTimeout(gbBatchTimer);
-        gbBatchTimer = setTimeout(flushGbBatch, 500);
+        gbBatchTimer = setTimeout(flushGbBatch, 1500);
     }
 
     function applyOptimisticCountDelta(oldStatus, newStatus) {
@@ -1514,34 +2636,69 @@
         }
         var opsStr = dedup.map(function(op) { return op.idx + ':' + op.status; }).join(',');
 
+        // Snapshot in-flight deltas so success/failure subtracts only this
+        // batch instead of zeroing the live counter, preserving clicks that
+        // happened during the roundtrip.
+        var deltaSnapshot = {
+            new:      gbOptimisticDeltas.new,
+            approved: gbOptimisticDeltas.approved,
+            denied:   gbOptimisticDeltas.denied,
+            all:      gbOptimisticDeltas.all
+        };
+
+        // On error we used to fire loadGuestbook() immediately. That piled a
+        // heavy CSV read onto an ESP that was probably already struggling (the
+        // batch rewrite itself is what tends to trigger the WS cascade). Back
+        // off instead: subtract the in-flight snapshot, show an inline warning,
+        // and let the user trigger the reload when they're ready.
+        function handleBatchError(detail) {
+            gbOptimisticDeltas.new      -= deltaSnapshot.new;
+            gbOptimisticDeltas.approved -= deltaSnapshot.approved;
+            gbOptimisticDeltas.denied   -= deltaSnapshot.denied;
+            gbOptimisticDeltas.all      -= deltaSnapshot.all;
+            refreshGbCountsFromOptimistic();
+            var el = document.getElementById('guestbook-entries');
+            if (el) {
+                var warn = document.createElement('div');
+                warn.className = 'status err';
+                warn.style.marginBottom = '8px';
+                warn.textContent = 'Moderation batch failed (' + batch.length +
+                    ' ops): ' + detail + '. Click Refresh to reload entries.';
+                el.insertBefore(warn, el.firstChild);
+            }
+        }
+
         var xhr = new XMLHttpRequest();
+        xhr.timeout = 15000;
         xhr.onreadystatechange = function() {
             if (this.readyState !== 4) return;
             if (this.status !== 200) {
-                alert('Moderation batch failed (' + batch.length + ' ops): ' +
-                      (this.responseText || ('HTTP ' + this.status)) +
-                      '\nReloading to reconcile.');
-                gbOptimisticDeltas = { new: 0, approved: 0, denied: 0, all: 0 };
-                loadGuestbook(1, false);
+                handleBatchError(this.responseText || ('HTTP ' + this.status));
                 return;
             }
-            gbOptimisticDeltas = { new: 0, approved: 0, denied: 0, all: 0 };
+            gbOptimisticDeltas.new      -= deltaSnapshot.new;
+            gbOptimisticDeltas.approved -= deltaSnapshot.approved;
+            gbOptimisticDeltas.denied   -= deltaSnapshot.denied;
+            gbOptimisticDeltas.all      -= deltaSnapshot.all;
             var hadDeletes = false;
             try {
                 var r = JSON.parse(this.responseText);
                 hadDeletes = !!r.deletes;
             } catch(e) {}
             if (hadDeletes) {
+                // Deletes shift row indexes, so all data-idx attrs on the
+                // current page are now stale, so reload. Currently dead code
+                // (server tombstones instead of deleting) but keeping it
+                // defensive: reset gbPage too so pagination state stays in
+                // sync with the view we just rendered.
+                gbPage = 1;
                 loadGuestbook(1, false);
             } else {
                 refreshGbCounts();
             }
         };
-        xhr.onerror = function() {
-            alert('Moderation batch: network error. Reloading.');
-            gbOptimisticDeltas = { new: 0, approved: 0, denied: 0, all: 0 };
-            loadGuestbook(1, false);
-        };
+        xhr.onerror = function() { handleBatchError('network error'); };
+        xhr.ontimeout = function() { handleBatchError('timeout'); };
         xhr.open('POST', '/guestbook/moderate-batch', true);
         xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
         xhr.send('ops=' + encodeURIComponent(opsStr));
@@ -1671,15 +2828,24 @@
 
     var editorPath = '';
     var editorOriginal = '';
+    var editorHasPairedGz = false;
 
-    function openEditor(path) {
+    function openEditor(path, hasPairedGz) {
         var status = document.getElementById('editor-status');
+        editorHasPairedGz = !!hasPairedGz;
         status.textContent = 'Loading...';
         status.className = 'status';
         document.getElementById('editor-filename').textContent = path;
         document.getElementById('editor-textarea').value = '';
         document.getElementById('editor-overlay').style.display = 'block';
         editorPath = path;
+        // Show banner if the file has a .gz companion. The firmware prefers
+        // the .gz when present (beginResponseGzipOrRaw), so a save without
+        // also rebuilding the .gz silently serves stale content.
+        var pairBanner = document.getElementById('editor-paired-banner');
+        if (pairBanner) {
+            pairBanner.style.display = editorHasPairedGz ? '' : 'none';
+        }
 
         var xhr = new XMLHttpRequest();
         xhr.onreadystatechange = function() {
@@ -1711,6 +2877,12 @@
         var content = textarea.value;
 
         if (content.length === 0 && !confirm('File is empty. Save anyway?')) return;
+        // Paired-gz confirm: banner already showed on open, but confirm at save
+        // is the last chance to back out before the .gz goes stale.
+        if (editorHasPairedGz) {
+            var fname = editorPath.substring(editorPath.lastIndexOf('/') + 1);
+            if (!confirm('Save will leave ' + fname + '.gz stale (device may serve old content via gzip). Continue?')) return;
+        }
 
         // ensure trailing newline so ESP-side readStringUntil doesn't hit timeout at EOF
         if (content.length > 0 && !content.endsWith('\n')) content += '\n';
@@ -1724,6 +2896,7 @@
 
         var form = new FormData();
         form.append('path', dir);
+        form.append('overwrite', '1');  // editor save always replaces the same file
         form.append('file', new Blob([content], { type: 'text/plain' }), fileName);
         var xhr = new XMLHttpRequest();
         xhr.onreadystatechange = function() {
@@ -1863,17 +3036,34 @@
         var count = 0;
         JSZip.loadAsync(fileInput.files[0]).then(function(zip) {
             var entries = [];
+            var rejected = [];
             zip.forEach(function(path, entry) {
-                if (!entry.dir) entries.push({ path: path, entry: entry });
+                if (entry.dir) return;
+                // Defense-in-depth: reject path traversal at the JS layer so a
+                // crafted backup zip can't reach the server with `../config.txt`
+                // or absolute paths even if a future server change loosens
+                // validation. Server still validates as the authoritative gate.
+                var parts = path.split('/');
+                var hasTraversal = parts.some(function(p) { return p === '..'; });
+                if (hasTraversal || path.charAt(0) === '/' || path.indexOf('\0') >= 0) {
+                    rejected.push(path);
+                    return;
+                }
+                entries.push({ path: path, entry: entry });
             });
 
+            if (rejected.length > 0) {
+                status.textContent = 'Refusing to restore: zip contains ' + rejected.length + ' unsafe path(s) (e.g. "' + rejected[0] + '").';
+                status.className = 'status err';
+                return;
+            }
             if (entries.length === 0) {
                 status.textContent = 'Zip is empty.';
                 status.className = 'status err';
                 return;
             }
 
-            if (!confirm('This will overwrite ' + entries.length + ' files on the SD card. Continue?')) {
+            if (!dangerConfirm('Restore from backup will OVERWRITE ' + entries.length + ' files on the SD card. Existing files matching the backup paths are replaced.', 'RESTORE')) {
                 status.textContent = 'Cancelled.';
                 status.className = 'status';
                 return;
@@ -1882,6 +3072,7 @@
             btn.disabled = true;
             prog.style.display = 'block';
             bar.style.width = '0%';
+            window.activeRestore = true;  // beforeunload guard
 
             var dirs = {};
             entries.forEach(function(e) {
@@ -1896,14 +3087,31 @@
 
             var dirList = Object.keys(dirs).sort();
             var dirIdx = 0;
+            var dirFailures = 0;
 
             function ensureDirs() {
-                if (dirIdx >= dirList.length) { uploadNext(); return; }
+                if (dirIdx >= dirList.length) {
+                    if (dirFailures > 0) {
+                        // Surface mkdir errors instead of letting later file
+                        // writes fail mysteriously. The user sees a clear
+                        // upstream cause rather than just "X failed" at the end.
+                        status.textContent = 'Failed to create ' + dirFailures + ' director' +
+                            (dirFailures === 1 ? 'y' : 'ies') + '. Restore aborted (SD full or read-only?).';
+                        status.className = 'status err';
+                        btn.disabled = false;
+                        window.activeRestore = false;
+                        return;
+                    }
+                    uploadNext();
+                    return;
+                }
                 var d = dirList[dirIdx++];
                 status.textContent = 'Creating directory: ' + d;
                 var xhr = new XMLHttpRequest();
                 xhr.onreadystatechange = function() {
                     if (this.readyState !== 4) return;
+                    // 200 = created or already existed; non-200 = real failure
+                    if (this.status !== 200) dirFailures++;
                     ensureDirs();
                 };
                 xhr.open('POST', '/admin/mkdir', true);
@@ -1923,9 +3131,10 @@
                     status.className = failed > 0 ? 'status err' : 'status ok';
                     bar.style.width = '100%';
                     btn.disabled = false;
+                    window.activeRestore = false;  // drop beforeunload guard
                     loadFiles(currentPath);
                     if (confirm('Restore complete. Reboot the ESP32 now to pick up all changes?')) {
-                        reboot();
+                        reboot(true);  // skip inner confirm; user already confirmed above
                     }
                     return;
                 }
@@ -1941,6 +3150,7 @@
                 e.entry.async('blob').then(function(blob) {
                     var form = new FormData();
                     form.append('path', dir);
+                    form.append('overwrite', '1');  // restore explicitly replaces existing files
                     form.append('file', blob, fileName);
                     var xhr = new XMLHttpRequest();
                     xhr.onreadystatechange = function() {
@@ -1961,12 +3171,45 @@
         });
     }
 
+    // beforeunload guard: warn if leaving the page would lose in-flight work.
+    // Three sources: pending moderation ops (debounced batch), OTA upload in
+    // progress, restore-from-zip in progress. Each owns a flag the handler
+    // reads. Modern browsers ignore the message string but show a generic
+    // "leave site?" dialog, which is enough.
+    window.activeOtaUpload = false;
+    window.activeRestore = false;
+    window.addEventListener('beforeunload', function(e) {
+        var hasPendingMod = (typeof gbPendingOps !== 'undefined' && gbPendingOps.length > 0);
+        if (window.activeOtaUpload || window.activeRestore || hasPendingMod) {
+            e.preventDefault();
+            e.returnValue = '';
+            return '';
+        }
+    });
+
     // Init
     loadDeviceInfo();
     updateGbFilterButtons();
     loadGuestbook(1, false);
     loadFiles('/');
     loadBackupStatus();
+    loadFirmwareList();
+
+    // 30s polling so sparklines, maintenance countdown, and worker-link
+    // state stay live. Paused on hidden tab to avoid background polling.
+    var deviceInfoTimer = null;
+    function startDeviceInfoPolling() {
+        if (deviceInfoTimer) return;
+        deviceInfoTimer = setInterval(loadDeviceInfo, 30000);
+    }
+    function stopDeviceInfoPolling() {
+        if (deviceInfoTimer) { clearInterval(deviceInfoTimer); deviceInfoTimer = null; }
+    }
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) stopDeviceInfoPolling();
+        else { loadDeviceInfo(); startDeviceInfoPolling(); }
+    });
+    startDeviceInfoPolling();
 </script>
 
 </body>

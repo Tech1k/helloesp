@@ -4,13 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Guestbook / HelloESP</title>
-    <meta name="description" content="Leave a message on a website hosted by a microcontroller.">
+    <meta name="description" content="Sign the guestbook on a public website hosted by a single ESP32 microcontroller.">
     <meta name="author" content="Tech1k">
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#2686e6">
     <meta property="og:title" content="Guestbook / HelloESP">
     <meta property="og:site_name" content="HelloESP">
-    <meta property="og:description" content="Leave a message on a website hosted by a microcontroller.">
+    <meta property="og:description" content="Sign the guestbook on a public website hosted by a single ESP32 microcontroller.">
     <meta property="og:image" content="https://helloesp.com/og-banner.jpg">
     <meta property="og:image:type" content="image/jpeg">
     <meta property="og:image:width" content="1200">
@@ -20,7 +20,7 @@
     <meta property="og:url" content="https://helloesp.com/guestbook">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Guestbook / HelloESP">
-    <meta name="twitter:description" content="Leave a message on a website hosted by a microcontroller.">
+    <meta name="twitter:description" content="Sign the guestbook on a public website hosted by a single ESP32 microcontroller.">
     <meta name="twitter:image" content="https://helloesp.com/og-banner.jpg">
     <meta name="twitter:image:alt" content="HelloESP: a website running on an ESP32">
     <link rel="canonical" href="https://helloesp.com/guestbook">
@@ -263,12 +263,139 @@
         }
         .entry-copy.copied .entry-link-label::before { content: 'Copied!'; }
         .entry-share .entry-link-label::before { content: 'Share'; }
+        .entry-reply .entry-link-label::before { content: 'Reply'; }
+        .entry-translate .entry-link-label::before { content: 'Translate'; }
+        .entry-translate.translating .entry-link-label::before { content: 'Translating...'; }
+        .entry-message.entry-message-translated { font-style: italic; }
+        .entry-translate-toggle {
+            display: block;
+            margin-top: 4px;
+            font-size: 11px;
+            color: var(--mid);
+            background: none;
+            border: none;
+            padding: 0;
+            cursor: pointer;
+            text-decoration: underline;
+            font-family: inherit;
+        }
+        .entry-translate-toggle:hover { color: var(--ink); }
         @media (max-width: 480px) {
             .entry-link .entry-link-label { display: none; }
             .entry-copy.copied .entry-link-label {
                 display: inline;
                 font-size: 11px;
             }
+        }
+
+        /* reply form (shown after tapping Reply on an entry) */
+        .entry-reply-form {
+            margin-top: 12px;
+            padding: 12px;
+            border: 1px solid var(--faint);
+            background: rgba(38, 134, 230, 0.04);
+        }
+        .reply-form-hint {
+            font-size: 11px;
+            color: var(--mid);
+            margin-bottom: 8px;
+        }
+        .reply-form-name,
+        .reply-form-message {
+            width: 100%;
+            background: var(--bg);
+            border: 1px solid var(--faint);
+            color: var(--ink);
+            font-family: inherit;
+            font-size: 13px;
+            padding: 8px;
+            margin-bottom: 8px;
+            resize: vertical;
+        }
+        .reply-form-name:focus,
+        .reply-form-message:focus { outline: none; border-color: var(--mid); }
+        .reply-form-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .reply-form-cancel {
+            background: none;
+            border: 1px solid var(--faint);
+            color: var(--mid);
+            font-family: inherit;
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            padding: 10px 20px;
+            cursor: pointer;
+        }
+        .reply-form-cancel:hover { color: var(--ink); border-color: var(--mid); }
+        .reply-form-status { font-size: 11px; color: var(--mid); margin-top: 6px; min-height: 14px; }
+        .reply-form-status.ok  { color: #27ae60; }
+        .reply-form-status.err { color: #c0392b; }
+
+        /* thread: inline preview + lazy-expand for replies under a top-level entry */
+        .entry-thread {
+            margin-top: 12px;
+            margin-left: 24px;
+            padding-left: 12px;
+            border-left: 2px solid var(--faint);
+        }
+        .entry-thread .entry {
+            border-top: 1px solid var(--faint);
+            border-bottom: none;
+            padding: 10px 0;
+        }
+        .entry-thread .entry:first-child {
+            border-top: none;
+            padding-top: 2px;
+        }
+        .entry-thread .entry-name { font-size: 13px; }
+        .entry-thread .entry-message { font-size: 12px; }
+
+        .thread-show-more {
+            background: none;
+            border: none;
+            color: var(--mid);
+            font-family: inherit;
+            font-size: 11px;
+            letter-spacing: 0.02em;
+            cursor: pointer;
+            padding: 8px 0 4px 0;
+            text-align: left;
+            transition: color 0.15s;
+        }
+        .thread-show-more:hover { color: var(--ink); }
+        .thread-show-more:disabled { cursor: default; opacity: 0.6; }
+
+        .reply-attribution {
+            font-size: 10px;
+            color: var(--mid);
+            margin: 2px 0 4px 0;
+        }
+        .reply-attribution strong { color: var(--ink); font-weight: 600; }
+        .reply-attribution em { font-style: italic; color: var(--mid); }
+
+        .entry.entry-removed .entry-name { color: var(--mid); font-style: italic; font-weight: 400; }
+        .entry.entry-removed .entry-message { display: none; }
+
+        .thread-empty,
+        .thread-error {
+            font-size: 11px;
+            color: var(--mid);
+            padding: 4px 0;
+            font-style: italic;
+        }
+
+        /* Permalink highlight: briefly tints the targeted reply after a
+           /guestbook#<replyId> permalink scrolls it into view. */
+        @keyframes reply-flash {
+            0%   { background-color: rgba(38, 134, 230, 0.18); }
+            100% { background-color: transparent; }
+        }
+        .entry-thread .entry.permalink-flash {
+            animation: reply-flash 2.2s ease-out;
+        }
+
+        @media (max-width: 480px) {
+            .entry-thread { margin-left: 12px; padding-left: 8px; }
         }
 
         /* share popover (opened by the share button) */
@@ -299,7 +426,7 @@
         /* search */
 
         .search-bar {
-            margin-bottom: 20px;
+            margin-bottom: 5px;
             position: relative;
         }
 
@@ -337,6 +464,27 @@
             display: none;
         }
         .search-clear:hover { color: var(--ink); }
+
+        .section-note {
+            font-size: 11px;
+            color: var(--mid);
+            line-height: 1.6;
+            margin: 0 0 16px 0;
+        }
+
+        /* Loading indicator for search + pagination fetches. 150ms show delay
+           keeps it from flashing on fast responses; dimming the entries list
+           tells the user "this content is stale until the load completes." */
+        .gb-loading {
+            display: none;
+            font-size: 11px;
+            color: var(--mid);
+            padding: 8px 0;
+            text-align: center;
+        }
+        .gb-loading.show { display: block; }
+        .gb-loading .fa-spinner { margin-right: 6px; }
+        #entries.loading-dim { opacity: 0.5; transition: opacity 0.15s; pointer-events: none; }
 
         /* pinned entry (permalink target) */
 
@@ -485,8 +633,9 @@
 
         .footer-links {
             display: flex;
-            gap: 20px;
+            gap: 15px;
             list-style: none;
+            flex-wrap: wrap;
         }
 
         .served {
@@ -503,7 +652,7 @@
             :root {
                 --bg: #111110;
                 --ink: #e8e6e1;
-                --mid: #666;
+                --mid: #8a8a87;
                 --faint: #2a2a28;
             }
 
@@ -522,10 +671,15 @@
             .top-nav,
             .form-section,
             .search-bar,
+            .section-note,
+            .gb-loading,
             #pinned-wrap,
             .entry-link,
+            .entry-reply-form,
+            .entry-thread,
             .section-rss,
             .pagination,
+            .page-jump,
             footer { display: none !important; }
             main { max-width: none; padding: 0; }
             h1 { font-size: 22pt; margin-bottom: 4pt; }
@@ -605,9 +759,42 @@
             padding: 0 4px;
             user-select: none;
         }
+        .page-jump {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--mid);
+            font-size: 11px;
+            margin-left: 8px;
+        }
+        .page-jump[hidden] { display: none; }
+        .page-jump input {
+            width: 48px;
+            background: none;
+            border: 1px solid var(--faint);
+            color: var(--ink);
+            font-family: inherit;
+            font-size: 12px;
+            padding: 5px 6px;
+            border-radius: 3px;
+            text-align: center;
+            -moz-appearance: textfield;
+            appearance: textfield;
+        }
+        .page-jump input::-webkit-outer-spin-button,
+        .page-jump input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        .page-jump input:focus {
+            outline: none;
+            border-color: var(--mid);
+            color: var(--ink);
+        }
         @media (max-width: 480px) {
             .page-btn,
             .page-num { padding: 6px 8px; font-size: 11px; min-width: 28px; }
+            .page-jump { width: 100%; justify-content: center; margin-left: 0; margin-top: 6px; }
         }
     </style>
 </head>
@@ -619,6 +806,7 @@
         <ul class="top-links">
             <li><a href="/history">History</a></li>
             <li><a href="/console">Console</a></li>
+            <li><a href="/about">About</a></li>
         </ul>
     </nav>
 
@@ -671,6 +859,12 @@
             <input type="search" id="gb-search" placeholder="Search messages..." autocomplete="off" maxlength="64">
             <button class="search-clear" id="search-clear" type="button" aria-label="Clear search">&times;</button>
         </div>
+        <p class="section-note">
+            <i class="fa-solid fa-circle-info" style="margin-right:6px;"></i>This site runs on an ESP32. Searching and page navigation can take a second; if it looks stuck, give it a moment.
+        </p>
+        <div class="gb-loading" id="gb-loading" role="status" aria-live="polite">
+            <i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> Loading
+        </div>
         <div id="entries">
             <div class="entry-empty">Loading...</div>
         </div>
@@ -678,6 +872,11 @@
             <button class="page-btn page-prev" id="page-prev" type="button">&larr; Prev</button>
             <span class="page-numbers" id="page-numbers"></span>
             <button class="page-btn page-next" id="page-next" type="button">Next &rarr;</button>
+            <form class="page-jump" id="page-jump" hidden>
+                <label for="page-jump-input">Page</label>
+                <input type="number" id="page-jump-input" min="1" step="1" aria-label="Jump to page">
+                <span>of <span id="page-jump-total">1</span></span>
+            </form>
         </nav>
     </div>
 </main>
@@ -688,6 +887,7 @@
         <li><a href="/"><i class="fa-solid fa-house"></i> Home</a></li>
         <li><a href="/history"><i class="fa-solid fa-clock-rotate-left"></i> History</a></li>
         <li><a href="/console"><i class="fa-solid fa-terminal"></i> Console</a></li>
+        <li><a href="/about"><i class="fa-solid fa-circle-info"></i> About</a></li>
         <li><a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener"><i class="fa-brands fa-github"></i> GitHub</a></li>
     </ul>
 </footer>
@@ -800,36 +1000,221 @@
         return String(id || '');
     }
 
-    // Build the HTML for a single entry
-    function entryHtml(e) {
-        if (!validId(e.id)) return '';  // Firmware should always send an ID
-        var aid = entryAnchorId(e.id);
-        var h = '';
-        h += '<div class="entry" id="' + aid + '" data-id="' + esc(e.id)
-           + '" data-name="' + esc(e.name) + '" data-message="' + esc(e.message) + '">';
-        h += '<div class="entry-header">';
-        h += '<span class="entry-name">' + esc(e.name);
-        if (e.country && e.country !== '??') {
-            var flag = countryFlag(e.country);
-            var fullName = countryName(e.country) || e.country;
-            h += ' <span class="entry-country" title="' + esc(fullName) + '">'
-               + (flag ? flag + ' ' : '')
-               + esc(e.country) + '</span>';
+    // Visitor's UI language, 2-letter ISO-639 (or 'en' fallback for the
+    // exceedingly rare case where navigator.language is unset). Used by the
+    // translate-button gating logic below and sent to the Worker as target_lang.
+    var userLocale = (navigator.language || 'en').split('-')[0].toLowerCase();
+    // Translate endpoint lives on the Worker, not the ESP. When this page
+    // is loaded via LAN IP, relative `/guestbook/translate` goes to the ESP
+    // which has no handler. Route cross-origin to the Worker instead.
+    var translateUrl = /helloesp\.com$/i.test(location.hostname)
+        ? '/guestbook/translate'
+        : 'https://helloesp.com/guestbook/translate';
+
+    // Classify text by writing system. We use this for a cheap heuristic:
+    // only show a Translate button when the message's script differs from the
+    // visitor's locale script. Same-script pairs (English-vs-Spanish, all
+    // Latin) get no button; that false-negative is acceptable for v1 and
+    // avoids shipping a 40KB language-detect library or spending a neuron
+    // per message on the AI's detect-only pass.
+    function detectScript(text) {
+        if (!text) return 'latin';
+        // Count chars in each range; return the dominant script.
+        var s = String(text);
+        var counts = { latin: 0, cyrillic: 0, cjk: 0, arabic: 0, hebrew: 0,
+                       devanagari: 0, thai: 0, greek: 0 };
+        for (var i = 0; i < s.length; i++) {
+            var c = s.charCodeAt(i);
+            if (c < 0x80) {
+                // Basic ASCII: count only letters, not punctuation/digits,
+                // so a long "!!!!" tail on a Japanese post doesn't skew the classifier.
+                if ((c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A)) counts.latin++;
+            }
+            else if (c >= 0x0370 && c <= 0x03FF) counts.greek++;
+            else if (c >= 0x0400 && c <= 0x04FF) counts.cyrillic++;
+            else if (c >= 0x0590 && c <= 0x05FF) counts.hebrew++;
+            else if (c >= 0x0600 && c <= 0x06FF) counts.arabic++;
+            else if (c >= 0x0900 && c <= 0x097F) counts.devanagari++;
+            else if (c >= 0x0E00 && c <= 0x0E7F) counts.thai++;
+            else if ((c >= 0x3040 && c <= 0x30FF) || (c >= 0x3400 && c <= 0x9FFF)
+                  || (c >= 0xAC00 && c <= 0xD7AF)) counts.cjk++;
+            else if ((c >= 0x00C0 && c <= 0x024F) || (c >= 0x1E00 && c <= 0x1EFF)) counts.latin++;
         }
-        h += '</span>';
+        var best = 'latin', bestN = 0;
+        for (var k in counts) {
+            if (counts[k] > bestN) { bestN = counts[k]; best = k; }
+        }
+        return bestN === 0 ? 'latin' : best;
+    }
+
+    // Map a 2-letter locale to its canonical script. Codes not listed default
+    // to Latin, which covers the long tail (most world languages use Latin
+    // alphabets in their ISO-639 forms).
+    var localeScriptMap = {
+        ru: 'cyrillic', uk: 'cyrillic', bg: 'cyrillic', sr: 'cyrillic',
+        mk: 'cyrillic', be: 'cyrillic', kk: 'cyrillic',
+        zh: 'cjk', ja: 'cjk', ko: 'cjk',
+        ar: 'arabic', fa: 'arabic', ur: 'arabic',
+        he: 'hebrew', yi: 'hebrew',
+        hi: 'devanagari', mr: 'devanagari', ne: 'devanagari',
+        th: 'thai',
+        el: 'greek'
+    };
+    function scriptForLocale(loc) {
+        return localeScriptMap[loc] || 'latin';
+    }
+    var userScript = scriptForLocale(userLocale);
+
+    // Character-level language guess for Latin-script text. Used both to
+    // decide whether to show the translate button for same-script messages
+    // (Polish on English user etc.) and to pick a sensible source_lang for
+    // m2m100. Not a proper detector, just presence checks for diacritics
+    // that strongly imply a specific European language.
+    function guessLatinLang(text) {
+        if (!text) return null;
+        if (/[ąćęłńśźż]/i.test(text)) return 'pl';
+        if (/[äöüß]/i.test(text))     return 'de';
+        if (/[ñ¿¡]/.test(text))       return 'es';
+        if (/[àâæçéèêëîïôœùû]/i.test(text)) return 'fr';
+        if (/[ãõ]/i.test(text))       return 'pt';
+        return null;
+    }
+
+    function shouldOfferTranslate(message) {
+        if (detectScript(message) !== userScript) return true;
+        // Same-script fallback: if we can guess a specific Latin language
+        // from diacritics (Polish ł, German ß, French ç, etc.) and it
+        // differs from the user's locale, offer the button. Catches
+        // Polish→English, German→English, English→French etc. Won't catch
+        // unaccented same-script pairs, but those are the accepted limit.
+        var guess = guessLatinLang(message);
+        if (guess && guess !== userLocale) return true;
+        return false;
+    }
+
+    // Rough map from detected script to likely ISO-639-1 source language.
+    // Not perfect (zh vs ja vs ko are all "cjk"; ru covers all Cyrillic) but
+    // m2m100 degrades gracefully when source_lang is wrong: the translation
+    // quality dips but still completes. Good enough for a visitor-facing feature.
+    var scriptToLang = {
+        latin: 'en', cyrillic: 'ru', cjk: 'zh', arabic: 'ar',
+        hebrew: 'he', devanagari: 'hi', thai: 'th', greek: 'el'
+    };
+
+    // Build the HTML for a single entry. level:
+    //   0 = top-level (copy / share / reply buttons, inline thread preview)
+    //   1 = direct reply (reply button visible so visitors can build a thread)
+    //   2 = reply to a reply (no reply button; shows "replying to X" label)
+    // Tombstoned rows (e.removed == true) render as "[removed]" with the
+    // original content stripped; the row still occupies its slot so reply
+    // chains stay coherent.
+    function entryHtml(e, level) {
+        level = level || 0;
+        if (!validId(e.id)) return '';
+        var aid = entryAnchorId(e.id);
+        var rc = Number.isFinite(e.reply_count) ? e.reply_count : 0;
+        var isRemoved = !!e.removed || (!e.name && !e.message);
+        var cls = ['entry'];
+        if (level >= 1) cls.push('reply-entry', 'reply-entry-l' + level);
+        if (isRemoved) cls.push('entry-removed');
+
+        var h = '<div class="' + cls.join(' ') + '" id="' + aid
+              + '" data-id="' + esc(e.id) + '"';
+        if (!isRemoved) {
+            h += ' data-name="' + esc(e.name) + '" data-message="' + esc(e.message) + '"';
+        }
+        h += '>';
+        h += '<div class="entry-header">';
+        if (isRemoved) {
+            h += '<span class="entry-name">[removed]</span>';
+        } else {
+            h += '<span class="entry-name">' + esc(e.name);
+            if (e.country && e.country !== '??') {
+                var flag = countryFlag(e.country);
+                var fullName = countryName(e.country) || e.country;
+                h += ' <span class="entry-country" title="' + esc(fullName) + '">'
+                   + (flag ? flag + ' ' : '')
+                   + esc(e.country) + '</span>';
+            }
+            h += '</span>';
+        }
         h += '<span class="entry-meta-row">';
-        h += '<span class="entry-meta">' + formatDate(e.time) + '</span>';
-        h += '<button class="entry-link entry-copy" type="button" title="Copy link to this message" aria-label="Copy link">'
-           + '<i class="fa-solid fa-link"></i>'
-           + '<span class="entry-link-label"></span>'
-           + '</button>';
-        h += '<button class="entry-link entry-share" type="button" title="Share this message" aria-label="Share">'
-           + '<i class="fa-solid fa-share-nodes"></i>'
-           + '<span class="entry-link-label"></span>'
-           + '</button>';
-        h += '</span>';
-        h += '</div>';
-        h += '<div class="entry-message">' + esc(e.message) + '</div>';
+        if (e.time) h += '<span class="entry-meta">' + formatDate(e.time) + '</span>';
+        if (!isRemoved) {
+            h += '<button class="entry-link entry-copy" type="button" title="Copy link to this message" aria-label="Copy link">'
+               + '<i class="fa-solid fa-link"></i>'
+               + '<span class="entry-link-label"></span>'
+               + '</button>';
+            h += '<button class="entry-link entry-share" type="button" title="Share this message" aria-label="Share">'
+               + '<i class="fa-solid fa-share-nodes"></i>'
+               + '<span class="entry-link-label"></span>'
+               + '</button>';
+        }
+        if (level <= 1 && !isRemoved) {
+            h += '<button class="entry-link entry-reply" type="button" title="Reply to this message" aria-label="Reply">'
+               + '<i class="fa-solid fa-reply"></i>'
+               + '<span class="entry-link-label"></span>'
+               + '</button>';
+        }
+        if (!isRemoved && shouldOfferTranslate(e.message)) {
+            h += '<button class="entry-link entry-translate" type="button" title="Translate this message" aria-label="Translate">'
+               + '<i class="fa-solid fa-language"></i>'
+               + '<span class="entry-link-label"></span>'
+               + '</button>';
+        }
+        h += '</span></div>';
+        // Attribution on level-2 replies: tells the reader which level-1 this
+        // reply is targeting. parent_name comes from the caller, who built a
+        // name map from the full subtree fetch.
+        if (level === 2) {
+            var pname = e.parent_name;
+            h += '<div class="reply-attribution">' + String.fromCharCode(8618) + ' replying to '
+               + (pname ? '<strong>' + esc(pname) + '</strong>' : '<em>[removed]</em>')
+               + '</div>';
+        }
+        if (!isRemoved) {
+            h += '<div class="entry-message">' + esc(e.message) + '</div>';
+        }
+        if (level <= 1 && !isRemoved) {
+            h += '<div class="entry-reply-form" hidden></div>';
+        }
+        if (level === 0 && rc > 0) {
+            h += '<div class="entry-thread" data-parent-id="' + esc(e.id) + '">';
+            h += '<div class="thread-body">';
+            // Preview is all-or-nothing under the hybrid rule: firmware only
+            // bundles preview_replies when the whole thread fits (<= 2). If
+            // present, render each at its correct level and attribute level-2
+            // replies to whichever level-1 (or parent) they target.
+            if (e.preview_replies && e.preview_replies.length) {
+                var nameMap = {};
+                nameMap[e.id] = e.name || '';
+                for (var k = 0; k < e.preview_replies.length; k++) {
+                    var pk = e.preview_replies[k];
+                    if (pk && pk.id) nameMap[pk.id] = pk.name || '';
+                }
+                for (var p = 0; p < e.preview_replies.length; p++) {
+                    var pr = e.preview_replies[p];
+                    var lvl = (pr.reply_to === e.id) ? 1 : 2;
+                    var view = {
+                        time: pr.time, country: pr.country,
+                        name: pr.name, message: pr.message,
+                        id: pr.id, reply_to: pr.reply_to
+                    };
+                    if (lvl === 2) view.parent_name = nameMap[pr.reply_to] || '';
+                    h += entryHtml(view, lvl);
+                }
+            }
+            h += '</div>';
+            var showing = e.preview_replies ? e.preview_replies.length : 0;
+            var remaining = rc - showing;
+            if (remaining > 0) {
+                var label = showing === 0
+                    ? 'Show ' + rc + ' ' + (rc === 1 ? 'reply' : 'replies')
+                    : 'Show ' + remaining + ' more ' + (remaining === 1 ? 'reply' : 'replies');
+                h += '<button class="thread-show-more" type="button">' + label + '</button>';
+            }
+            h += '</div>';
+        }
         h += '</div>';
         return h;
     }
@@ -866,14 +1251,50 @@
             : t + ' ' + msgWord;
     }
 
+    // Loading indicator. 150ms show-delay avoids flashing on fast responses,
+    // while still reassuring the user that a 2-3 second ESP response is in
+    // flight. Dimming #entries signals "shown content is stale during load."
+    var loadingTimer = null;
+    function showLoading() {
+        clearTimeout(loadingTimer);
+        loadingTimer = setTimeout(function() {
+            var el = document.getElementById('gb-loading');
+            var entries = document.getElementById('entries');
+            if (el) el.classList.add('show');
+            if (entries) entries.classList.add('loading-dim');
+        }, 150);
+    }
+    function hideLoading() {
+        clearTimeout(loadingTimer);
+        var el = document.getElementById('gb-loading');
+        var entries = document.getElementById('entries');
+        if (el) el.classList.remove('show');
+        if (entries) entries.classList.remove('loading-dim');
+    }
+
     // Pagination:
     //   - loadEntries always replaces the current list (no more appending)
     //   - URL carries the current page in ?page=N (so refresh/back work)
     //   - renderPagination draws the Prev / 1 2 3 ... N / Next strip
+    // Previous request is aborted on a new call so the loading indicator
+    // reflects the latest request, and a late stale response can't overwrite
+    // a newer one.
+    var activeLoadXhr = null;
     function loadEntries(page) {
+        if (activeLoadXhr) {
+            try { activeLoadXhr.abort(); } catch (e) {}
+        }
+        showLoading();
         var xhr = new XMLHttpRequest();
+        activeLoadXhr = xhr;
         xhr.onreadystatechange = function() {
             if (this.readyState !== 4) return;
+            // Abort + new request also triggers readyState 4 on the aborted
+            // one; ignore it so hideLoading and rendering only fire for the
+            // currently-active request.
+            if (activeLoadXhr !== this) return;
+            activeLoadXhr = null;
+            hideLoading();
             var el = document.getElementById('entries');
             if (this.status !== 200) {
                 el.innerHTML = '<div class="entry-empty">Failed to load messages.</div>';
@@ -893,6 +1314,12 @@
                 el.innerHTML = '<div class="entry-empty">Failed to load messages.</div>';
                 renderPagination(0, 0);
             }
+        };
+        xhr.onerror = function() {
+            if (activeLoadXhr === this) { activeLoadXhr = null; hideLoading(); }
+        };
+        xhr.ontimeout = function() {
+            if (activeLoadXhr === this) { activeLoadXhr = null; hideLoading(); }
         };
         var qs = '/guestbook/entries?page=' + page;
         if (currentQuery) qs += '&q=' + encodeURIComponent(currentQuery);
@@ -916,6 +1343,9 @@
         var nums = document.getElementById('page-numbers');
         var prev = document.getElementById('page-prev');
         var next = document.getElementById('page-next');
+        var jump = document.getElementById('page-jump');
+        var jumpInput = document.getElementById('page-jump-input');
+        var jumpTotal = document.getElementById('page-jump-total');
         if (!nav || !nums || !prev || !next) return;
         if (totalPages <= 1) { nav.hidden = true; return; }
         nav.hidden = false;
@@ -925,15 +1355,29 @@
         prev.onclick = function() { goToPage(current - 1); };
         next.onclick = function() { goToPage(current + 1); };
 
-        // Build the number strip: always show page 1, the current page +/- 1,
+        // Build the number strip: always show page 1, the current page +/- 2,
         // and the last page. Insert a gap marker where a range is skipped.
         var pages = [];
         var add = function(n) { if (pages[pages.length - 1] !== n) pages.push(n); };
         add(1);
-        if (current - 1 > 1) pages.push(null);   // gap marker
-        for (var p = Math.max(2, current - 1); p <= Math.min(totalPages - 1, current + 1); p++) add(p);
-        if (current + 1 < totalPages - 1) pages.push(null);
+        if (current - 2 > 2) pages.push(null);   // gap marker
+        for (var p = Math.max(2, current - 2); p <= Math.min(totalPages - 1, current + 2); p++) add(p);
+        if (current + 2 < totalPages - 1) pages.push(null);
         if (totalPages > 1) add(totalPages);
+
+        // Jump-to-page input: only surface when there are enough pages to
+        // actually benefit from it. Below that, the numbered strip covers
+        // everything and the input would just be clutter.
+        if (jump && jumpInput && jumpTotal) {
+            if (totalPages >= 10) {
+                jumpTotal.textContent = totalPages;
+                jumpInput.max = totalPages;
+                jumpInput.value = current;
+                jump.hidden = false;
+            } else {
+                jump.hidden = true;
+            }
+        }
 
         nums.innerHTML = '';
         pages.forEach(function(p) {
@@ -958,11 +1402,32 @@
         });
     }
 
+    // Jump-to-page: submit on Enter. Clamp to the valid range so a stray
+    // "999" just lands on the last page instead of erroring silently.
+    var jumpForm = document.getElementById('page-jump');
+    if (jumpForm) {
+        jumpForm.addEventListener('submit', function(ev) {
+            ev.preventDefault();
+            var input = document.getElementById('page-jump-input');
+            if (!input) return;
+            var n = parseInt(input.value, 10);
+            var max = parseInt(input.max, 10) || 1;
+            if (!Number.isFinite(n)) { input.value = currentPage; return; }
+            if (n < 1) n = 1;
+            if (n > max) n = max;
+            if (n !== currentPage) goToPage(n);
+            else input.value = currentPage;
+        });
+    }
+
     // Search
     var searchInput = document.getElementById('gb-search');
     var searchClear = document.getElementById('search-clear');
     searchInput.addEventListener('input', function() {
-        var q = this.value.trim();
+        // HTML maxlength is bypassable via paste / devtools. Match the cap
+        // applied at readInitialQuery so the search XHR never sends more
+        // than the backend will accept.
+        var q = this.value.trim().substring(0, 64);
         searchClear.style.display = q ? 'block' : 'none';
         if (searchTimer) clearTimeout(searchTimer);
         searchTimer = setTimeout(function() {
@@ -971,12 +1436,17 @@
                 clearPinned();
                 if (location.hash) history.replaceState(null, '', '/guestbook');
             }
+            // Pick pushState only on transition empty→search (one entry per
+            // search session). Subsequent keystrokes use replaceState so
+            // typing 5 chars doesn't blow 5 entries into Back history.
+            var wasEmpty = (currentQuery === '');
             currentQuery = q;
             currentPage = 1;
-            // Reset URL to page 1 (plus the query if present) so Back goes
-            // back to the pre-search state cleanly.
             var url = '/guestbook' + (q ? '?page=1&q=' + encodeURIComponent(q) : '');
-            try { history.pushState({ page: 1 }, '', url); } catch (e) {}
+            try {
+                if (wasEmpty && q) history.pushState({ page: 1 }, '', url);
+                else history.replaceState({ page: 1 }, '', url);
+            } catch (e) {}
             loadEntries(1);
         }, 250);
     });
@@ -1067,9 +1537,18 @@
     }
 
     function handleEntryButtonClick(e) {
+        var showMoreBtn = e.target.closest('.thread-show-more');
+        if (showMoreBtn) {
+            var threadEl = showMoreBtn.closest('.entry-thread');
+            if (threadEl) expandThread(threadEl, showMoreBtn);
+            return;
+        }
         var copyBtn  = e.target.closest('.entry-copy');
         var shareBtn = e.target.closest('.entry-share');
-        var btn = copyBtn || shareBtn;
+        var replyBtn = e.target.closest('.entry-reply');
+        var translateBtn = e.target.closest('.entry-translate');
+        var toggleBtn = e.target.closest('.entry-translate-toggle');
+        var btn = copyBtn || shareBtn || replyBtn || translateBtn || toggleBtn;
         if (!btn) return;
         var entry = btn.closest('.entry');
         if (!entry) return;
@@ -1082,6 +1561,21 @@
                 btn.classList.add('copied');
                 setTimeout(function() { btn.classList.remove('copied'); }, 1200);
             });
+            return;
+        }
+
+        if (replyBtn) {
+            toggleReplyForm(entry);
+            return;
+        }
+
+        if (translateBtn) {
+            translateEntry(entry, translateBtn);
+            return;
+        }
+
+        if (toggleBtn) {
+            toggleTranslation(entry);
             return;
         }
 
@@ -1099,6 +1593,241 @@
     document.getElementById('entries').addEventListener('click', handleEntryButtonClick);
     document.getElementById('pinned-entry').addEventListener('click', handleEntryButtonClick);
 
+    // Fetch a translation for an entry and swap the message body inline.
+    // The original text is preserved on the element so toggleTranslation can
+    // restore it. Worker caches per (id, target) so repeat clicks on the
+    // same entry from the same locale cost nothing.
+    function translateEntry(entry, btn) {
+        if (btn.classList.contains('translating')) return;
+        var id = entry.getAttribute('data-id');
+        var msgEl = entry.querySelector(':scope > .entry-message');
+        if (!msgEl) return;
+        if (msgEl.getAttribute('data-translated') === '1') {
+            toggleTranslation(entry);
+            return;
+        }
+        var original = entry.getAttribute('data-message') || msgEl.textContent;
+        btn.classList.add('translating');
+        var xhr = new XMLHttpRequest();
+        xhr.timeout = 15000;
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            btn.classList.remove('translating');
+            if (this.status !== 200) {
+                // Surface the Worker's actual error text when available
+                // ("Translation rate limit exceeded...", "Translation
+                // unavailable", etc.) instead of a status-code-only message
+                // the user can't act on. Truncate long bodies defensively.
+                var errText = (this.responseText && this.responseText.length > 0 && this.responseText.length < 200)
+                    ? this.responseText
+                    : 'Translation failed (HTTP ' + this.status + ')';
+                var errEl = document.createElement('div');
+                errEl.className = 'status err';
+                errEl.style.cssText = 'margin-top:4px;font-size:11px;';
+                errEl.setAttribute('role', 'alert');
+                errEl.textContent = errText;
+                msgEl.insertAdjacentElement('afterend', errEl);
+                setTimeout(function() { if (errEl.parentNode) errEl.remove(); }, 4000);
+                return;
+            }
+            try {
+                var data = JSON.parse(this.responseText);
+                if (!data || !data.translated) {
+                    // Show a fallback notice instead of a silent no-op so
+                    // users get feedback when translation isn't available.
+                    var noEl = document.createElement('div');
+                    noEl.className = 'status err';
+                    noEl.style.cssText = 'margin-top:4px;font-size:11px;';
+                    noEl.setAttribute('role', 'alert');
+                    noEl.textContent = 'Translation unavailable';
+                    msgEl.insertAdjacentElement('afterend', noEl);
+                    setTimeout(function() { if (noEl.parentNode) noEl.remove(); }, 4000);
+                    return;
+                }
+                msgEl.setAttribute('data-original', original);
+                msgEl.setAttribute('data-translated', '1');
+                msgEl.textContent = data.translated;
+                msgEl.classList.add('entry-message-translated');
+                var toggle = document.createElement('button');
+                toggle.type = 'button';
+                toggle.className = 'entry-translate-toggle';
+                toggle.textContent = 'Show original';
+                msgEl.insertAdjacentElement('afterend', toggle);
+            } catch (e) {}
+        };
+        xhr.onerror = function() { btn.classList.remove('translating'); };
+        xhr.ontimeout = function() { btn.classList.remove('translating'); };
+        xhr.open('POST', translateUrl, true);
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        // Prefer the character-based Latin-lang guess (pl/de/fr/es/pt) when
+        // it hits, m2m100 produces much better output when source_lang is
+        // right. Fall back to the script-based map for non-Latin scripts.
+        var sourceLang = guessLatinLang(original)
+                      || scriptToLang[detectScript(original)]
+                      || 'en';
+        xhr.send(JSON.stringify({ id: id, text: original, target: userLocale, source: sourceLang }));
+    }
+
+    // Swap between the cached translation and the original without another
+    // Worker hit. Both texts live on data-* attrs of the message element.
+    function toggleTranslation(entry) {
+        var msgEl = entry.querySelector(':scope > .entry-message');
+        if (!msgEl) return;
+        var showingTranslated = msgEl.getAttribute('data-translated') === '1';
+        var toggle = entry.querySelector(':scope > .entry-translate-toggle');
+        if (showingTranslated) {
+            var orig = msgEl.getAttribute('data-original') || '';
+            msgEl.setAttribute('data-translation', msgEl.textContent);
+            msgEl.textContent = orig;
+            msgEl.classList.remove('entry-message-translated');
+            msgEl.setAttribute('data-translated', '0');
+            if (toggle) toggle.textContent = 'Show translation';
+        } else {
+            var translated = msgEl.getAttribute('data-translation') || '';
+            if (!translated) return;
+            msgEl.textContent = translated;
+            msgEl.classList.add('entry-message-translated');
+            msgEl.setAttribute('data-translated', '1');
+            if (toggle) toggle.textContent = 'Show original';
+        }
+    }
+
+    // Inline reply form. Built lazily on first Reply click for a given entry.
+    function toggleReplyForm(entry) {
+        var box = entry.querySelector(':scope > .entry-reply-form');
+        if (!box) return;
+        if (!box.hidden) { box.hidden = true; box.innerHTML = ''; return; }
+        var parentName = entry.getAttribute('data-name') || '';
+        var parentId = entry.getAttribute('data-id') || '';
+        box.innerHTML =
+            '<div class="reply-form-hint">Replying to <strong>' + esc(parentName) + '</strong></div>'
+          + '<input type="text" class="reply-form-name" maxlength="32" placeholder="Your name" aria-label="Your name">'
+          + '<div class="char-count"><span class="reply-form-name-count">0</span>/32</div>'
+          + '<textarea class="reply-form-message" rows="2" maxlength="200" placeholder="Write a reply" aria-label="Reply message"></textarea>'
+          + '<div class="char-count"><span class="reply-form-msg-count">0</span>/200</div>'
+          + '<div class="reply-form-actions">'
+          +   '<button type="button" class="btn reply-form-submit">Send reply</button>'
+          +   '<button type="button" class="reply-form-cancel">Cancel</button>'
+          + '</div>'
+          + '<div class="reply-form-status" role="status"></div>';
+        box.hidden = false;
+
+        var nameInput = box.querySelector('.reply-form-name');
+        var msgInput  = box.querySelector('.reply-form-message');
+        var nameCount = box.querySelector('.reply-form-name-count');
+        var msgCount  = box.querySelector('.reply-form-msg-count');
+        var submitBtn = box.querySelector('.reply-form-submit');
+        var cancelBtn = box.querySelector('.reply-form-cancel');
+        var status    = box.querySelector('.reply-form-status');
+
+        nameInput.addEventListener('input', function() { nameCount.textContent = this.value.length; });
+        msgInput.addEventListener('input', function() { msgCount.textContent = this.value.length; });
+
+        cancelBtn.addEventListener('click', function() { box.hidden = true; box.innerHTML = ''; });
+        submitBtn.addEventListener('click', function() {
+            var name = nameInput.value.trim();
+            var msg  = msgInput.value.trim();
+            if (!name || !msg) {
+                status.textContent = 'Name and reply are required.';
+                status.className = 'reply-form-status err';
+                return;
+            }
+            submitBtn.disabled = true;
+            status.textContent = 'Sending...';
+            status.className = 'reply-form-status';
+            var xhr = new XMLHttpRequest();
+            xhr.onreadystatechange = function() {
+                if (this.readyState !== 4) return;
+                if (this.status === 200) {
+                    status.textContent = this.responseText;
+                    status.className = 'reply-form-status ok';
+                    nameInput.value = '';
+                    msgInput.value = '';
+                    nameCount.textContent = '0';
+                    msgCount.textContent = '0';
+                } else if (this.status === 429) {
+                    status.textContent = this.responseText;
+                    status.className = 'reply-form-status err';
+                } else {
+                    status.textContent = 'Something went wrong.';
+                    status.className = 'reply-form-status err';
+                }
+                submitBtn.disabled = false;
+            };
+            xhr.onerror = function() {
+                status.textContent = 'Network error. Try again.';
+                status.className = 'reply-form-status err';
+                submitBtn.disabled = false;
+            };
+            xhr.open('POST', '/guestbook/submit', true);
+            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+            xhr.send('name=' + encodeURIComponent(name)
+                   + '&message=' + encodeURIComponent(msg)
+                   + '&reply_to=' + encodeURIComponent(parentId));
+        });
+        setTimeout(function() { nameInput.focus(); }, 0);
+    }
+
+    // Expand a thread inline: fetch the full subtree (level-1 + level-2 replies
+    // + tombstones) for this top-level parent, then replace the preview + the
+    // "Show more" button with the complete chronological list. Level-2 replies
+    // render with an attribution label pulled from a local id->name map built
+    // from the same response, so "replying to Alice" works even when the
+    // targeted level-1 is a tombstone or the backend orders rows oddly.
+    function expandThread(thread, btn) {
+        var parentId = thread.getAttribute('data-parent-id') || '';
+        if (!validId(parentId)) return;
+        btn.disabled = true;
+        var originalLabel = btn.textContent;
+        btn.textContent = 'Loading...';
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status !== 200) {
+                btn.disabled = false;
+                btn.textContent = 'Failed to load. Try again';
+                return;
+            }
+            try {
+                var data = JSON.parse(this.responseText);
+                var list = Array.isArray(data.entries) ? data.entries : [];
+                var nameMap = {};
+                for (var i = 0; i < list.length; i++) {
+                    var r = list[i];
+                    if (r && r.id) {
+                        nameMap[r.id] = (r.removed || !r.name) ? '' : r.name;
+                    }
+                }
+                var body = thread.querySelector('.thread-body');
+                if (!body) { btn.textContent = originalLabel; btn.disabled = false; return; }
+                if (list.length === 0) {
+                    body.innerHTML = '<div class="thread-empty">No replies yet.</div>';
+                } else {
+                    var html = '';
+                    for (var j = 0; j < list.length; j++) {
+                        var entry = list[j];
+                        var lvl = (entry.reply_to === parentId) ? 1 : 2;
+                        var view = {
+                            time: entry.time, country: entry.country,
+                            name: entry.name, message: entry.message,
+                            id: entry.id, removed: entry.removed,
+                            reply_to: entry.reply_to
+                        };
+                        if (lvl === 2) view.parent_name = nameMap[entry.reply_to] || '';
+                        html += entryHtml(view, lvl);
+                    }
+                    body.innerHTML = html;
+                }
+                if (btn.parentNode) btn.parentNode.removeChild(btn);
+            } catch (err) {
+                btn.disabled = false;
+                btn.textContent = 'Failed to load. Try again';
+            }
+        };
+        xhr.open('GET', '/guestbook/replies?id=' + encodeURIComponent(parentId), true);
+        xhr.send();
+    }
+
     // Small panel of platform icons anchored below the share button. Each
     // icon opens that platform's share intent URL in a new tab.
     function showSharePopover(anchorBtn, entry) {
@@ -1106,10 +1835,13 @@
         if (existing && existing._dismiss) existing._dismiss();
 
         // Cap at 200 chars; Twitter etc. auto-shorten the URL so that leaves
-        // enough room for the quote plus name.
+        // enough room for the quote plus name. Walk codepoints via Array.from
+        // so an emoji at the boundary doesn't get split into a surrogate-pair
+        // replacement char.
         var shareTitle = entry.name + ' on HelloESP';
         var shareText  = '"' + entry.message + '" - ' + entry.name + ' on HelloESP';
-        if (shareText.length > 200) shareText = shareText.substring(0, 197) + '...';
+        var shareChars = Array.from(shareText);
+        if (shareChars.length > 200) shareText = shareChars.slice(0, 197).join('') + '...';
 
         var u = encodeURIComponent(entry.url);
         var t = encodeURIComponent(shareText);
@@ -1189,12 +1921,73 @@
     }
 
     function showPinnedEntry(entry) {
-        var html = entryHtml(entry);
+        var html = entryHtml(entry, 0);
         if (!html) { showPinnedError('Could not load linked message.'); return; }
         var wrap = document.getElementById('pinned-wrap');
         document.getElementById('pinned-label-text').textContent = 'Linked message';
         document.getElementById('pinned-entry').innerHTML = html;
         wrap.classList.add('show');
+        // /guestbook/locate doesn't carry reply_count, so entryHtml rendered
+        // without a thread container. Fetch replies; if any exist, inject a
+        // thread scaffold and populate it with the full subtree.
+        populatePinnedThread(entry.id);
+    }
+
+    function populatePinnedThread(parentId) {
+        if (!validId(parentId)) return;
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState !== 4) return;
+            if (this.status !== 200) return;
+            try {
+                var data = JSON.parse(this.responseText);
+                var list = Array.isArray(data.entries) ? data.entries : [];
+                if (list.length === 0) return;
+                var entryEl = document.querySelector('#pinned-entry .entry[data-id="' + parentId + '"]');
+                if (!entryEl) return;
+                if (entryEl.querySelector('.entry-thread')) return;  // already present
+                var nameMap = {};
+                for (var i = 0; i < list.length; i++) {
+                    var r = list[i];
+                    if (r && r.id) nameMap[r.id] = (r.removed || !r.name) ? '' : r.name;
+                }
+                var thread = document.createElement('div');
+                thread.className = 'entry-thread';
+                thread.setAttribute('data-parent-id', parentId);
+                var body = document.createElement('div');
+                body.className = 'thread-body';
+                var html = '';
+                for (var j = 0; j < list.length; j++) {
+                    var row = list[j];
+                    var lvl = (row.reply_to === parentId) ? 1 : 2;
+                    var view = {
+                        time: row.time, country: row.country,
+                        name: row.name, message: row.message,
+                        id: row.id, removed: row.removed,
+                        reply_to: row.reply_to
+                    };
+                    if (lvl === 2) view.parent_name = nameMap[row.reply_to] || '';
+                    html += entryHtml(view, lvl);
+                }
+                body.innerHTML = html;
+                thread.appendChild(body);
+                entryEl.appendChild(thread);
+                // If the original permalink was to a reply, scroll to it and
+                // flash its background so the viewer knows which row in the
+                // thread the link pointed to.
+                var hash = (location.hash || '').replace(/^#/, '').toLowerCase();
+                if (hash && hash !== parentId && validId(hash)) {
+                    var tgt = thread.querySelector('.entry[data-id="' + hash + '"]');
+                    if (tgt) {
+                        tgt.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        tgt.classList.add('permalink-flash');
+                        setTimeout(function() { tgt.classList.remove('permalink-flash'); }, 2400);
+                    }
+                }
+            } catch (e) { /* swallow */ }
+        };
+        xhr.open('GET', '/guestbook/replies?id=' + encodeURIComponent(parentId), true);
+        xhr.send();
     }
 
     function resolvePermalink() {
@@ -1204,14 +1997,18 @@
         if (!validId(raw)) return false;
         permalinkTarget = raw;
 
-        // Always load the normal list below. If the URL also has ?page=N
-        // we honor it so a permalink+page combo (e.g. shared "see this
-        // entry, page 5 of the archive") works.
+        // Load the normal list if (and only if) page or search state actually
+        // changed. Hash-only navigation between two permalinks on the same
+        // already-loaded page used to fire a redundant /guestbook/entries
+        // fetch every time.
+        var nextPage = readInitialPage();
+        var pageChanged  = (nextPage !== currentPage);
+        var queryChanged = (currentQuery !== '');
         currentQuery = '';
         searchInput.value = '';
         searchClear.style.display = 'none';
-        currentPage = readInitialPage();
-        loadEntries(currentPage);
+        currentPage = nextPage;
+        if (pageChanged || queryChanged) loadEntries(currentPage);
 
         // Placeholder while the locate round-trip completes
         document.getElementById('pinned-label-text').textContent = 'Linked message';

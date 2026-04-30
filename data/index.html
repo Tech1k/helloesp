@@ -519,6 +519,14 @@
             color: var(--mid);
         }
 
+        .section-loading {
+            font-size: 11px;
+            color: var(--mid);
+            font-style: italic;
+            padding: 24px 0;
+            text-align: center;
+        }
+
         /* photos */
 
         .photos { margin-bottom: 48px; }
@@ -669,8 +677,9 @@
 
         .footer-links {
             display: flex;
-            gap: 20px;
+            gap: 15px;
             list-style: none;
+            flex-wrap: wrap;
         }
 
         .served {
@@ -687,7 +696,7 @@
             :root {
                 --bg:    #111110;
                 --ink:   #e8e6e1;
-                --mid:   #666;
+                --mid:   #8a8a87;
                 --faint: #2a2a28;
             }
 
@@ -757,6 +766,7 @@
             <li><a href="/guestbook">Guestbook</a></li>
             <li><a href="/history">History</a></li>
             <li><a href="/console">Console</a></li>
+            <li><a href="/about">About</a></li>
         </ul>
     </nav>
 
@@ -859,13 +869,13 @@
         <div class="outdoor-card">
             <div class="outdoor-condition">
                 <span class="outdoor-icon" id="outdoor-icon">&#9728;</span>
-                <span class="outdoor-condition-text" id="outdoor-condition-text">&mdash;</span>
+                <span class="outdoor-condition-text" id="outdoor-condition-text">-</span>
             </div>
             <div class="outdoor-grid">
-                <div class="outdoor-cell"><div class="cell-label">Temperature</div><div class="cell-value" id="outdoor-temp">&mdash;</div></div>
-                <div class="outdoor-cell"><div class="cell-label">Humidity</div><div class="cell-value" id="outdoor-humidity">&mdash;</div></div>
-                <div class="outdoor-cell"><div class="cell-label">Wind</div><div class="cell-value" id="outdoor-wind">&mdash;</div></div>
-                <div class="outdoor-cell"><div class="cell-label">Pressure</div><div class="cell-value" id="outdoor-pressure">&mdash;</div></div>
+                <div class="outdoor-cell"><div class="cell-label">Temperature</div><div class="cell-value" id="outdoor-temp">-</div></div>
+                <div class="outdoor-cell"><div class="cell-label">Humidity</div><div class="cell-value" id="outdoor-humidity">-</div></div>
+                <div class="outdoor-cell"><div class="cell-label">Wind</div><div class="cell-value" id="outdoor-wind">-</div></div>
+                <div class="outdoor-cell"><div class="cell-label">Pressure</div><div class="cell-value" id="outdoor-pressure">-</div></div>
             </div>
             <div class="outdoor-attribution">Data from <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a> &middot; Refreshed hourly</div>
         </div>
@@ -873,7 +883,7 @@
 
     <div class="section-label">
         <i class="fa-solid fa-bolt"></i> Live activity
-        <span class="presence" id="presence" hidden></span>
+        <span class="presence" id="presence" title="Number of people currently on HelloESP" hidden></span>
     </div>
     <a class="live-ticker" href="/console" aria-label="See full live console">
         <span class="ticker-body" id="ticker-body"><span class="ticker-empty">Waiting for a visit...</span></span>
@@ -881,25 +891,26 @@
     </a>
 
     <!-- latest guestbook message -->
-    <div class="section-label" id="latest-label" hidden>
+    <div class="section-label" id="latest-label">
         <i class="fa-solid fa-comment-dots"></i> Latest message
     </div>
-    <a class="live-ticker" href="/guestbook" id="latest-teaser" aria-label="Read the full guestbook" hidden>
-        <span class="ticker-body" id="latest-body"></span>
+    <a class="live-ticker" href="/guestbook" id="latest-teaser" aria-label="Read the full guestbook">
+        <span class="ticker-body" id="latest-body"><span class="ticker-empty">Loading latest message...</span></span>
         <span class="ticker-cta">Read all &rarr;</span>
     </a>
 
     <!-- countries -->
-    <div class="countries-section">
+    <div class="countries-section" id="countries-section">
         <div class="section-label"><i class="fa-solid fa-globe"></i> <span id="countries-label">Visitors</span></div>
-        <div class="map-wrap">
+        <div class="section-loading" id="countries-loading">Loading visitor map...</div>
+        <div class="map-wrap" id="countries-map-wrap" hidden>
             <canvas id="country-map" role="img" aria-label="World map of visitor countries. A full list with counts follows."></canvas>
         </div>
         <div class="countries-list" id="countries-list"></div>
     </div>
 
     <!-- chart -->
-    <div class="chart-section">
+    <div class="chart-section" id="chart-section">
         <div class="chart-header">
             <div class="section-label"><i class="fa-solid fa-chart-line"></i> Charts</div>
             <div class="date-picker">
@@ -932,7 +943,7 @@
     </div>
 
     <!-- photos -->
-    <div class="photos">
+    <div class="photos" id="photos-section">
         <div class="section-label"><i class="fa-regular fa-image"></i> Photos</div>
         <div class="carousel">
             <div class="carousel-track" id="track">
@@ -966,6 +977,34 @@
     <div class="log">
         <div class="section-label"><i class="fa-solid fa-list"></i> Changelog <a class="section-rss" href="/changelog.rss" aria-label="Subscribe to changelog via RSS" title="Subscribe via RSS"><i class="fa-solid fa-rss"></i></a></div>
         <div class="log-entry">
+            <div class="log-date">Apr 29, 2026</div>
+            <div class="log-text">Added a DS3231 real-time clock module on the breadboard. Boot logs and timestamps are correct right away instead of being wrong for a few seconds until NTP syncs. History page got a year-grouped collapsible layout that stays readable as archives pile up over time. New <a href="/about">/about</a> page with the short version of the project story for casual visitors.</div>
+        </div>
+        <div class="log-entry">
+            <div class="log-date">Apr 27, 2026</div>
+            <div class="log-text">Snake now has a global leaderboard. Top 10 with 3-letter initials, shared across the 404, offline, and timeout pages. Anti-cheat is server-side: the worker hands out a seed at game start, you submit your move log on game over, and the worker replays it to confirm the score. Only way onto the board is actually playing.</div>
+        </div>
+        <div class="log-entry">
+            <div class="log-date">Apr 26, 2026</div>
+            <div class="log-text">Snake added to the 404, offline, and timeout fallback pages. WebSocket reconnect path is simpler now and recovers faster from transient drops.</div>
+        </div>
+        <div class="log-entry log-older hidden">
+            <div class="log-date">Apr 25, 2026</div>
+            <div class="log-text">Live uptime's "Best" substat shows from the start instead of waiting a full day.</div>
+        </div>
+        <div class="log-entry log-older hidden">
+            <div class="log-date">Apr 24, 2026</div>
+            <div class="log-text">Homepage sections lazy-load now, so quick visitors don't fetch things they never scroll to. Inline one-tap translate on non-English guestbook entries via Cloudflare Workers AI. Reply forms got the same character counter as the main form. Console flag tooltips show the full country name on hover.</div>
+        </div>
+        <div class="log-entry log-older hidden">
+            <div class="log-date">Apr 23, 2026</div>
+            <div class="log-text">Guestbook got two-level reply threading with inline previews and per-message share/copy links. Pagination expanded with a jump-to-page input once past 10 pages. Moderation deletes now tombstone, so the reply chain stays intact with the original message blanked. HTML pages now serve pre-gzipped, cutting transfer size about 4&times; on every page load.</div>
+        </div>
+        <div class="log-entry log-older hidden">
+            <div class="log-date">Apr 21, 2026</div>
+            <div class="log-text">Fixed a URL quirk where <code>//anything</code> was leaking through as a page view. Visitors had discovered it and were "chatting" by putting messages in URLs that showed up on the console. Those now return a proper 404. Reboots switched to a deep-sleep wakeup so the device comes back cleanly after OTA updates, instead of needing a physical power cycle.</div>
+        </div>
+        <div class="log-entry log-older hidden">
             <div class="log-date">Apr 19, 2026</div>
             <div class="log-text">Public relaunch on a fresh ESP32. Full rebuild: air quality sensors, historical charts, guestbook with moderation, admin panel, OLED dashboard, daily off-site backups, and a Cloudflare Worker relay so it can live on WiFi without a tunnel.</div>
         </div>
@@ -1008,6 +1047,7 @@
         <li><a href="/guestbook"><i class="fa-solid fa-pen"></i> Guestbook</a></li>
         <li><a href="/history"><i class="fa-solid fa-clock-rotate-left"></i> History</a></li>
         <li><a href="/console"><i class="fa-solid fa-terminal"></i> Console</a></li>
+        <li><a href="/about"><i class="fa-solid fa-circle-info"></i> About</a></li>
         <li><a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener"><i class="fa-brands fa-github"></i> GitHub</a></li>
     </ul>
 </footer>
@@ -1207,7 +1247,7 @@
         try {
             var el;
 
-            // Presence indicator: hide when alone
+            // Presence indicator: hide when alone (count === 1 means just you).
             var presenceEl = document.getElementById('presence');
             if (presenceEl) {
                 var n = Number.isFinite(s.clients) ? s.clients : 0;
@@ -1222,20 +1262,24 @@
             el = document.getElementById('uptime');
                 if (el) { el.classList.remove('loading'); el.textContent = formatUptime(s.uptime); }
 
-                el = document.getElementById('memory');
-                if (el) { el.classList.remove('loading'); el.textContent = s.memory.used_kb + ' KB' + trend('mem', s.memory.used_percent); }
-                el = document.getElementById('memory_sub');
-                if (el) el.textContent = s.memory.used_percent + '% used';
+                if (s.memory) {
+                    el = document.getElementById('memory');
+                    if (el) { el.classList.remove('loading'); el.textContent = s.memory.used_kb + ' KB' + trend('mem', s.memory.used_percent); }
+                    el = document.getElementById('memory_sub');
+                    if (el) el.textContent = s.memory.used_percent + '% used';
+                }
 
                 el = document.getElementById('visitors');
                 if (el) { el.classList.remove('loading'); el.textContent = s.visitors; }
                 el = document.getElementById('daily_visitors');
                 if (el) el.textContent = s.daily_visitors + ' today';
 
-                el = document.getElementById('temperature');
-                if (el) { el.classList.remove('loading'); el.textContent = s.temperature.fahrenheit + '\u00b0F' + trend('temp', s.temperature.fahrenheit); }
-                el = document.getElementById('temperature_sub');
-                if (el) el.textContent = s.temperature.celsius + '\u00b0C';
+                if (s.temperature) {
+                    el = document.getElementById('temperature');
+                    if (el) { el.classList.remove('loading'); el.textContent = s.temperature.fahrenheit + '\u00b0F' + trend('temp', s.temperature.fahrenheit); }
+                    el = document.getElementById('temperature_sub');
+                    if (el) el.textContent = s.temperature.celsius + '\u00b0C';
+                }
 
                 el = document.getElementById('humidity');
                 if (el) { el.classList.remove('loading'); el.textContent = s.humidity_percent + '%' + trend('hum', s.humidity_percent); }
@@ -1257,15 +1301,19 @@
                 el = document.getElementById('voc_sub');
                 if (el) el.textContent = vocQuality(s.voc_ppb);
 
-                el = document.getElementById('cpu_temp');
-                if (el) { el.classList.remove('loading'); el.textContent = s.cpu_temp.celsius + '\u00b0C' + trend('cpu', s.cpu_temp.celsius); }
-                el = document.getElementById('cpu_temp_sub');
-                if (el) el.textContent = s.cpu_temp.fahrenheit + '\u00b0F';
+                if (s.cpu_temp) {
+                    el = document.getElementById('cpu_temp');
+                    if (el) { el.classList.remove('loading'); el.textContent = s.cpu_temp.celsius + '\u00b0C' + trend('cpu', s.cpu_temp.celsius); }
+                    el = document.getElementById('cpu_temp_sub');
+                    if (el) el.textContent = s.cpu_temp.fahrenheit + '\u00b0F';
+                }
 
-                el = document.getElementById('heat_index');
-                if (el) { el.classList.remove('loading'); el.textContent = s.heat_index.fahrenheit + '\u00b0F'; }
-                el = document.getElementById('heat_index_sub');
-                if (el) el.textContent = s.heat_index.celsius + '\u00b0C \u00b7 ' + heatIndexQuality(s.heat_index.fahrenheit);
+                if (s.heat_index) {
+                    el = document.getElementById('heat_index');
+                    if (el) { el.classList.remove('loading'); el.textContent = s.heat_index.fahrenheit + '\u00b0F'; }
+                    el = document.getElementById('heat_index_sub');
+                    if (el) el.textContent = s.heat_index.celsius + '\u00b0C \u00b7 ' + heatIndexQuality(s.heat_index.fahrenheit);
+                }
 
                 el = document.getElementById('rssi');
                 if (el) { el.classList.remove('loading'); el.textContent = s.rssi + ' dBm' + trend('rssi', s.rssi); }
@@ -1289,9 +1337,13 @@
                     var bad = [];
                     if (s.sensors.bme_ok === false) bad.push('BME280 (temperature, humidity, pressure)');
                     if (s.sensors.ccs_ok === false) bad.push('CCS811 (eCO\u2082, VOC)');
+                    if (s.sensors.oled_ok === false) bad.push('OLED display');
+                    if (s.sensors.rtc_ok === false) bad.push('DS3231 RTC');
                     if (bad.length > 0) {
-                        alertText.textContent = ' Sensor not responding: ' + bad.join(' and ') +
-                            '. Showing last known values until it recovers.';
+                        var label = bad.length === 1 ? 'Sensor not responding: ' : 'Sensors not responding: ';
+                        var tail = bad.length === 1 ? '. Showing last known values until it recovers.'
+                                                    : '. Showing last known values until they recover.';
+                        alertText.textContent = ' ' + label + bad.join(', ') + tail;
                         alert.classList.add('show');
                     } else {
                         alert.classList.remove('show');
@@ -1331,12 +1383,13 @@
 
     var lastStatsAt = 0;
 
+    var statsEverSucceeded = false;
     function loadStats() {
         var xhr = new XMLHttpRequest();
         xhr.onreadystatechange = function() {
             if (this.readyState !== 4) return;
             if (this.status !== 200) { setLive(false); return; }
-            try { applyStats(JSON.parse(this.responseText)); }
+            try { applyStats(JSON.parse(this.responseText)); statsEverSucceeded = true; }
             catch(e) { setLive(false); }
         };
         xhr.onerror = function() { setLive(false); };
@@ -1344,8 +1397,13 @@
         xhr.send();
     }
 
-    // initial XHR load so the page populates fast, doesn't wait for SSE
-    loadStats();
+    // initial XHR load so the page populates fast, doesn't wait for SSE.
+    // Deferred 250ms so it doesn't race the HTML parse completion and the
+    // favicon/OG image requests on cold LAN load; those tend to land in
+    // the same TCP window and fragment ESP heap during header parsing.
+    // 250ms is imperceptible to the user (live-dot grey for a quarter
+    // second) and gives the initial burst room to drain first.
+    setTimeout(loadStats, 250);
 
     var pollTimer = null;
     function startPolling() {
@@ -1368,7 +1426,7 @@
         try {
             var cp = up.split('').map(function(c) { return 127397 + c.charCodeAt(0); });
             return String.fromCodePoint.apply(String, cp);
-        } catch (err) { return code; }
+        } catch (err) { return '??'; }  // never return raw `code`, it lands in innerHTML
     }
     // Full country name from a 2-letter code, via Intl.DisplayNames when
     // available. Used for hover tooltips; falls back to the code itself.
@@ -1396,7 +1454,13 @@
         var body = document.getElementById('ticker-body');
         if (!body) return;
         if (!tickerEntry) {
-            body.innerHTML = '<span class="ticker-empty">Waiting for a visit...</span>';
+            // Skip the DOM rewrite if we're already showing the empty state.
+            // setInterval(renderTicker, 5000) fires forever for the time-ago
+            // refresh; without this guard it thrashes the DOM every 5s with
+            // identical empty-state markup until the first real visit lands.
+            if (!body.firstElementChild || !body.firstElementChild.classList.contains('ticker-empty')) {
+                body.innerHTML = '<span class="ticker-empty">Waiting for a visit...</span>';
+            }
             return;
         }
         var e = tickerEntry;
@@ -1410,22 +1474,33 @@
         html += '<span class="ticker-time">' + tickerAgo(e.time) + '</span>';
         body.innerHTML = html;
     }
-    // seed the ticker with the latest entry on load
-    fetch('/console.json', { cache: 'no-store' })
-        .then(function(r) { return r.ok ? r.json() : []; })
-        .then(function(data) {
-            if (Array.isArray(data) && data.length > 0) {
-                tickerEntry = data[0];
-                renderTicker();
-            }
-        })
-        .catch(function() {});
-    // refresh the time-ago text every 5s even without new events
-    setInterval(renderTicker, 5000);
+    // seed the ticker with the latest entry on load. Deferred ~600ms so it
+    // doesn't pile onto /stats on first LAN load (see cascade note above).
+    setTimeout(function() {
+        fetch('/console.json', { cache: 'no-store' })
+            .then(function(r) { return r.ok ? r.json() : []; })
+            .then(function(data) {
+                if (Array.isArray(data) && data.length > 0) {
+                    tickerEntry = data[0];
+                    renderTicker();
+                }
+            })
+            .catch(function() {});
+    }, 600);
+    // refresh the time-ago text every 5s even without new events.
+    // Stored so visibilitychange can pause it in hidden tabs.
+    var tickerTimer = setInterval(renderTicker, 5000);
 
-    // try SSE for live ~5s updates; if it errors, fall back to polling
+    // SSE is served by the Cloudflare Worker. On LAN (direct IP, .local, or
+    // any non-Worker host) the /_stream path returns 204, which makes
+    // EventSource fire onerror, and EventSource auto-retries every 3s
+    // forever unless we explicitly call .close(). Strategy: try SSE
+    // unconditionally, close on first error, fall through to polling.
+    // No hardcoded hostname check, so forks of this project work without
+    // editing this regex.
     var sse = null;
-    if (typeof EventSource !== 'undefined') {
+    function startSse() {
+        if (typeof EventSource === 'undefined') { startPolling(); return; }
         try {
             sse = new EventSource('/_stream');
             sse.addEventListener('stats', function(e) {
@@ -1433,24 +1508,30 @@
                 catch(err) {}
             });
             sse.addEventListener('console', function(e) {
-                try {
-                    tickerEntry = JSON.parse(e.data);
-                    renderTicker();
-                } catch(err) {}
+                try { tickerEntry = JSON.parse(e.data); renderTicker(); }
+                catch(err) {}
             });
-            sse.onerror = function() { startPolling(); };
+            sse.onerror = function() {
+                // Close to break the auto-retry loop, then poll.
+                if (sse) { try { sse.close(); } catch (e) {} sse = null; }
+                // Immediate fetch closes the gap before the polling interval
+                // kicks in (was 30s of stale stats after an SSE drop).
+                loadStats();
+                startPolling();
+            };
         } catch(e) { startPolling(); }
-    } else {
-        startPolling();
     }
+    startSse();
 
     // safety net: if SSE hasn't produced data within 8s, start polling
     setTimeout(function() {
         if (Date.now() - lastStatsAt > 8000) startPolling();
     }, 8000);
 
-    // staleness watchdog: flag the live-dot grey if no data in 15s
-    setInterval(function() {
+    // staleness watchdog: flag the live-dot grey if no data in 15s.
+    // Stored in a var so visibilitychange can pause/resume rather than
+    // letting the timer run forever in hidden background tabs.
+    var stalenessTimer = setInterval(function() {
         if (lastStatsAt && Date.now() - lastStatsAt > 15000) setLive(false);
     }, 3000);
 
@@ -1459,46 +1540,76 @@
             // close SSE when tab hides so we don't hold Worker resources in abandoned tabs
             if (sse) { try { sse.close(); } catch (e) {} sse = null; }
             stopPolling();
+            if (stalenessTimer) { clearInterval(stalenessTimer); stalenessTimer = null; }
+            // Pause periodic refreshers in hidden tabs so we're not burning
+            // Worker quota and ESP heap on a tab nobody is looking at.
+            if (tickerTimer) { clearInterval(tickerTimer); tickerTimer = null; }
+            if (countriesTimer) { clearInterval(countriesTimer); countriesTimer = null; }
+            if (chartTimer) { clearInterval(chartTimer); chartTimer = null; }
         } else {
             loadStats();
-            if (typeof EventSource !== 'undefined' && !sse) {
-                try {
-                    sse = new EventSource('/_stream');
-                    sse.addEventListener('stats', function(e) {
-                        try { applyStats(JSON.parse(e.data)); stopPolling(); }
-                        catch(err) {}
-                    });
-                    sse.addEventListener('console', function(e) {
-                        try { tickerEntry = JSON.parse(e.data); renderTicker(); }
-                        catch(err) {}
-                    });
-                    sse.onerror = function() { startPolling(); };
-                } catch(e) { startPolling(); }
+            if (!sse) startSse();
+            if (!stalenessTimer) {
+                stalenessTimer = setInterval(function() {
+                    if (lastStatsAt && Date.now() - lastStatsAt > 15000) setLive(false);
+                }, 3000);
             }
+            if (!tickerTimer) tickerTimer = setInterval(renderTicker, 5000);
+            if (!countriesTimer) countriesTimer = setInterval(loadCountriesIfVisible, 300000);
+            if (!chartTimer) chartTimer = setInterval(chartRefreshTick, 300000);
         }
     });
 
-    /* countries */
+    /* countries: lazy-loaded. Fetching the world-atlas topojson (~90KB) and
+       hitting ESP's /countries only kicks in when the countries section is
+       about to enter view. Visitors who bounce before scrolling skip both
+       entirely, which meaningfully reduces first-paint load on LAN. */
     var countryMap = null;
     var worldData = null;
+    var countriesLoadStarted = false;
 
-    fetch('https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json', {
-        integrity: 'sha384-yOCJ+8ShBm8UDqtAVtAvxTDDf4gXo5edxl/YG0FmVC5OTmqVLl7utuVGBDEeZWHf',
-        credentials: 'omit',
-        referrerPolicy: 'no-referrer'
-    })
-    .then(function(r) { return r.ok ? r.json() : Promise.reject(r.status); })
-    .then(function(data) { worldData = data; loadCountries(); })
-    .catch(function() {});
+    function kickOffCountriesLoad() {
+        if (countriesLoadStarted) return;
+        countriesLoadStarted = true;
+        fetch('https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json', {
+            integrity: 'sha384-yOCJ+8ShBm8UDqtAVtAvxTDDf4gXo5edxl/YG0FmVC5OTmqVLl7utuVGBDEeZWHf',
+            credentials: 'omit',
+            referrerPolicy: 'no-referrer'
+        })
+        .then(function(r) { return r.ok ? r.json() : Promise.reject(r.status); })
+        .then(function(data) { worldData = data; loadCountries(); })
+        .catch(function() {
+            var loading = document.getElementById('countries-loading');
+            if (loading) { loading.textContent = 'Visitor map unavailable.'; }
+        });
+    }
 
-    // Latest guestbook message teaser
-    (function loadLatestEntry() {
+    // Latest guestbook message teaser. One-shot fetch on page load; the
+    // endpoint is edge-cached 30s so repeat visitors rarely hit the ESP.
+    // Section starts visible with a "Loading..." placeholder; on empty or
+    // error the whole section gets hidden so a fresh device doesn't show
+    // an empty "Latest message" block. Deferred ~900ms so it lands after
+    // /stats and /console.json on first LAN load.
+    setTimeout(function loadLatestEntry() {
+        function hideSection() {
+            var l = document.getElementById('latest-label');
+            var t = document.getElementById('latest-teaser');
+            if (l) l.hidden = true;
+            if (t) t.hidden = true;
+        }
         fetch('/guestbook/entries?page=1').then(function(r) {
             return r.ok ? r.json() : null;
         }).then(function(data) {
-            if (!data || !Array.isArray(data.entries) || data.entries.length === 0) return;
-            var e = data.entries[0];
-            if (!e.name || !e.message) return;
+            if (!data || !Array.isArray(data.entries) || data.entries.length === 0) { hideSection(); return; }
+            // Skip replies and tombstones: pick the first top-level message.
+            // A reply rendered without thread context misleads visitors into
+            // thinking it's a standalone "latest message".
+            var e = null;
+            for (var i = 0; i < data.entries.length; i++) {
+                var c = data.entries[i];
+                if (c && c.name && c.message && !c.reply_to) { e = c; break; }
+            }
+            if (!e) { hideSection(); return; }
             var body = document.getElementById('latest-body');
             if (!body) return;
             body.textContent = '';
@@ -1509,29 +1620,35 @@
             body.appendChild(name);
 
             if (e.country && e.country !== '??') {
-                var c = document.createElement('span');
-                c.className = 'teaser-country';
+                var cc = document.createElement('span');
+                cc.className = 'teaser-country';
                 var flag = tickerFlag(e.country);
                 var prefix = (flag && flag !== '??') ? flag + ' ' : '';
-                c.textContent = prefix + e.country;
-                c.title = regionName(e.country) || e.country;
-                body.appendChild(c);
+                cc.textContent = prefix + e.country;
+                cc.title = regionName(e.country) || e.country;
+                body.appendChild(cc);
             }
 
             var msg = document.createElement('span');
             msg.className = 'teaser-msg';
-            var text = String(e.message);
-            if (text.length > 120) text = text.substring(0, 117) + '...';
+            // Use Array.from to walk codepoints so an emoji at the boundary
+            // doesn't break into a UTF-16 surrogate replacement char.
+            var chars = Array.from(String(e.message));
+            var text = chars.length > 120 ? chars.slice(0, 117).join('') + '...' : chars.join('');
             msg.textContent = text;
             body.appendChild(msg);
+        }).catch(hideSection);
+    }, 900);
 
-            document.getElementById('latest-label').hidden = false;
-            document.getElementById('latest-teaser').hidden = false;
-        }).catch(function() {});
-    })();
-
-    // Uptime "Best" substat: pulls longest_uptime_d from /records.json
-    (function loadBestUptime() {
+    // Uptime "Best" substat: pulls longest_uptime_d from /records.json.
+    // Deferred ~1200ms so it doesn't stack onto the earlier on-load fetches.
+    //
+    // The record value is fractional days. Format <1.0 as hours so a fresh
+    // device that hasn't accumulated a full day yet still has a populated
+    // substat. >=1.0 rounds to whole days. Old records stored as ints
+    // ("longest_uptime_d": {"value": 5, ...}) round-trip cleanly through
+    // parseFloat.
+    setTimeout(function loadBestUptime() {
         fetch('/records.json').then(function(r) {
             return r.ok ? r.json() : null;
         }).then(function(data) {
@@ -1539,11 +1656,17 @@
             var el = document.getElementById('uptime_sub');
             if (!el) return;
             var best = data.longest_uptime_d;
-            if (best && best.set && Number.isFinite(best.value) && best.value > 0) {
-                el.textContent = 'Best: ' + Math.round(best.value) + 'd';
+            if (!best || !Number.isFinite(best.value) || best.value <= 0) return;
+            var label;
+            if (best.value >= 1) {
+                label = Math.round(best.value) + 'd';
+            } else {
+                var hours = Math.max(1, Math.round(best.value * 24));
+                label = hours + 'h';
             }
+            el.textContent = 'Best: ' + label;
         }).catch(function() {});
-    })();
+    }, 1200);
 
     // ISO 3166-1 numeric to alpha-2 lookup (common ones)
     var numToAlpha2 = {"004":"AF","008":"AL","012":"DZ","020":"AD","024":"AO","028":"AG","032":"AR","036":"AU","040":"AT","044":"BS","048":"BH","050":"BD","051":"AM","056":"BE","060":"BM","064":"BT","068":"BO","070":"BA","072":"BW","076":"BR","084":"BZ","090":"SB","096":"BN","100":"BG","104":"MM","108":"BI","112":"BY","116":"KH","120":"CM","124":"CA","140":"CF","144":"LK","148":"TD","152":"CL","156":"CN","158":"TW","170":"CO","174":"KM","178":"CG","180":"CD","188":"CR","191":"HR","192":"CU","196":"CY","203":"CZ","204":"BJ","208":"DK","214":"DO","218":"EC","818":"EG","222":"SV","226":"GQ","231":"ET","232":"ER","233":"EE","234":"FO","242":"FJ","246":"FI","250":"FR","258":"PF","262":"DJ","266":"GA","268":"GE","270":"GM","275":"PS","276":"DE","288":"GH","300":"GR","308":"GD","316":"GU","320":"GT","324":"GN","328":"GY","332":"HT","340":"HN","344":"HK","348":"HU","352":"IS","356":"IN","360":"ID","364":"IR","368":"IQ","372":"IE","376":"IL","380":"IT","384":"CI","388":"JM","392":"JP","398":"KZ","400":"JO","404":"KE","408":"KP","410":"KR","414":"KW","417":"KG","418":"LA","422":"LB","426":"LS","428":"LV","430":"LR","434":"LY","438":"LI","440":"LT","442":"LU","450":"MG","454":"MW","458":"MY","462":"MV","466":"ML","470":"MT","478":"MR","480":"MU","484":"MX","492":"MC","496":"MN","498":"MD","499":"ME","504":"MA","508":"MZ","512":"OM","516":"NA","520":"NR","524":"NP","528":"NL","540":"NC","554":"NZ","558":"NI","562":"NE","566":"NG","578":"NO","586":"PK","591":"PA","598":"PG","600":"PY","604":"PE","608":"PH","616":"PL","620":"PT","630":"PR","634":"QA","642":"RO","643":"RU","646":"RW","682":"SA","686":"SN","688":"RS","694":"SL","702":"SG","703":"SK","704":"VN","705":"SI","706":"SO","710":"ZA","716":"ZW","724":"ES","728":"SS","729":"SD","740":"SR","748":"SZ","752":"SE","756":"CH","760":"SY","762":"TJ","764":"TH","768":"TG","776":"TO","780":"TT","784":"AE","788":"TN","792":"TR","795":"TM","800":"UG","804":"UA","807":"MK","826":"GB","834":"TZ","840":"US","854":"BF","858":"UY","860":"UZ","862":"VE","887":"YE","894":"ZM"};
@@ -1634,7 +1757,15 @@
     function loadCountries() {
         var xhr = new XMLHttpRequest();
         xhr.onreadystatechange = function() {
-            if (this.readyState !== 4 || this.status !== 200) return;
+            if (this.readyState !== 4) return;
+            var loading = document.getElementById('countries-loading');
+            var wrap    = document.getElementById('countries-map-wrap');
+            if (this.status !== 200) {
+                if (loading) loading.textContent = 'Visitor map unavailable.';
+                return;
+            }
+            if (loading) loading.style.display = 'none';
+            if (wrap) wrap.hidden = false;
             try {
                 var data = JSON.parse(this.responseText);
                 var entries = [];
@@ -1689,7 +1820,7 @@
     function loadCountriesIfVisible() {
         if (document.visibilityState === 'visible' && worldData) loadCountries();
     }
-    setInterval(loadCountriesIfVisible, 300000);
+    var countriesTimer = setInterval(loadCountriesIfVisible, 300000);
     document.addEventListener('visibilitychange', loadCountriesIfVisible);
 
     /* chart */
@@ -1847,18 +1978,39 @@
         });
     }
 
-    function showChartEmpty(msg) {
+    // Either a plain message or a message + clickable retry. When `retryFn`
+    // is provided, a "Try again" link is appended; clicking re-runs the
+    // load without a full page refresh.
+    function showChartEmpty(msg, retryFn) {
         var empty  = document.getElementById('chart-empty');
         var canvas = document.getElementById('chart');
         if (chart) { chart.destroy(); chart = null; }
         canvas.style.display = 'none';
-        empty.textContent = msg;
+        empty.textContent = '';
+        empty.appendChild(document.createTextNode(msg));
+        if (retryFn) {
+            empty.appendChild(document.createTextNode(' '));
+            var a = document.createElement('a');
+            a.href = '#';
+            a.textContent = 'Try again';
+            a.style.textDecoration = 'underline';
+            a.style.textUnderlineOffset = '3px';
+            a.style.color = 'var(--ink)';
+            a.addEventListener('click', function(e) {
+                e.preventDefault();
+                retryFn();
+            });
+            empty.appendChild(a);
+        }
         empty.style.display = 'flex';
     }
 
-    function loadLogForDate(date) {
+    function loadLogForDate(date, attempt) {
         // date = "YYYY-MM-DD" or null for today
+        // attempt: 0 = initial, 1 = first auto-retry (2s), 2 = second auto-retry (5s)
+        attempt = attempt || 0;
         var url = date ? '/logs/' + date : '/logs/today';
+        var retryFn = function() { loadLogForDate(date, 0); };
         var xhr = new XMLHttpRequest();
         xhr.onreadystatechange = function() {
             if (this.readyState !== 4) return;
@@ -1869,9 +2021,29 @@
                 } else {
                     renderChart();
                 }
+            } else if ((this.status === 502 || this.status === 504) && attempt < 2) {
+                // 502: Worker couldn't reach the ESP at the moment of relay
+                //      (transient WS state, brief loopback race).
+                // 504: Worker timed out waiting for the relay response.
+                // Two auto-retries with backoff: 2s catches a brief WS
+                // reconnect; 5s catches a longer recovery (Worker DO
+                // cold-start, sustained reconnect cascade). After both
+                // retries fail, show the manual retry link.
+                var waitMs = attempt === 0 ? 2000 : 5000;
+                showChartEmpty('Loading...');
+                setTimeout(function() { loadLogForDate(date, attempt + 1); }, waitMs);
+            } else if (this.status === 502 || this.status === 504) {
+                showChartEmpty('Device unreachable.', retryFn);
+            } else if (this.status === 503) {
+                showChartEmpty('Device busy.', retryFn);
+            } else if (this.status === 404) {
+                showChartEmpty('No data logged yet for this day.');
             } else {
-                showChartEmpty('No log available for this day.');
+                showChartEmpty("Couldn't load chart.", retryFn);
             }
+        };
+        xhr.onerror = function() {
+            showChartEmpty('Network error.', retryFn);
         };
         xhr.open('GET', url, true);
         xhr.send();
@@ -1931,14 +2103,98 @@
         if (logRows.length) renderChart();
     });
 
-    // load available dates then today's log
-    loadAvailableDates();
-    loadLogForDate(null);
-    // Refresh today's data every 5 minutes (only if viewing today)
-    setInterval(function() {
+    // Chart loading is fully lazy. kickOffChartLoad fires when the chart
+    // section first scrolls into view (or after a 4s safety fallback for
+    // visitors who never scroll but tab away + back). Bounce visitors who
+    // never reach the chart skip the /logs + /logs/today fetches entirely,
+    // which is the biggest cascade mitigation on first-paint LAN loads.
+    var chartLoadStarted = false;
+    function kickOffChartLoad() {
+        if (chartLoadStarted) return;
+        chartLoadStarted = true;
+        // Today's data first so the chart populates as soon as possible.
+        // The dates-list fetch is staggered by 300ms so the two requests
+        // don't race for ESP's loopback. Firing them simultaneously caused
+        // the second-processed request to hit a transient loopback-connect
+        // failure on the device, returning 502 from the Worker. Sequential
+        // ordering eliminates the race entirely. Total user-visible delay
+        // for the dates list is unchanged (it's only used for navigation).
+        loadLogForDate(null);
+        setTimeout(loadAvailableDates, 300);
+    }
+    // Refresh today's data every 5 minutes (only if viewing today).
+    // Named function so the visibilitychange handler can re-arm the timer
+    // after the tab returns to foreground.
+    function chartRefreshTick() {
+        if (!chartLoadStarted) return;
         var isToday = (dateIndex === availableDates.length - 1 || availableDates.length === 0);
         if (isToday) loadLogForDate(null);
-    }, 300000);
+    }
+    var chartTimer = setInterval(chartRefreshTick, 300000);
+
+    // Lazy-load below-the-fold sections. IntersectionObserver fires each
+    // kickoff exactly once when its target is about to scroll into view
+    // (rootMargin pre-loads slightly early so the section doesn't show
+    // empty for a blink). 4s safety fallback covers weird cases like very
+    // short viewports or observer bugs. Better to over-fetch than to
+    // leave sections permanently empty.
+    // Photos use native browser lazy-loading via loading="lazy" on the
+    // <img> tags. Browser handles the deferral; no JS loader needed.
+    // The video has preload="none" so the mp4 is only fetched on user
+    // click, not on page load.
+
+    (function setupLazySections() {
+        var countriesEl = document.getElementById('countries-section');
+        var chartEl     = document.getElementById('chart-section');
+        if (typeof IntersectionObserver === 'function' && countriesEl && chartEl) {
+            var io = new IntersectionObserver(function(entries) {
+                entries.forEach(function(entry) {
+                    if (!entry.isIntersecting) return;
+                    if (entry.target === countriesEl) { kickOffCountriesLoad(); io.unobserve(countriesEl); }
+                    if (entry.target === chartEl)     { kickOffChartLoad();     io.unobserve(chartEl); }
+                });
+            }, { rootMargin: '200px 0px' });
+            io.observe(countriesEl);
+            io.observe(chartEl);
+        } else {
+            // No IO support: defer but fire on a timer so the page still works.
+            setTimeout(kickOffCountriesLoad, 1500);
+            setTimeout(kickOffChartLoad, 1500);
+        }
+        // Safety net: if the observer never fires and the user lingers past
+        // 8s without scrolling, trigger kickoffs so sections eventually populate.
+        setTimeout(function() {
+            kickOffCountriesLoad();
+            kickOffChartLoad();
+        }, 8000);
+    })();
+
+    // Blank-page auto-recovery. If the HTML parsed enough to run JS but the
+    // /stats XHR never populated the hero (WS cascade mid-stream, relay
+    // timeout, transient Worker issue), the page shows a skeleton with no
+    // data, and visitors perceive this as "blank" and usually refresh manually.
+    // Automate one reload so most users don't notice. sessionStorage guards
+    // against infinite reload loops if the issue is persistent (after one
+    // auto-reload attempt, we stop and let the user fix things themselves).
+    setTimeout(function() {
+        var uptimeEl = document.getElementById('uptime');
+        if (!uptimeEl) return;  // no element = probably older HTML version
+        var hasData = uptimeEl.textContent && uptimeEl.textContent.trim().length > 0;
+        // Don't reload if stats EVER landed in this page lifetime, even if the
+        // DOM was later cleared. Prevents the LAN-cascade scenario where a
+        // slow second poll resets the field and the watchdog amplifies the
+        // load with a refresh.
+        if (hasData || statsEverSucceeded) {
+            try { sessionStorage.removeItem('helloesp_autoReload'); } catch (e) {}
+            return;
+        }
+        var alreadyReloaded;
+        try { alreadyReloaded = sessionStorage.getItem('helloesp_autoReload'); }
+        catch (e) { alreadyReloaded = null; }
+        if (alreadyReloaded) return;  // one attempt per session, no loops
+        try { sessionStorage.setItem('helloesp_autoReload', '1'); } catch (e) {}
+        location.reload();
+    }, 6000);
 </script>
 
 </body>

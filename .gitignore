@@ -3,3 +3,8 @@
 .cache
 compile_commands.json
 data/config.txt
+data/logs/
+data/stats/
+data/records/
+*.bak
+*.tmp

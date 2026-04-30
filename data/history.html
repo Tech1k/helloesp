@@ -4,13 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>History / HelloESP</title>
-    <meta name="description" content="Weekly, monthly, and yearly stats archives from HelloESP.">
+    <meta name="description" content="Weekly, monthly, and yearly stats archives from HelloESP: visitor charts, sensor extremes, and a Hall of Fame tracking the chip's lifetime records.">
     <meta name="author" content="Tech1k">
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#2686e6">
     <meta property="og:title" content="History / HelloESP">
     <meta property="og:site_name" content="HelloESP">
-    <meta property="og:description" content="Weekly, monthly, and yearly stats archives from HelloESP.">
+    <meta property="og:description" content="Weekly, monthly, and yearly stats archives from HelloESP: visitor charts, sensor extremes, and a Hall of Fame tracking the chip's lifetime records.">
     <meta property="og:image" content="https://helloesp.com/og-banner.jpg">
     <meta property="og:image:type" content="image/jpeg">
     <meta property="og:image:width" content="1200">
@@ -20,7 +20,7 @@
     <meta property="og:url" content="https://helloesp.com/history">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="History / HelloESP">
-    <meta name="twitter:description" content="Weekly, monthly, and yearly stats archives from HelloESP.">
+    <meta name="twitter:description" content="Weekly, monthly, and yearly stats archives from HelloESP: visitor charts, sensor extremes, and a Hall of Fame tracking the chip's lifetime records.">
     <meta name="twitter:image" content="https://helloesp.com/og-banner.jpg">
     <meta name="twitter:image:alt" content="HelloESP: a website running on an ESP32">
     <link rel="canonical" href="https://helloesp.com/history">
@@ -126,25 +126,54 @@
 
         .period {
             border-top: 1px solid var(--faint);
-            padding: 20px 0;
         }
         .period:last-child { border-bottom: 1px solid var(--faint); }
 
-        .period.current { background: rgba(38, 134, 230, 0.04); border-left: 3px solid #2686e6; padding-left: 14px; }
+        .period.current {
+            background: rgba(38, 134, 230, 0.04);
+            border-left: 3px solid #2686e6;
+            padding-left: 11px;
+        }
 
         .period-head {
             display: flex;
             justify-content: space-between;
-            align-items: baseline;
-            margin-bottom: 12px;
+            align-items: center;
+            gap: 12px;
+            padding: 14px 0;
+            cursor: pointer;
+            user-select: none;
             flex-wrap: wrap;
-            gap: 8px;
         }
+        .period.current .period-head { cursor: default; }
+        .period-head:hover .period-name { color: var(--ink); }
 
         .period-name {
-            font-size: 18px;
-            font-weight: 600;
+            font-size: 16px;
+            font-weight: 500;
+            flex: 1 1 auto;
         }
+        .period.current .period-name { font-size: 18px; font-weight: 600; }
+
+        .period-name .chevron {
+            display: inline-block;
+            margin-right: 8px;
+            font-size: 9px;
+            color: var(--mid);
+            transition: transform 0.15s;
+        }
+        .period-name .chevron::before { content: '\25B6'; }
+        .period.open .chevron { transform: rotate(90deg); }
+        .period.current .chevron { display: none; }
+
+        .period-meta {
+            display: flex;
+            gap: 14px;
+            align-items: center;
+            font-size: 12px;
+            color: var(--mid);
+        }
+        .period-headline { white-space: nowrap; }
 
         .period-badge {
             font-size: 10px;
@@ -154,11 +183,75 @@
         }
 
         .period-grid {
-            display: grid;
+            display: none;
             grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
             gap: 14px 20px;
             font-size: 12px;
+            padding: 0 0 18px;
         }
+        .period.open .period-grid,
+        .period.current .period-grid { display: grid; }
+
+        .period-empty {
+            display: none;
+            font-size: 13px;
+            color: var(--mid);
+            padding: 0 0 18px;
+        }
+        .period.open .period-empty,
+        .period.current .period-empty { display: block; }
+
+        .period-yoy {
+            display: none;
+            font-size: 10px;
+            color: var(--mid);
+            letter-spacing: 0.05em;
+            padding: 0 0 8px;
+        }
+        .period.open .period-yoy,
+        .period.current .period-yoy { display: block; }
+
+        .year-group { margin: 0; }
+        .year-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            padding: 14px 0;
+            cursor: pointer;
+            user-select: none;
+            border-top: 1px solid var(--faint);
+        }
+        .group .year-group:first-of-type .year-head { border-top: none; }
+        .year-head:hover .year-name { color: var(--ink); }
+
+        .year-name {
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .year-chevron {
+            display: inline-block;
+            margin-right: 8px;
+            font-size: 9px;
+            color: var(--mid);
+            transition: transform 0.15s;
+        }
+        .year-chevron::before { content: '\25B6'; }
+        .year-group.open .year-chevron { transform: rotate(90deg); }
+
+        .year-count {
+            font-size: 11px;
+            color: var(--mid);
+            font-weight: 400;
+        }
+
+        .year-content {
+            display: none;
+            padding-left: 14px;
+            border-left: 2px solid var(--faint);
+            margin: 4px 0 12px 4px;
+        }
+        .year-group.open .year-content { display: block; }
+        .year-content .period:last-child { border-bottom: none; }
 
         .cell-label {
             color: var(--mid);
@@ -214,8 +307,9 @@
 
         .footer-links {
             display: flex;
-            gap: 20px;
+            gap: 15px;
             list-style: none;
+            flex-wrap: wrap;
         }
 
         .served {
@@ -230,7 +324,7 @@
             :root {
                 --bg: #111110;
                 --ink: #e8e6e1;
-                --mid: #666;
+                --mid: #8a8a87;
                 --faint: #2a2a28;
             }
             .period.current { background: rgba(38, 134, 230, 0.08); }
@@ -245,6 +339,7 @@
         <ul class="top-links">
             <li><a href="/guestbook">Guestbook</a></li>
             <li><a href="/console">Console</a></li>
+            <li><a href="/about">About</a></li>
         </ul>
     </nav>
 
@@ -282,6 +377,7 @@
         <li><a href="/"><i class="fa-solid fa-house"></i> Home</a></li>
         <li><a href="/guestbook"><i class="fa-solid fa-pen"></i> Guestbook</a></li>
         <li><a href="/console"><i class="fa-solid fa-terminal"></i> Console</a></li>
+        <li><a href="/about"><i class="fa-solid fa-circle-info"></i> About</a></li>
         <li><a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener"><i class="fa-brands fa-github"></i> GitHub</a></li>
     </ul>
 </footer>
@@ -309,26 +405,52 @@
     function prettyWeek(label) {
         var parts = label.split('-W');
         if (parts.length !== 2) return label;
-        return 'Week ' + parseInt(parts[1], 10) + ', ' + parts[0];
+        var year = parseInt(parts[0], 10);
+        var week = parseInt(parts[1], 10);
+        if (!year || !week) return label;
+        // ISO 8601: Jan 4 is always in week 1 of its ISO year. Find the
+        // Monday of week 1, then add (week-1) weeks for the target Monday.
+        var jan4 = new Date(year, 0, 4);
+        var jan4Iso = jan4.getDay() === 0 ? 7 : jan4.getDay();
+        var week1Mon = new Date(year, 0, 4 - (jan4Iso - 1));
+        var mon = new Date(week1Mon.getTime() + (week - 1) * 7 * 86400000);
+        var sun = new Date(mon.getTime() + 6 * 86400000);
+        if (mon.getMonth() === sun.getMonth() && mon.getFullYear() === sun.getFullYear()) {
+            return mon.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+                + '–' + sun.getDate() + ', ' + sun.getFullYear();
+        }
+        return mon.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+            + ' – '
+            + sun.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+            + ', ' + sun.getFullYear();
     }
 
     function renderCard(label, data, isCurrent, kind) {
         var pretty = kind === 'month' ? prettyMonth(label) : (kind === 'week' ? prettyWeek(label) : label);
         var v = (data && data.visitors) || 0;
         var html = '<div class="period' + (isCurrent ? ' current' : '') + '" data-label="' + esc(label) + '" data-visitors="' + v + '">';
-        html += '<div class="period-head">';
-        html += '<div class="period-name">' + esc(pretty) + '</div>';
-        if (isCurrent) html += '<div class="period-badge">in progress</div>';
+        html += '<div class="period-head"' + (isCurrent ? '' : ' role="button" tabindex="0" aria-expanded="false"') + ' onclick="togglePeriod(this)">';
+        html += '<div class="period-name">';
+        if (!isCurrent) html += '<span class="chevron"></span>';
+        html += esc(pretty);
+        html += '</div>';
+        html += '<div class="period-meta">';
+        if (data && Number.isFinite(data.visitors) && data.visitors > 0) {
+            html += '<span class="period-headline">' + fmtInt(data.visitors) +
+                    ' visitor' + (data.visitors === 1 ? '' : 's') + '</span>';
+        }
+        if (isCurrent) html += '<span class="period-badge">in progress</span>';
+        html += '</div>';
         html += '</div>';
 
         if (!data) {
-            html += '<div class="empty">No data yet for this period.</div></div>';
+            html += '<div class="period-empty">No data yet for this period.</div></div>';
             return html;
         }
         var hasSamples = Number.isFinite(data.samples) && data.samples > 0;
         var hasVisitors = Number.isFinite(data.visitors) && data.visitors > 0;
         if (!hasSamples && !hasVisitors) {
-            html += '<div class="empty">No data yet for this period.</div></div>';
+            html += '<div class="period-empty">No data yet for this period.</div></div>';
             return html;
         }
         // In-progress period with visitor activity but no sensor samples yet, show a minimal card instead of a mostly-zero grid.
@@ -339,7 +461,7 @@
                 html += '<div><div class="cell-label">Guestbook</div><div class="cell-value">' + fmtInt(data.guestbook) + '</div><div class="cell-sub">entries submitted</div></div>';
             }
             html += '</div>';
-            html += '<div class="empty" style="padding-top:8px;">Sensor averages fill in as samples collect.</div></div>';
+            html += '<div class="period-empty" style="padding-top:0;">Sensor averages fill in as samples collect.</div></div>';
             return html;
         }
 
@@ -375,43 +497,202 @@
         return html;
     }
 
-    function loadSection(el, archives, currentData, kind, dir) {
-        var html = '';
-        if (currentData && currentData.label) {
-            html += renderCard(currentData.label, currentData, true, kind);
-        }
-        var sorted = (archives || []).slice().sort().reverse();
-        var toFetch = sorted.filter(function(l) {
-            return !(currentData && currentData.label === l);
-        });
-        var promises = toFetch.map(function(label) {
+    function placeholderId(kind, label) {
+        return 'ph-' + kind + '-' + label.replace(/[^a-zA-Z0-9-]/g, '_');
+    }
+
+    function placeholderCard(label, kind) {
+        var pretty = kind === 'month' ? prettyMonth(label)
+                  : kind === 'week'  ? prettyWeek(label)
+                  : label;
+        var html = '<div class="period" id="' + placeholderId(kind, label) +
+                   '" data-label="' + esc(label) + '" data-loaded="false">';
+        html += '<div class="period-head" role="button" tabindex="0" aria-expanded="false" onclick="togglePeriod(this)">';
+        html += '<div class="period-name"><span class="chevron"></span>' + esc(pretty) + '</div>';
+        html += '<div class="period-meta"><span class="period-headline" style="opacity:0.5">loading...</span></div>';
+        html += '</div></div>';
+        return html;
+    }
+
+    function loadYearArchives(kind, dir, labels) {
+        var promises = (labels || []).map(function(label) {
+            var phId = placeholderId(kind, label);
+            var ph = document.getElementById(phId);
+            // Skip if placeholder is missing (already replaced) or fetch
+            // already in flight (data-loaded='pending'). Prevents double-
+            // fetching when a user collapses+re-expands a year mid-load.
+            if (!ph || ph.dataset.loaded !== 'false') return Promise.resolve();
+            ph.dataset.loaded = 'pending';
             return fetch('/stats/' + dir + '/' + label).then(function(r) {
                 return r.ok ? r.json() : null;
-            }).catch(function() { return null; });
-        });
-
-        Promise.all(promises).then(function(results) {
-            results.forEach(function(data, i) {
-                if (data) html += renderCard(toFetch[i], data, false, kind);
+            }).catch(function() { return null; })
+            .then(function(data) {
+                var phNow = document.getElementById(phId);
+                if (!phNow) return;
+                if (data) {
+                    phNow.outerHTML = renderCard(label, data, false, kind);
+                } else {
+                    // Replace loading placeholder with a failed-load card.
+                    // Includes a "Try again" link that re-fetches just this
+                    // archive without a full page reload, matching the
+                    // pattern showChartEmpty uses on the homepage.
+                    var pretty = kind === 'month' ? prettyMonth(label)
+                              : kind === 'week'  ? prettyWeek(label)
+                              : label;
+                    phNow.outerHTML = '<div class="period" data-label="' + esc(label) + '">' +
+                        '<div class="period-head"><div class="period-name">' + esc(pretty) +
+                        '</div><div class="period-meta">' +
+                        '<span class="period-headline" style="color:#b02030;">failed to load</span> ' +
+                        '<a href="#" onclick="retryPeriod(event, this); return false;" ' +
+                        'data-retry-label="' + esc(label) + '" data-retry-kind="' + esc(kind) +
+                        '" data-retry-dir="' + esc(dir) + '" ' +
+                        'style="color:var(--ink);text-decoration:underline;text-underline-offset:3px;font-size:12px;">Try again</a>' +
+                        '</div></div></div>';
+                }
             });
-            if (!html) html = '<div class="empty">No data yet.</div>';
-            el.innerHTML = html;
         });
+        return Promise.all(promises);
+    }
+
+    function loadSection(el, archives, currentData, kind, dir) {
+        // Yearly section: flat list (each row IS a year). No year-grouping
+        // accordion needed since there'll only ever be a handful of years.
+        if (kind === 'year') {
+            var sortedY = (archives || []).slice().sort().reverse();
+            var htmlY = '';
+            if (currentData && currentData.label) {
+                htmlY += renderCard(currentData.label, currentData, true, kind);
+            }
+            var toFetchY = [];
+            sortedY.forEach(function(label) {
+                if (currentData && currentData.label === label) return;
+                htmlY += placeholderCard(label, kind);
+                toFetchY.push(label);
+            });
+            if (!htmlY) htmlY = '<div class="empty">No data yet.</div>';
+            el.innerHTML = htmlY;
+            return loadYearArchives(kind, dir, toFetchY);
+        }
+
+        // Weekly / monthly: group by year. Current year auto-expanded;
+        // prior years collapsed and lazy-loaded on click.
+        var byYear = {};
+        var sorted = (archives || []).slice().sort().reverse();
+        sorted.forEach(function(label) {
+            if (currentData && currentData.label === label) return;
+            var year = label.substring(0, 4);
+            if (!byYear[year]) byYear[year] = [];
+            byYear[year].push(label);
+        });
+        var currentYearStr = (currentData && currentData.label)
+            ? currentData.label.substring(0, 4) : null;
+        var years = Object.keys(byYear);
+        if (currentYearStr && years.indexOf(currentYearStr) < 0) years.push(currentYearStr);
+        years.sort().reverse();
+
+        if (years.length === 0) {
+            el.innerHTML = '<div class="empty">No data yet.</div>';
+            return Promise.resolve();
+        }
+
+        var html = '';
+        years.forEach(function(year) {
+            var isCurrentYear = (year === currentYearStr);
+            var labels = byYear[year] || [];
+            var totalForYear = labels.length + (isCurrentYear && currentData && currentData.label ? 1 : 0);
+            var contentId = 'yc-' + kind + '-' + year;
+            var groupId = 'yg-' + kind + '-' + year;
+
+            html += '<div class="year-group' + (isCurrentYear ? ' open' : '') +
+                    '" id="' + groupId + '" data-kind="' + esc(kind) +
+                    '" data-dir="' + esc(dir) + '" data-year="' + esc(year) + '">';
+            html += '<div class="year-head" role="button" tabindex="0" aria-expanded="' +
+                    (isCurrentYear ? 'true' : 'false') + '" aria-controls="' + contentId +
+                    '" onclick="toggleYearGroup(this)">';
+            html += '<span class="year-name"><span class="year-chevron"></span>' + esc(year) + '</span>';
+            html += '<span class="year-count">' + totalForYear + ' ' + kind +
+                    (totalForYear === 1 ? '' : 's') + ' tracked</span>';
+            html += '</div>';
+            html += '<div class="year-content" id="' + contentId + '">';
+            if (isCurrentYear && currentData && currentData.label) {
+                html += renderCard(currentData.label, currentData, true, kind);
+            }
+            labels.forEach(function(label) {
+                html += placeholderCard(label, kind);
+            });
+            html += '</div></div>';
+        });
+        el.innerHTML = html;
+
+        // Eagerly load the current year's archives (year is open by default).
+        // Other years lazy-load on first expand via toggleYearGroup.
+        if (currentYearStr && byYear[currentYearStr]) {
+            return loadYearArchives(kind, dir, byYear[currentYearStr]);
+        }
+        return Promise.resolve();
+    }
+
+    function togglePeriod(headEl) {
+        var period = headEl.parentNode;
+        if (period.classList.contains('current')) return;
+        period.classList.toggle('open');
+        headEl.setAttribute('aria-expanded', period.classList.contains('open') ? 'true' : 'false');
+    }
+
+    function retryPeriod(e, link) {
+        e.preventDefault();
+        e.stopPropagation();  // don't let click bubble up to period-head's togglePeriod
+        var label = link.dataset.retryLabel;
+        var kind = link.dataset.retryKind;
+        var dir = link.dataset.retryDir;
+        if (!label || !kind || !dir) return;
+        var card = link.closest('.period');
+        if (!card) return;
+        // Swap the failed card back to a loading placeholder, then refetch.
+        card.outerHTML = placeholderCard(label, kind);
+        loadYearArchives(kind, dir, [label]);
+    }
+
+    function toggleYearGroup(headEl) {
+        var group = headEl.parentNode;
+        var wasOpen = group.classList.contains('open');
+        group.classList.toggle('open');
+        headEl.setAttribute('aria-expanded', wasOpen ? 'false' : 'true');
+        if (!wasOpen) {
+            // Lazy-load any unloaded archives in this year.
+            var contentEl = document.getElementById('yc-' + group.dataset.kind + '-' + group.dataset.year);
+            if (!contentEl) return;
+            var labels = [];
+            contentEl.querySelectorAll('.period[data-loaded="false"]').forEach(function(el) {
+                labels.push(el.dataset.label);
+            });
+            if (labels.length > 0) {
+                var p = loadYearArchives(group.dataset.kind, group.dataset.dir, labels);
+                // Run YoY annotation on this year's monthly cards once they finish loading.
+                if (group.dataset.kind === 'month' && p && p.then) {
+                    p.then(function() { annotateMonthlyYoY(contentEl); });
+                }
+            }
+        }
     }
 
     function formatRecordDate(s) {
         if (!s || s === 'unknown') return s || '';
-        var opts = { year: 'numeric', month: 'short', day: 'numeric' };
-        // Date-only: "YYYY-MM-DD". Parse as local to avoid the UTC-midnight prev-day shift.
+        // Day-level records (most_visitors_day) store YYYY-MM-DD. Parse as
+        // local to avoid the UTC-midnight prev-day shift on negative offsets.
         if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
             var p = s.split('-');
             var d = new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10));
-            return d.toLocaleDateString(undefined, opts);
+            return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
         }
-        // Full ISO timestamp. Drop the hour/minute so every record formats the same way.
+        // Moment-level records (highest CO2, hottest/coldest, longest uptime)
+        // store full ISO. Show local time too for readability.
         var dt = new Date(s);
         if (isNaN(dt.getTime())) return s;
-        return dt.toLocaleDateString(undefined, opts);
+        return dt.toLocaleString(undefined, {
+            year: 'numeric', month: 'short', day: 'numeric',
+            hour: 'numeric', minute: '2-digit'
+        });
     }
 
     function loadRecords() {
@@ -423,11 +704,21 @@
                 var v = isInt ? String(rec.value) : (+rec.value).toFixed(1);
                 rows.push({ label: label, value: v + suffix, at: rec.at });
             }
+            // Special-case longest_uptime_d: stored as fractional days (e.g. 0.25 for 6h).
+            // The generic row() pipeline would render that as "0.25-day streak".
+            // Mirror the homepage's day/hour formatting: >=1 \u2192 "Xd", <1 \u2192 "Xh".
+            function uptimeRow(label, rec) {
+                if (!rec) return;
+                var d = +rec.value;
+                if (!isFinite(d) || d <= 0) return;
+                var v = d >= 1 ? Math.floor(d) + 'd' : Math.round(d * 24) + 'h';
+                rows.push({ label: label, value: v, at: rec.at });
+            }
             row('Highest eCO\u2082',     data.highest_co2,       ' ppm',      true);
             row('Hottest recorded',      data.highest_temp_f,    '\u00b0F',   false);
             row('Coldest recorded',      data.lowest_temp_f,     '\u00b0F',   false);
             row('Busiest day',           data.most_visitors_day, ' visitors', true);
-            row('Longest uptime',        data.longest_uptime_d,  '-day streak', true);
+            uptimeRow('Longest uptime',  data.longest_uptime_d);
             if (rows.length === 0) return;
             var html = '<div style="border-top:1px solid var(--faint);">';
             rows.forEach(function(r) {
@@ -445,32 +736,48 @@
         }).catch(function() {});
     }
 
-    function annotateMonthlyYoY(el, currentYearMonth) {
-        // for each monthly card already rendered, check if its label has a YoY predecessor and compute delta visitors
+    // Cached responses for /stats/monthly/{prevYear} keyed by yoyLabel, so
+    // re-expanding a year doesn't re-fetch and a shared month across years
+    // (e.g. 2025-03 viewed as predecessor for 2026-03) only costs one trip.
+    var yoyCache = {};
+    function annotateMonthlyYoY(el) {
         var cards = el.querySelectorAll('.period');
         cards.forEach(function(card) {
-            var nameEl = card.querySelector('.period-name');
-            if (!nameEl) return;
-            // name is rendered via prettyMonth, so reverse lookup from data-label
+            // Skip cards already annotated (re-runs after lazy-load).
+            if (card.querySelector('.period-yoy')) return;
             var label = card.getAttribute('data-label');
             if (!label) return;
             var parts = label.split('-');
             if (parts.length !== 2) return;
+            var currentVisitors = parseInt(card.getAttribute('data-visitors') || '0', 10);
+            if (!currentVisitors) return;
             var yoyLabel = (parseInt(parts[0], 10) - 1) + '-' + parts[1];
-            fetch('/stats/monthly/' + yoyLabel).then(function(r) {
-                return r.ok ? r.json() : null;
-            }).then(function(past) {
-                if (!past || !past.visitors) return;
-                var currentVisitors = parseInt(card.getAttribute('data-visitors') || '0', 10);
-                if (!currentVisitors) return;
+            function applyAnnotation(past) {
+                // Skip if prior year's sample is tiny: single-digit bases
+                // produce meaningless "+99900%" numbers from project infancy.
+                if (!past || !past.visitors || past.visitors < 5) return;
                 var pct = ((currentVisitors - past.visitors) / past.visitors) * 100;
                 var arrow = pct >= 0 ? '\u2197' : '\u2198';
                 var sign = pct >= 0 ? '+' : '';
+                // Cap at +999% / -99% so the comparison line stays visually
+                // proportionate to other cards even on outlier months.
+                var pctCapped = Math.max(-99, Math.min(999, Math.round(pct)));
+                var prefix = (pctCapped !== Math.round(pct)) ? '>' : '';
                 var note = document.createElement('div');
-                note.style.cssText = 'font-size:10px;color:var(--mid);margin-top:6px;letter-spacing:0.05em;';
-                note.textContent = arrow + ' ' + sign + Math.round(pct) + '% visitors vs ' + prettyMonth(yoyLabel);
+                note.className = 'period-yoy';
+                note.textContent = arrow + ' ' + sign + prefix + pctCapped + '% visitors vs ' + prettyMonth(yoyLabel);
                 var head = card.querySelector('.period-head');
                 if (head) head.parentNode.insertBefore(note, head.nextSibling);
+            }
+            if (Object.prototype.hasOwnProperty.call(yoyCache, yoyLabel)) {
+                applyAnnotation(yoyCache[yoyLabel]);
+                return;
+            }
+            fetch('/stats/monthly/' + yoyLabel).then(function(r) {
+                return r.ok ? r.json() : null;
+            }).then(function(past) {
+                yoyCache[yoyLabel] = past;
+                applyAnnotation(past);
             }).catch(function() {});
         });
     }
@@ -484,11 +791,16 @@
 
         fetch('/history.json').then(function(r) { return r.json(); }).then(function(index) {
             return fetch('/stats/current').then(function(r) { return r.json(); }).then(function(current) {
-                loadSection(weeklyEl,  index.weekly,  current.week,  'week',  'weekly');
-                loadSection(monthlyEl, index.monthly, current.month, 'month', 'monthly');
-                loadSection(yearlyEl,  index.yearly,  current.year,  'year',  'yearly');
-                // YoY comparison fires once monthly cards are rendered
-                setTimeout(function() { annotateMonthlyYoY(monthlyEl, current.month && current.month.label); }, 500);
+                loadSection(weeklyEl, index.weekly, current.week, 'week', 'weekly');
+                var monthlyLoad = loadSection(monthlyEl, index.monthly, current.month, 'month', 'monthly');
+                loadSection(yearlyEl, index.yearly, current.year, 'year', 'yearly');
+                // YoY: wait until current-year monthly archives finish loading
+                // before annotating so data-visitors is populated on each card.
+                if (monthlyLoad && monthlyLoad.then) {
+                    monthlyLoad.then(function() {
+                        annotateMonthlyYoY(monthlyEl);
+                    });
+                }
             });
         }).catch(function() {
             var msg = '<div class="empty">Failed to load history.</div>';
@@ -499,6 +811,18 @@
     }
 
     load();
+
+    // Keyboard accessibility for the accordion heads (period + year groups).
+    // Both render with role="button" tabindex="0", so Enter and Space should
+    // activate them the same way a click does.
+    document.addEventListener('keydown', function(e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        var head = e.target.closest('.period-head[role="button"], .year-head[role="button"]');
+        if (!head) return;
+        e.preventDefault();
+        if (head.classList.contains('period-head')) togglePeriod(head);
+        else toggleYearGroup(head);
+    });
 
     // smooth cross-page navigation when supported
     if (document.startViewTransition) {

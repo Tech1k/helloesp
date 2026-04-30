@@ -11,18 +11,22 @@
 #include "Adafruit_GFX.h"
 #include "Adafruit_SSD1306.h"
 #include "Adafruit_CCS811.h"
+#include "RTClib.h"
 #include "FS.h"
 #include "SD.h"
 #include "SPI.h"
 #include "time.h"
 #include "Update.h"
 #include "esp_system.h"
+#include "esp_task_wdt.h"
 #include "mbedtls/md.h"
+#include "mbedtls/sha256.h"
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
+#include <atomic>
 
 // Version
-#define FIRMWARE_VERSION "1.1"
+#define FIRMWARE_VERSION "1.2"
 
 // Pins
 #define SD_CS    5
@@ -41,8 +45,18 @@ char cfgWorkerUrl[128] = "";
 char cfgWorkerKey[128] = "";
 char cfgDeviceKey[128] = "";
 char cfgTimezone[48]   = "UTC0";
+// When true, all non-admin LAN hits to public pages (/, /guestbook, /console,
+// /history, /stats, etc.) are 302-redirected to https://<cfgWorkerUrl>/<path>
+// regardless of WS connection state. This routes LAN visitors through the
+// Worker's edge cache, eliminating the LAN-burst-vs-WS-write collision
+// pattern that triggers the cascade. /admin is always served direct on
+// LAN regardless. Edit /config.txt via the admin file editor to flip.
+//
+// Why "regardless of WS state": basing this on `wsConnected` would flip-
+// flop during transient WS reconnects, giving inconsistent UX. The
+// persisted flag stays the same across reconnects.
+bool cfgWorkerExclusive = false;
 
-const char* ntpServer          = "pool.ntp.org";
 const long  gmtOffset_sec      = 0;
 const int   daylightOffset_sec = 0;
 
@@ -54,6 +68,11 @@ unsigned long lastWsAttempt = 0;
 unsigned long lastWsPing = 0;
 unsigned long lastWsActivity = 0;
 int wsReconnectFails = 0;
+int wsFastFails = 0;  // connectWorker returns in <1s = socket-layer failure, not network
+// Escalation level for the current WS-down period. 0=just retrying, 1=did
+// WiFi.reconnect (refresh AP association). Reset to 0 on successful connect.
+int wsEscalationLevel = 0;
+unsigned long wsDisconnectedSince = 0;  // 120s safety net timer, reset on successful reconnect
 #define WS_RECONNECT_MS 5000
 #define WS_PING_MS 30000
 #define WS_TIMEOUT_MS 60000
@@ -127,6 +146,13 @@ String wsRead(WiFiClientSecure& client) {
               ((size_t)client.read() << 8) | client.read();
     }
 
+    // Sanity cap: a malformed or hostile peer (or MitM, since outbound WSS
+    // uses setInsecure()) could declare a multi-MB frame and trigger a
+    // String::reserve() that exhausts heap. The Worker only ever sends small
+    // metadata + base64-chunked bodies; 64 KB is well above the largest
+    // legitimate frame.
+    if (len > 65536) return "";
+
     uint8_t mask[4] = {0};
     if (masked) {
         for (int i = 0; i < 4; i++) mask[i] = client.read();
@@ -138,6 +164,12 @@ String wsRead(WiFiClientSecure& client) {
     for (size_t i = 0; i < len; i++) {
         while (!client.available()) {
             if (millis() - readStart > 5000 || !client.connected()) {
+                if (wsConnected) {
+                    Serial.printf("[ws] read aborted: %s at %u/%u (free=%u, largest=%u)\n",
+                                  (millis() - readStart > 5000) ? "timeout" : "client disconnected",
+                                  (unsigned)i, (unsigned)len,
+                                  (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+                }
                 wsConnected = false;
                 return "";
             }
@@ -151,7 +183,14 @@ String wsRead(WiFiClientSecure& client) {
     // check opcode
     uint8_t opcode = b0 & 0x0F;
     if (opcode == 0x08) {
-        // close frame
+        // close frame: CF proactively closing our WS. Often tells us
+        // something upstream is unhappy (keepalive miss, Worker restart,
+        // rate limit, etc). Logging lets us correlate with what the device
+        // was doing at the time.
+        if (wsConnected) {
+            Serial.printf("[ws] close frame from peer (free=%u, largest=%u)\n",
+                          (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+        }
         wsConnected = false;
         return "";
     }
@@ -175,40 +214,92 @@ String wsRead(WiFiClientSecure& client) {
 Adafruit_BME280 bme;
 Adafruit_CCS811 ccs;
 Adafruit_SSD1306 display = Adafruit_SSD1306(128, 64, &Wire);
+RTC_DS3231 rtc;
+bool rtcOk = false;
+bool rtcLostPowerAtBoot = false; // latched at boot; survives the rtc.adjust() that clears the live flag
+uint32_t sdSpeedHz = 0;          // captured at mount time; 0 if SD never mounted
+bool oledOk = false;             // captured at display.begin(); cleared on init failure
 
-uint16_t cached_co2 = 0;
-uint16_t cached_voc = 0;
-float    cached_temp_c       = 20.0f;
-float    cached_humidity     = 50.0f;
-float    cached_pressure_hpa = 1013.25f;
-float    cached_altitude_ft  = 0.0f;
-unsigned long lastBmeGoodAt = 0;
-unsigned long lastCcsGoodAt = 0;
+// All cached sensor values + degraded-at timestamps are written from the
+// main loop and read from HTTP handlers running on the AsyncTCP task
+// (separate FreeRTOS task, often pinned to the other core). Without
+// `volatile` the compiler may cache reads across loop iterations, making
+// HTTP responses go stale indefinitely. 32-bit aligned reads on Xtensa
+// are atomic at the instruction level so torn reads aren't a concern,
+// only re-reading from memory.
+volatile uint16_t cached_co2 = 0;
+volatile uint16_t cached_voc = 0;
+volatile float    cached_temp_c       = 20.0f;
+volatile float    cached_humidity     = 50.0f;
+volatile float    cached_pressure_hpa = 1013.25f;
+volatile float    cached_altitude_ft  = 0.0f;
+volatile unsigned long lastBmeGoodAt = 0;
+volatile unsigned long lastCcsGoodAt = 0;
 #define SENSOR_STALE_MS  120000UL
+
+// BME280 datasheet operating ranges. Out-of-spec reads almost always indicate
+// I2C bus glitches (corrupted register reads from bus contention or wire
+// disturbance), not real environmental extremes; the chip can't measure
+// outside these bounds. Reject the read so cached_* stays at its last good
+// value instead of latching garbage.
+#define BME_TEMP_MIN_C    -40.0f
+#define BME_TEMP_MAX_C     85.0f
+#define BME_HUM_MIN        0.0f
+#define BME_HUM_MAX        100.0f
+#define BME_PRESS_MIN_HPA  300.0f
+#define BME_PRESS_MAX_HPA  1100.0f
 
 static float safeBmeTemp() {
     float t = bme.readTemperature();
-    if (!isnan(t)) { cached_temp_c = t; lastBmeGoodAt = millis(); }
+    if (!isnan(t) && t >= BME_TEMP_MIN_C && t <= BME_TEMP_MAX_C) {
+        cached_temp_c = t; lastBmeGoodAt = millis();
+    }
     return cached_temp_c;
 }
 static float safeBmeHumidity() {
     float h = bme.readHumidity();
-    if (!isnan(h)) { cached_humidity = h; lastBmeGoodAt = millis(); }
+    if (!isnan(h) && h >= BME_HUM_MIN && h <= BME_HUM_MAX) {
+        cached_humidity = h; lastBmeGoodAt = millis();
+    }
     return cached_humidity;
 }
 static float safeBmePressureHpa() {
     float p = bme.readPressure() / 100.0f;
-    if (!isnan(p) && p > 0.0f) { cached_pressure_hpa = p; lastBmeGoodAt = millis(); }
+    if (!isnan(p) && p >= BME_PRESS_MIN_HPA && p <= BME_PRESS_MAX_HPA) {
+        cached_pressure_hpa = p; lastBmeGoodAt = millis();
+    }
     return cached_pressure_hpa;
 }
 static float safeBmeAltitudeFt() {
-    float a = bme.readAltitude(SEALEVELPRESSURE_HPA) * 3.28084f;
-    if (!isnan(a)) { cached_altitude_ft = a; lastBmeGoodAt = millis(); }
+    // Derive altitude from the already-bounded cached_pressure_hpa rather
+    // than calling bme.readAltitude(), which does its own internal raw
+    // pressure read separate from safeBmePressureHpa() and can glitch to
+    // 0 ft when that internal read returns garbage. Formula is the same
+    // barometric estimation Adafruit_BME280 uses internally.
+    float p = cached_pressure_hpa;
+    if (p < BME_PRESS_MIN_HPA || p > BME_PRESS_MAX_HPA) return cached_altitude_ft;
+    float a_meters = 44330.0f * (1.0f - powf(p / SEALEVELPRESSURE_HPA, 0.1903f));
+    float a_ft = a_meters * 3.28084f;
+    if (!isnan(a_ft) && a_ft > -1500.0f && a_ft < 30000.0f) {
+        cached_altitude_ft = a_ft;
+    }
     return cached_altitude_ft;
 }
 
-static bool bmeDegraded() { return lastBmeGoodAt > 0 && (millis() - lastBmeGoodAt) > SENSOR_STALE_MS; }
-static bool ccsDegraded() { return lastCcsGoodAt > 0 && (millis() - lastCcsGoodAt) > SENSOR_STALE_MS; }
+// Treat a sensor that has NEVER produced a good read as degraded once we're
+// past the boot-grace window. Without this, a sensor that fails to init at
+// boot reports cached seed values (20.0°C / 50% / etc.) with degraded=false
+// indefinitely, so the admin UI / OLED show happy-path numbers on a sensor
+// that has never actually worked.
+#define SENSOR_BOOT_GRACE_MS 60000UL
+static bool bmeDegraded() {
+    if (lastBmeGoodAt > 0) return (millis() - lastBmeGoodAt) > SENSOR_STALE_MS;
+    return millis() > SENSOR_BOOT_GRACE_MS;
+}
+static bool ccsDegraded() {
+    if (lastCcsGoodAt > 0) return (millis() - lastCcsGoodAt) > SENSOR_STALE_MS;
+    return millis() > SENSOR_BOOT_GRACE_MS;
+}
 
 volatile bool          ledOn               = false;
 volatile unsigned long lastRequestTime     = 0;
@@ -263,6 +354,11 @@ static void resetPeriod(PeriodStats& p) {
 }
 
 static void aggregateSample(PeriodStats& p, float temp_c, float hum, uint16_t co2, uint16_t voc, uint32_t reqs) {
+    // Skip the entire sample if either float arrived as NaN. NaN compares
+    // false against everything, so the min/max guards wouldn't trip, but
+    // `p.temp_sum_c += NaN` poisons the running average for the whole period
+    // (every subsequent sample would then divide-by-NaN at periodToJson time).
+    if (isnan(temp_c) || isnan(hum)) return;
     if (temp_c < p.temp_min_c) p.temp_min_c = temp_c;
     if (temp_c > p.temp_max_c) p.temp_max_c = temp_c;
     p.temp_sum_c += temp_c;
@@ -307,7 +403,7 @@ static String periodToJson(const char* label, const PeriodStats& p) {
                 p.voc_min, p.voc_max, (unsigned long)(p.voc_sum / p.samples));
         }
     }
-    op += snprintf(buf + op, sizeof(buf) - op, ",\"started\":%lu}", (unsigned long)p.started_unix);
+    snprintf(buf + op, sizeof(buf) - op, ",\"started\":%lu}", (unsigned long)p.started_unix);
     return String(buf);
 }
 
@@ -331,7 +427,150 @@ static bool flushPeriod(const char* dir, const char* label, const PeriodStats& p
     return true;
 }
 
+// Compute the calendar month (1-12) of an ISO 8601 week's Monday. Used by
+// /admin/repair-periods to determine which month an archived week belongs
+// to without trusting the started_unix field in the JSON (which may be 0
+// in archives written before NTP synced). Same algorithm as prettyWeek()
+// in history.html: Jan 4 is always in week 1, walk backward to its Monday,
+// then forward (week-1)*7 days. Returns false if mktime fails (rare).
+static bool isoWeekMonth(int year, int week, int& outMonth) {
+    struct tm jan4 = {};
+    jan4.tm_year = year - 1900;
+    jan4.tm_mon  = 0;
+    jan4.tm_mday = 4;
+    jan4.tm_hour = 12;  // noon avoids DST-fold edge cases
+    time_t jan4Time = mktime(&jan4);
+    if (jan4Time == (time_t)-1) return false;
+    int jan4Iso = (jan4.tm_wday == 0) ? 7 : jan4.tm_wday;  // 1=Mon..7=Sun
+    time_t targetMon = jan4Time - (jan4Iso - 1) * 86400 + (long)(week - 1) * 7 * 86400;
+    struct tm target;
+    localtime_r(&targetMon, &target);
+    outMonth = target.tm_mon + 1;
+    return true;
+}
+
+// Merge `src` PeriodStats into `target`. Used by /admin/repair-periods to
+// rebuild monthly/yearly counters from previously-flushed weekly archives.
+// Sums where appropriate; takes extremes for min/max.
+static void aggregatePeriodInto(PeriodStats& target, const PeriodStats& src) {
+    target.visitors  += src.visitors;
+    target.guestbook += src.guestbook;
+    if (src.peak_reqs > target.peak_reqs) target.peak_reqs = src.peak_reqs;
+    if (src.samples == 0) return;
+    if (src.temp_min_c < target.temp_min_c) target.temp_min_c = src.temp_min_c;
+    if (src.temp_max_c > target.temp_max_c) target.temp_max_c = src.temp_max_c;
+    target.temp_sum_c += src.temp_sum_c;
+    if (src.hum_min < target.hum_min) target.hum_min = src.hum_min;
+    if (src.hum_max > target.hum_max) target.hum_max = src.hum_max;
+    target.hum_sum += src.hum_sum;
+    if (src.co2_min < target.co2_min) target.co2_min = src.co2_min;
+    if (src.co2_max > target.co2_max) target.co2_max = src.co2_max;
+    target.co2_sum += src.co2_sum;
+    if (src.voc_min < target.voc_min) target.voc_min = src.voc_min;
+    if (src.voc_max > target.voc_max) target.voc_max = src.voc_max;
+    target.voc_sum += src.voc_sum;
+    target.samples += src.samples;
+}
+
+// Parse a weekly-archive JSON file (the output of periodToJson) into a
+// PeriodStats struct. Reverses avg-times-samples to recover the running sum
+// so that aggregating multiple weeks into a month yields a correct overall
+// avg. Returns false on parse failure. Also outputs `started` so the caller
+// can determine which calendar month this week belongs to.
+static bool parseWeeklyJson(const String& json, PeriodStats& out, time_t& started) {
+    auto findInt = [&](const String& src, const char* key) -> long {
+        int k = src.indexOf(String("\"") + key + "\":");
+        if (k < 0) return 0;
+        k += strlen(key) + 3;
+        int end = k;
+        while (end < (int)src.length()) {
+            char c = src[end];
+            if (c == ',' || c == '}' || c == ' ' || c == '\n') break;
+            end++;
+        }
+        return src.substring(k, end).toInt();
+    };
+    auto findFloat = [&](const String& src, const char* key) -> float {
+        int k = src.indexOf(String("\"") + key + "\":");
+        if (k < 0) return NAN;
+        k += strlen(key) + 3;
+        int end = k;
+        while (end < (int)src.length()) {
+            char c = src[end];
+            if (c == ',' || c == '}' || c == ' ' || c == '\n') break;
+            end++;
+        }
+        return src.substring(k, end).toFloat();
+    };
+    auto extractBlock = [&](const char* key) -> String {
+        int k = json.indexOf(String("\"") + key + "\":{");
+        if (k < 0) return "";
+        k += strlen(key) + 3;
+        int depth = 0, end = k;
+        while (end < (int)json.length()) {
+            if (json[end] == '{') depth++;
+            else if (json[end] == '}') { depth--; if (depth == 0) { end++; break; } }
+            end++;
+        }
+        return json.substring(k, end);
+    };
+
+    // Required label check. Bail if the JSON isn't shaped like an archive.
+    if (json.indexOf("\"label\":") < 0) return false;
+
+    // Initialize sentinels (matches resetPeriod behavior).
+    out.visitors = 0; out.guestbook = 0; out.peak_reqs = 0;
+    out.temp_min_c = 1000.0f; out.temp_max_c = -1000.0f; out.temp_sum_c = 0.0;
+    out.hum_min = 1000.0f; out.hum_max = -1000.0f; out.hum_sum = 0.0;
+    out.co2_min = 0xFFFF; out.co2_max = 0; out.co2_sum = 0;
+    out.voc_min = 0xFFFF; out.voc_max = 0; out.voc_sum = 0;
+    out.samples = 0; out.started_unix = 0;
+
+    out.visitors  = (uint32_t)findInt(json, "visitors");
+    out.guestbook = (uint32_t)findInt(json, "guestbook");
+    out.peak_reqs = (uint32_t)findInt(json, "peak_reqs");
+    out.samples   = (uint32_t)findInt(json, "samples");
+    out.started_unix = (uint32_t)findInt(json, "started");
+    started = (time_t)out.started_unix;
+
+    if (out.samples > 0) {
+        String t = extractBlock("temp_c");
+        if (t.length() > 0) {
+            float mn = findFloat(t, "min"), mx = findFloat(t, "max"), av = findFloat(t, "avg");
+            if (!isnan(mn)) out.temp_min_c = mn;
+            if (!isnan(mx)) out.temp_max_c = mx;
+            if (!isnan(av)) out.temp_sum_c = (double)av * out.samples;
+        }
+        String h = extractBlock("humidity");
+        if (h.length() > 0) {
+            float mn = findFloat(h, "min"), mx = findFloat(h, "max"), av = findFloat(h, "avg");
+            if (!isnan(mn)) out.hum_min = mn;
+            if (!isnan(mx)) out.hum_max = mx;
+            if (!isnan(av)) out.hum_sum = (double)av * out.samples;
+        }
+        String c = extractBlock("co2_ppm");
+        if (c.length() > 0) {
+            long mn = (long)findFloat(c, "min"), mx = (long)findFloat(c, "max"), av = (long)findFloat(c, "avg");
+            if (mn > 0) out.co2_min = (uint16_t)mn;
+            if (mx > 0) out.co2_max = (uint16_t)mx;
+            if (av > 0) out.co2_sum = (uint32_t)av * out.samples;
+        }
+        String v = extractBlock("voc_ppb");
+        if (v.length() > 0) {
+            long mn = (long)findFloat(v, "min"), mx = (long)findFloat(v, "max"), av = (long)findFloat(v, "avg");
+            if (mn > 0) out.voc_min = (uint16_t)mn;
+            if (mx >= 0) out.voc_max = (uint16_t)mx;
+            if (av >= 0) out.voc_sum = (uint32_t)av * out.samples;
+        }
+    }
+    return true;
+}
+
 #define CHECKPOINT_MAGIC 0x48455333UL
+// Bump when PeriodStats layout changes. Old checkpoints with a different
+// version are rejected on load (stats reset to zero) rather than read into
+// a struct with shifted fields and silently corrupted.
+#define CHECKPOINT_VERSION 1
 
 static void saveCheckpoint() {
     const char* path = "/stats/checkpoint.bin";
@@ -341,6 +580,8 @@ static void saveCheckpoint() {
     if (!f) { Serial.println("[stats] checkpoint open failed"); return; }
     uint32_t magic = CHECKPOINT_MAGIC;
     f.write((const uint8_t*)&magic, sizeof(magic));
+    uint16_t version = CHECKPOINT_VERSION;
+    f.write((const uint8_t*)&version, sizeof(version));
     f.write((const uint8_t*)&currentWeek, sizeof(PeriodStats));
     f.write((const uint8_t*)&currentMonth, sizeof(PeriodStats));
     f.write((const uint8_t*)&currentYear, sizeof(PeriodStats));
@@ -361,19 +602,53 @@ static void loadCheckpoint() {
     resetPeriod(currentWeek);
     resetPeriod(currentMonth);
     resetPeriod(currentYear);
+    bool promotedFromBak = false;
     File f = SD.open("/stats/checkpoint.bin", FILE_READ);
     if (!f) {
         if (SD.exists("/stats/checkpoint.bak")) {
             SD.rename("/stats/checkpoint.bak", "/stats/checkpoint.bin");
             f = SD.open("/stats/checkpoint.bin", FILE_READ);
+            promotedFromBak = true;
         }
         if (!f) return;
     }
     uint32_t magic = 0;
-    size_t expected = sizeof(magic) + sizeof(PeriodStats)*3 + sizeof(lastWeekLabel) + sizeof(lastMonthLabel) + sizeof(lastYearLabel);
-    if (f.size() != expected) { f.close(); return; }
+    uint16_t version = 0;
+    size_t expected = sizeof(magic) + sizeof(version) + sizeof(PeriodStats)*3 +
+                      sizeof(lastWeekLabel) + sizeof(lastMonthLabel) + sizeof(lastYearLabel);
+    if (f.size() != expected) {
+        // Live file has wrong size (truncated mid-write, or struct drift
+        // from a downgrade). Try the .bak before giving up so a single
+        // bad write doesn't lose period stats.
+        f.close();
+        if (!promotedFromBak && SD.exists("/stats/checkpoint.bak")) {
+            File bf = SD.open("/stats/checkpoint.bak", FILE_READ);
+            if (bf && bf.size() == expected) {
+                bf.close();
+                SD.remove("/stats/checkpoint.bin");
+                SD.rename("/stats/checkpoint.bak", "/stats/checkpoint.bin");
+                f = SD.open("/stats/checkpoint.bin", FILE_READ);
+                promotedFromBak = true;
+            } else if (bf) {
+                bf.close();
+            }
+        }
+        if (!f || f.size() != expected) {
+            if (f) f.close();
+            return;  // size mismatch = struct drift or no usable backup
+        }
+    }
     f.read((uint8_t*)&magic, sizeof(magic));
     if (magic != CHECKPOINT_MAGIC) { f.close(); return; }
+    f.read((uint8_t*)&version, sizeof(version));
+    if (version != CHECKPOINT_VERSION) {
+        // Future-proofing: reject silently instead of reading into a struct
+        // with shifted fields. Stats reset to zero rather than corrupted.
+        Serial.printf("[stats] checkpoint version mismatch (got %u, want %u); resetting\n",
+                      (unsigned)version, (unsigned)CHECKPOINT_VERSION);
+        f.close();
+        return;
+    }
     f.read((uint8_t*)&currentWeek, sizeof(PeriodStats));
     f.read((uint8_t*)&currentMonth, sizeof(PeriodStats));
     f.read((uint8_t*)&currentYear, sizeof(PeriodStats));
@@ -381,6 +656,10 @@ static void loadCheckpoint() {
     f.read((uint8_t*)lastMonthLabel, sizeof(lastMonthLabel));
     f.read((uint8_t*)lastYearLabel, sizeof(lastYearLabel));
     f.close();
+    // If we recovered from .bak, immediately re-establish dual copies so a
+    // second crash during the next checkpoint window doesn't leave us with
+    // nothing to fall back to.
+    if (promotedFromBak) saveCheckpoint();
 }
 
 // forward decl: getTimestamp is defined further down, but updateRecords below needs it
@@ -388,10 +667,24 @@ String getTimestamp();
 extern time_t bootTime; // declared below; needed for uptime-days computation in updateRecords
 extern char dailyVisitorsDate[11]; // declared below; needed for "Busiest day" record dating
 
-// Hall of fame records: extremes observed over the device's lifetime
+// Hall of fame records: extremes observed over the device's lifetime.
+//
+// `at` is dual-format BY DESIGN, not by accident:
+//   - moment-level records (highest_co2, hottest/coldest temp, longest_uptime_d)
+//     store full ISO-8601 from getTimestamp() (e.g. "2026-04-27T15:30:42-0600").
+//   - day-level records (most_visitors_day) store just YYYY-MM-DD because
+//     "the busiest day was at 3:30 PM" doesn't mean anything.
+//
+// Any new consumer of `at` MUST use formatRecordDate() in history.html
+// (or an equivalent dual-format-aware parser). Naive `new Date(at)` will
+// parse YYYY-MM-DD as UTC midnight and display the previous day in
+// negative-offset timezones.
 struct RecordVal {
     float value;
-    char  at[24];   // ISO-8601 timestamp or YYYY-MM-DD for daily records
+    // 28 bytes: full ISO-8601 with TZ offset (e.g. "2026-04-23T17:55:00-0600")
+    // is 24 chars + null = 25 bytes; the previous size of 24 silently truncated
+    // the last digit of the offset, breaking JS Date.parse on the frontend.
+    char  at[28];
     bool  set;
 };
 RecordVal rec_highest_co2       = { 0,    "", false };
@@ -422,7 +715,7 @@ static void saveRecords() {
     emit("highest_temp_f",    rec_highest_temp_f,    false, false);
     emit("lowest_temp_f",     rec_lowest_temp_f,     false, false);
     emit("most_visitors_day", rec_most_visitors_day, false, true);
-    emit("longest_uptime_d",  rec_longest_uptime_d,  true,  true);
+    emit("longest_uptime_d",  rec_longest_uptime_d,  true,  false);
     f.print("}");
     f.close();
     if (SD.exists(bak)) SD.remove(bak);
@@ -431,6 +724,14 @@ static void saveRecords() {
     if (SD.exists(bak)) SD.remove(bak);
 }
 
+// Sanity ranges for record-able values. BME280 spec is -40..+85°C → -40..+185°F.
+// CCS811 eCO2 register max is 32768 ppm; readings beyond that are bus glitches.
+// Used both at runtime (updateRecords) and at boot (loadRecords sanity-clean).
+#define REC_TEMP_F_MIN  -40.0f
+#define REC_TEMP_F_MAX  185.0f
+#define REC_CO2_MIN     1
+#define REC_CO2_MAX     32768
+
 static void parseRecordField(const String& json, const char* key, RecordVal& out) {
     int k = json.indexOf(String("\"") + key + "\":");
     if (k < 0) return;
@@ -438,8 +739,15 @@ static void parseRecordField(const String& json, const char* key, RecordVal& out
     int at = json.indexOf("\"at\":\"", k);
     int end = json.indexOf("}", k);
     if (v < 0 || at < 0 || end < 0) return;
-    out.value = json.substring(v + 8, json.indexOf(",", v)).toFloat();
+    // Bound the value-end search by min(next-comma, brace) so a future
+    // schema where `value` is the last numeric field before `}` (no
+    // trailing comma) doesn't underflow into substring(v+8, -1).
+    int comma = json.indexOf(",", v);
+    int valueEnd = (comma >= 0 && comma < end) ? comma : end;
+    if (valueEnd <= v + 8) return;  // malformed
+    out.value = json.substring(v + 8, valueEnd).toFloat();
     int atEnd = json.indexOf("\"", at + 6);
+    if (atEnd <= at + 6) return;  // malformed timestamp
     String atStr = json.substring(at + 6, atEnd);
     strncpy(out.at, atStr.c_str(), sizeof(out.at) - 1);
     out.at[sizeof(out.at) - 1] = '\0';
@@ -452,6 +760,10 @@ static void loadRecords() {
     File f = SD.open(path, FILE_READ);
     if (!f) return;
     size_t sz = f.size();
+    // Cap to 8KB. Real records.json is ~600 bytes; anything larger is
+    // either corruption or a manual-edit gone wrong, and we shouldn't
+    // commit a big malloc on low heap. Reject silently.
+    if (sz > 8192) { f.close(); return; }
     char* buf = (char*)malloc(sz + 1);
     if (!buf) { f.close(); return; }
     size_t n = f.read((uint8_t*)buf, sz);
@@ -464,6 +776,22 @@ static void loadRecords() {
     parseRecordField(json, "lowest_temp_f",     rec_lowest_temp_f);
     parseRecordField(json, "most_visitors_day", rec_most_visitors_day);
     parseRecordField(json, "longest_uptime_d",  rec_longest_uptime_d);
+
+    // Sanity-clean any record whose stored value couldn't have been produced
+    // by the actual sensor. Catches latched glitch reads (e.g. 355°F from a
+    // bus error during the wire-swap incident). Cleared records get re-set
+    // naturally on the next legitimate reading. Save back so disk and memory
+    // agree and we don't repeat this work every boot.
+    bool dirty = false;
+    auto clearIfBad = [&](RecordVal& r, float lo, float hi) {
+        if (r.set && (r.value < lo || r.value > hi)) {
+            r.set = false; r.value = 0; r.at[0] = '\0'; dirty = true;
+        }
+    };
+    clearIfBad(rec_highest_temp_f, REC_TEMP_F_MIN, REC_TEMP_F_MAX);
+    clearIfBad(rec_lowest_temp_f,  REC_TEMP_F_MIN, REC_TEMP_F_MAX);
+    clearIfBad(rec_highest_co2,    (float)REC_CO2_MIN, (float)REC_CO2_MAX);
+    if (dirty) saveRecords();
 }
 
 // Called from logStats every 5 min. Updates records if current values exceed stored extremes.
@@ -471,15 +799,15 @@ static void updateRecords(float temp_f, int co2, int dailyVis) {
     bool changed = false;
     String nowStr = getTimestamp();
 
-    if (!rec_highest_co2.set || co2 > rec_highest_co2.value) {
-        if (co2 > 0) {
+    if (co2 >= REC_CO2_MIN && co2 <= REC_CO2_MAX) {
+        if (!rec_highest_co2.set || co2 > rec_highest_co2.value) {
             rec_highest_co2.value = co2;
             strncpy(rec_highest_co2.at, nowStr.c_str(), sizeof(rec_highest_co2.at) - 1);
             rec_highest_co2.at[sizeof(rec_highest_co2.at) - 1] = '\0';
             rec_highest_co2.set = true; changed = true;
         }
     }
-    if (!isnan(temp_f)) {
+    if (!isnan(temp_f) && temp_f >= REC_TEMP_F_MIN && temp_f <= REC_TEMP_F_MAX) {
         if (!rec_highest_temp_f.set || temp_f > rec_highest_temp_f.value) {
             rec_highest_temp_f.value = temp_f;
             strncpy(rec_highest_temp_f.at, nowStr.c_str(), sizeof(rec_highest_temp_f.at) - 1);
@@ -508,15 +836,22 @@ static void updateRecords(float temp_f, int co2, int dailyVis) {
         }
         rec_most_visitors_day.set = true; changed = true;
     }
-    // longest uptime in days. Computed from wall-clock so it survives the 49.7-day millis()
-    // rollover. bootTime is the unix timestamp captured at NTP sync; before NTP syncs it's 0
-    // and we skip the record update rather than report garbage.
-    int uptimeDays = 0;
+    // Longest uptime as fractional days. Computed from wall-clock so it
+    // survives the 49.7-day millis() rollover. bootTime is the unix
+    // timestamp captured at NTP sync; before NTP syncs it's 0 and we skip
+    // the record update rather than report garbage.
+    //
+    // Schema name stays "_d" for backward compatibility, but the value is
+    // now a float (e.g. 0.25 = 6h, 1.5 = 36h) so the substat populates as
+    // soon as the device has been up at least one logStats interval (5
+    // min) instead of needing a full 24h continuous run before showing
+    // anything. The client formats <1.0 as "Xh", >=1.0 as "Xd".
+    float uptimeDays = 0.0f;
     if (bootTime > 0) {
         time_t nowSec = time(nullptr);
-        if (nowSec > bootTime) uptimeDays = (int)((nowSec - bootTime) / 86400);
+        if (nowSec > bootTime) uptimeDays = (float)(nowSec - bootTime) / 86400.0f;
     }
-    if (uptimeDays > 0 && (!rec_longest_uptime_d.set || uptimeDays > rec_longest_uptime_d.value)) {
+    if (uptimeDays > 0.0f && (!rec_longest_uptime_d.set || uptimeDays > rec_longest_uptime_d.value)) {
         rec_longest_uptime_d.value = uptimeDays;
         strncpy(rec_longest_uptime_d.at, nowStr.c_str(), sizeof(rec_longest_uptime_d.at) - 1);
         rec_longest_uptime_d.at[sizeof(rec_longest_uptime_d.at) - 1] = '\0';
@@ -534,34 +869,42 @@ static void checkPeriodBoundaries() {
     snprintf(m, sizeof(m), "%04d-%02d", now.tm_year + 1900, now.tm_mon + 1);
     snprintf(y, sizeof(y), "%04d", now.tm_year + 1900);
 
+    // Only advance past a period boundary if the flush succeeded. If the SD
+    // write fails (transient card error, full filesystem, etc.), leave the
+    // label and accumulator alone, the next call will retry. Without this
+    // guard, a single failed flush would silently zero a week/month/year of
+    // accumulated stats.
     if (lastWeekLabel[0] == '\0') {
         strncpy(lastWeekLabel, w, sizeof(lastWeekLabel) - 1);
         lastWeekLabel[sizeof(lastWeekLabel) - 1] = '\0';
     } else if (strcmp(lastWeekLabel, w) != 0) {
-        flushPeriod("/stats/weekly", lastWeekLabel, currentWeek);
-        resetPeriod(currentWeek);
-        strncpy(lastWeekLabel, w, sizeof(lastWeekLabel) - 1);
-        lastWeekLabel[sizeof(lastWeekLabel) - 1] = '\0';
+        if (flushPeriod("/stats/weekly", lastWeekLabel, currentWeek)) {
+            resetPeriod(currentWeek);
+            strncpy(lastWeekLabel, w, sizeof(lastWeekLabel) - 1);
+            lastWeekLabel[sizeof(lastWeekLabel) - 1] = '\0';
+        }
     }
 
     if (lastMonthLabel[0] == '\0') {
         strncpy(lastMonthLabel, m, sizeof(lastMonthLabel) - 1);
         lastMonthLabel[sizeof(lastMonthLabel) - 1] = '\0';
     } else if (strcmp(lastMonthLabel, m) != 0) {
-        flushPeriod("/stats/monthly", lastMonthLabel, currentMonth);
-        resetPeriod(currentMonth);
-        strncpy(lastMonthLabel, m, sizeof(lastMonthLabel) - 1);
-        lastMonthLabel[sizeof(lastMonthLabel) - 1] = '\0';
+        if (flushPeriod("/stats/monthly", lastMonthLabel, currentMonth)) {
+            resetPeriod(currentMonth);
+            strncpy(lastMonthLabel, m, sizeof(lastMonthLabel) - 1);
+            lastMonthLabel[sizeof(lastMonthLabel) - 1] = '\0';
+        }
     }
 
     if (lastYearLabel[0] == '\0') {
         strncpy(lastYearLabel, y, sizeof(lastYearLabel) - 1);
         lastYearLabel[sizeof(lastYearLabel) - 1] = '\0';
     } else if (strcmp(lastYearLabel, y) != 0) {
-        flushPeriod("/stats/yearly", lastYearLabel, currentYear);
-        resetPeriod(currentYear);
-        strncpy(lastYearLabel, y, sizeof(lastYearLabel) - 1);
-        lastYearLabel[sizeof(lastYearLabel) - 1] = '\0';
+        if (flushPeriod("/stats/yearly", lastYearLabel, currentYear)) {
+            resetPeriod(currentYear);
+            strncpy(lastYearLabel, y, sizeof(lastYearLabel) - 1);
+            lastYearLabel[sizeof(lastYearLabel) - 1] = '\0';
+        }
     }
 }
 unsigned long          lastPageSwitch      = 0;
@@ -619,6 +962,7 @@ volatile int           pendingGuestbook    = 0;  // count of status=0 (new/unrev
 volatile int           gbCountApproved     = 0;  // count of status=1
 volatile int           gbCountDenied       = 0;  // count of status=2
 volatile int           gbCountAll          = 0;  // total entries in guestbook.csv
+
 int                    lastNotifiedPending = 0;
 volatile bool          pendingNotifyFlag   = false;
 char                   notifyEntryName[33]    = "";
@@ -629,6 +973,9 @@ time_t                 bootTime            = 0;
 volatile bool          pendingMaintenanceFlag     = false;
 int                    pendingMaintenanceMinutes  = 0;
 char                   pendingMaintenanceMessage[201] = "";
+// UI-hint copy of the maintenance window. Worker DO storage is authoritative.
+uint32_t               localMaintenanceUntilUnix      = 0;
+char                   localMaintenanceMessage[201]   = "";
 volatile bool          pendingConsolePush         = false;
 
 // Backup constants. BACKUP_MAX_* are runaway-protection ceilings; the Worker stores
@@ -645,9 +992,19 @@ volatile bool          pendingBackupFlag          = false;
 
 // Timestamp of the last multipart upload/OTA chunk we saw.
 volatile unsigned long lastUploadChunkMs          = 0;
-// Window after the last chunk during which we still suppress escalation.
-// Covers both "upload still in flight" and a grace period for TCP settling.
-#define UPLOAD_QUIET_MS 30000UL
+// Set by the /_upload chunk handler when the target file already exists and
+// the request didn't include overwrite=1; the completion handler reads it to
+// reply 409 instead of 200, so a misclick can't silently clobber index.html.
+bool uploadRejectedExisting                       = false;
+// Window after the last chunk during which we still suppress WS work
+// (reads, pings, reconnects). Covers both "upload still in flight" between
+// chunks and a grace period for AsyncTCP to finalize the HTTP response
+// without a competing WS reconnect grabbing task time.
+// Was 30000UL originally as defense against the post-launch reconnect
+// cascade; AsyncTCP usually drains within 1-2s of the last chunk so 5s
+// gives ample margin while keeping the post-upload UX quick (~5-8s total
+// before live updates resume vs ~30-35s before).
+#define UPLOAD_QUIET_MS 5000UL
 unsigned long          lastBackupSentMs           = 0;
 char                   lastBackupDate[11]         = ""; // YYYY-MM-DD, persisted across reboots
 // Ground truth from Worker's backup_committed event. "sent" is ESP-side, "committed" is R2-side.
@@ -664,9 +1021,33 @@ char                   r2HealthcheckDetail[129]   = "";
 
 // Admin-triggered SMTP2GO test. Catches silent email-integration failures before a real alert fires.
 volatile bool          pendingTestEmailFlag       = false;
+volatile bool          pendingSnakeClearFlag      = false;
+uint32_t               snakeClearAtUnix           = 0;
+bool                   snakeClearOk               = false;
 uint32_t               testEmailAtUnix            = 0;
 bool                   testEmailPass              = false;
 char                   testEmailDetail[129]       = "";
+
+// Admin-triggered firmware flash from an SD-card .bin. Decouples the
+// upload phase (file manager, retry-friendly) from the flash phase
+// (fully local, network-independent). Handler sets these flags + responds
+// quickly; main loop performs the actual flash so we don't hold the HTTP
+// connection for the ~30-60s flash duration.
+volatile bool          pendingSDFlash             = false;
+char                   pendingSDFlashPath[96]     = "";
+
+// Admin-triggered partition rollback (flip active OTA partition back
+// to the previously-active one). Same flag pattern as SD-flash.
+volatile bool          pendingRollback            = false;
+
+// Admin-triggered SHA256 of an SD file (used to verify a firmware .bin
+// matches what was uploaded from the PC). Computation runs on the main
+// loop so a ~6s 1.5MB file read doesn't starve async_tcp.
+volatile bool          pendingSha256              = false;
+char                   pendingSha256Path[96]      = "";
+char                   sha256Result[80]           = "";   // 64 hex chars + "\0"
+char                   sha256ResultPath[96]       = "";   // which file sha256Result is for
+volatile bool          sha256Computing            = false;
 
 // Device health sparkline ring buffer (sampled once per minute, 60 samples = 1 hour)
 #define HEALTH_SAMPLES 60
@@ -694,6 +1075,37 @@ int consoleCount = 0;
 
 static void normalizeCountry(const char* in, char* out);  // fwd decl; body below
 
+// Serve a pre-gzipped .gz file when the client accepts gzip; fall back to
+// the raw file. Pre-gzipping cuts wire-size ~4x for HTML, which matters
+// under LAN load: 78KB raw streams saturate lwIP's pbuf pool and cascade
+// into WS write + DNS failures. Open the .gz file manually and pass the
+// base path; the library detects the .gz suffix on file.name() and adds
+// Content-Encoding: gzip automatically.
+static AsyncWebServerResponse* beginResponseGzipOrRaw(AsyncWebServerRequest *req,
+                                                     const char* path,
+                                                     const char* type) {
+    String gzPath = String(path) + ".gz";
+    bool acceptsGzip = req->hasHeader("Accept-Encoding") &&
+                       req->header("Accept-Encoding").indexOf("gzip") >= 0;
+    if (acceptsGzip && SD.exists(gzPath)) {
+        File f = SD.open(gzPath, FILE_READ);
+        if (f) {
+            return req->beginResponse(f, String(path), type);
+        }
+    }
+    File f = SD.open(path, FILE_READ);
+    if (!f) {
+        AsyncWebServerResponse *r = req->beginResponse(503, "text/plain", "Device busy, retry");
+        r->addHeader("Retry-After", "2");
+        return r;
+    }
+    return req->beginResponse(f, String(path), type);
+}
+
+static void sendGzipOrRaw(AsyncWebServerRequest *req, const char* path, const char* type) {
+    req->send(beginResponseGzipOrRaw(req, path, type));
+}
+
 static bool consoleShouldSkip(const String& url) {
     if (url.startsWith("/admin")) return true;        // privacy: admin actions are never public
     if (url.startsWith("/_"))     return true;        // /_ws, /_upload, /_ota (internal)
@@ -714,6 +1126,9 @@ static bool consoleShouldSkip(const String& url) {
     // bot-only metadata
     if (url == "/robots.txt")     return true;
     if (url == "/sitemap.xml")    return true;
+    if (url == "/changelog.rss")  return true;
+    if (url == "/guestbook.rss")  return true;
+    if (url == "/.well-known/security.txt") return true;
     // static assets
     if (url == "/favicon.png" || url == "/favicon.svg" || url == "/og-banner.jpg") return true;
     if (url == "/helloesp-framed.jpg" || url == "/helloesp-boot.mp4" || url == "/helloesp-boot-poster.jpg") return true;
@@ -836,6 +1251,11 @@ void loadCountries() {
         if (comma < 1) continue;
         String code = line.substring(0, comma);
         int cnt = line.substring(comma + 1).toInt();
+        // Reject anything that isn't an exact 2-letter ISO code. Without
+        // this guard, a corrupted/hand-edited row with a 3-letter code
+        // would silently truncate, then never match `tallyCountry()`'s
+        // 2-char compare, and grow as a permanent orphan on every save.
+        if (code.length() != 2) continue;
         code.toCharArray(countries[countryCount].code, 4);
         countries[countryCount].count = cnt;
         countryCount++;
@@ -871,12 +1291,21 @@ static void normalizeCountry(const char* in, char* out) {
     out[0] = c0; out[1] = c1;
 }
 
+// Dirty flag + flush interval for country tallies. Under flash-crowd traffic
+// (this device has handled 10k visitors in a day) the original per-visit
+// saveCountries() rewrite was pinning the SD bus inside the AsyncTCP HTTP
+// handler. Now we just flip a dirty flag here; the main loop flushes at most
+// once every 30s. Worst-case data loss on a crash is 30s of country tallies.
+volatile bool          countriesDirty           = false;
+unsigned long          lastCountriesFlush       = 0;
+#define COUNTRIES_FLUSH_INTERVAL_MS 30000UL
+
 void tallyCountry(const char* code) {
     if (!code || strlen(code) < 2) return;
     for (int i = 0; i < countryCount; i++) {
         if (strcmp(countries[i].code, code) == 0) {
             countries[i].count++;
-            saveCountries();
+            countriesDirty = true;
             return;
         }
     }
@@ -885,8 +1314,18 @@ void tallyCountry(const char* code) {
         countries[countryCount].code[3] = '\0';
         countries[countryCount].count = 1;
         countryCount++;
-        saveCountries();
+        countriesDirty = true;
     }
+}
+
+// Called from the main loop and from cleanRestart, so we don't lose recent
+// tallies on a planned reboot. Also called explicitly before periods flush.
+void maybeFlushCountries() {
+    if (!countriesDirty) return;
+    if (millis() - lastCountriesFlush < COUNTRIES_FLUSH_INTERVAL_MS) return;
+    saveCountries();
+    countriesDirty = false;
+    lastCountriesFlush = millis();
 }
 
 // Admin auth
@@ -894,6 +1333,90 @@ bool isLocalIP(IPAddress ip) {
     return ip[0] == 10
         || (ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31)
         || (ip[0] == 192 && ip[1] == 168);
+}
+
+// Worker-exclusive mode: when cfgWorkerExclusive is true, direct LAN hits
+// to public pages get a 302 to the Worker. Forces public traffic through
+// CF's edge cache, eliminating the LAN-burst-vs-WS-write cascade pattern.
+//
+// Returns true if a redirect was sent (caller should `return` immediately).
+// Returns false if the request should be served normally:
+//   - flag is off, OR
+//   - request came in via the Worker relay (CF-Connecting-IP set), OR
+//   - request is from a non-LAN address (port-forwarded public visitor
+//     hitting us directly without going through CF; keep them working
+//     on the off-chance CF is misconfigured), OR
+//   - no worker_url configured (no destination to redirect to).
+//
+// /admin and admin sub-paths must NOT call this; admin auth requires
+// direct LAN access.
+// Minimal RFC 3986 unreserved-only percent-encoder. Keep it tiny, only
+// used to rebuild redirect query strings in worker-exclusive mode, which
+// fires once per page load.
+static String urlEncodeMin(const String& s) {
+    String out;
+    out.reserve(s.length() + 8);
+    for (size_t i = 0; i < s.length(); i++) {
+        char c = s[i];
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+            out += c;
+        } else {
+            char buf[4];
+            snprintf(buf, sizeof(buf), "%%%02X", (unsigned char)c);
+            out += buf;
+        }
+    }
+    return out;
+}
+
+static bool redirectLanToWorker(AsyncWebServerRequest *request) {
+    if (!cfgWorkerExclusive) return false;
+    if (strlen(cfgWorkerUrl) == 0) return false;
+    if (request->hasHeader("CF-Connecting-IP")) return false;
+    if (!isLocalIP(request->client()->remoteIP())) return false;
+    // Admin-only endpoints called from /admin that don't start with /admin.
+    // These need to serve direct on LAN so the moderation UI works even
+    // with worker_exclusive=true. Earlier attempt: bypass on Authorization
+    // header presence. That was way too broad: once any browser tab was
+    // authed against /admin, Basic Auth sends the header on EVERY request
+    // in the realm (including / and other public pages), so the redirect
+    // never fired. Explicit path list is narrower and predictable.
+    {
+        const String& url = request->url();
+        if (url.startsWith("/guestbook/pending"))   return false;
+        if (url.startsWith("/guestbook/moderate"))  return false;
+        if (url == "/guestbook/locate")             return false;
+        if (url == "/logs/today")                   return false;
+    }
+    String redir = "https://";
+    redir += cfgWorkerUrl;
+    redir += request->url();
+    // request->url() in this AsyncWebServer build returns the path only;
+    // query is parsed into params() and stripped. Rebuild the query from
+    // GET params so /guestbook/entries?page=2 redirects to the right page
+    // instead of falling back to page=1 on the public side. Re-encode
+    // values because params arrive URL-decoded; sending raw spaces or
+    // special chars in Location would break the URL.
+    int n = request->params();
+    bool firstParam = true;
+    for (int i = 0; i < n; i++) {
+        const AsyncWebParameter* p = request->getParam(i);
+        if (!p) continue;
+        if (p->isPost() || p->isFile()) continue;  // GET-only redirects
+        redir += firstParam ? '?' : '&';
+        redir += urlEncodeMin(p->name());
+        if (p->value().length() > 0) {
+            redir += '=';
+            redir += urlEncodeMin(p->value());
+        }
+        firstParam = false;
+    }
+    AsyncWebServerResponse *r = request->beginResponse(302, "text/plain", "Redirecting to public site");
+    r->addHeader("Location", redir);
+    r->addHeader("Cache-Control", "no-store");
+    request->send(r);
+    return true;
 }
 
 struct FailedAuthRec {
@@ -947,9 +1470,32 @@ static bool safePath(const String& p) {
     return p.startsWith("/") && p.indexOf("..") < 0;
 }
 
-// Reboot by disconnecting WiFi before calling ESP.restart() to clear WiFi driver state without a physical power cycle.
-// Previouly ESP.restart() alone would leave the device in a post-OTA broken state only fixable with physical power cycling.
+// Files whose deletion would either brick the device on next boot
+// (config.txt has the WiFi + admin creds) or leave the public site broken
+// until manual SD-card surgery. The admin file manager has an upload path
+// for replacement, so a real "I want to update this" flow is unaffected;
+// this just blocks the misclick-into-brick case. .gz companions are
+// intentionally NOT listed because the firmware falls back to the
+// uncompressed file when the .gz is missing, so deleting one is recoverable
+// without rebooting.
+static bool isProtectedPath(const String& p) {
+    return p == "/config.txt"
+        || p == "/index.html"
+        || p == "/about.html"
+        || p == "/guestbook.html"
+        || p == "/history.html"
+        || p == "/console.html"
+        || p == "/admin.html"
+        || p == "/404.html";
+}
+
+// Reboot by disconnecting WiFi before calling ESP.restart() to clear WiFi
+// driver state without a physical power cycle. ESP.restart() alone leaves
+// the device in a post-OTA broken state only fixable by power cycling.
 static void cleanRestart() {
+    // Force-flush dirty country tallies so a planned reboot doesn't lose
+    // the most-recent tallyCountry() bumps that hadn't hit the 30s flush yet.
+    if (countriesDirty) saveCountries();
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
     delay(1000);
@@ -1000,7 +1546,7 @@ static bool containsCI(const char* haystack, int haylen, const char* needle, int
 
 bool adminAuth(AsyncWebServerRequest *request) {
     if (!isLocalIP(request->client()->remoteIP()) || request->hasHeader("CF-Connecting-IP")) {
-        AsyncWebServerResponse *r = request->beginResponse(SD, "/404.html", "text/html");
+        AsyncWebServerResponse *r = beginResponseGzipOrRaw(request, "/404.html", "text/html");
         r->setCode(404);
         r->addHeader("Cache-Control", "public, max-age=3600");
         request->send(r);
@@ -1137,6 +1683,99 @@ void writeVisitorCount(int count) {
     if (SD.exists("/visitors.bak")) SD.remove("/visitors.bak");
     if (SD.exists("/visitors.txt")) SD.rename("/visitors.txt", "/visitors.bak");
     SD.rename("/visitors.tmp", "/visitors.txt");
+}
+
+// True if s is 8 characters of Crockford base32 (digits + a-z minus i/l/o/u).
+static bool isValidCrockfordId(const char* s, int len) {
+    if (len != 8) return false;
+    for (int i = 0; i < 8; i++) {
+        char c = s[i];
+        bool digit  = (c >= '0' && c <= '9');
+        bool letter = (c >= 'a' && c <= 'z') && c != 'i' && c != 'l' && c != 'o' && c != 'u';
+        if (!(digit || letter)) return false;
+    }
+    return true;
+}
+
+// Validates a reply candidate's parent: parent must exist, be approved, and
+// be either top-level or itself a reply to a top-level. Caps nesting at 2
+// levels in the data layer regardless of what the client sent.
+static bool isValidReplyParent(const char* parentId) {
+    if (!SD.exists("/guestbook.csv")) return false;
+    File f = SD.open("/guestbook.csv", FILE_READ);
+    if (!f) return false;
+    char line[400];
+    bool parentFound = false;
+    bool parentIsTopLevel = false;
+    char parentsParentId[9] = {0};
+    // First pass: find the parent row.
+    while (f.available()) {
+        int n = f.readBytesUntil('\n', line, sizeof(line) - 1);
+        if (n <= 0) continue;
+        line[n] = '\0';
+        while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
+        if (n == 0) continue;
+        int c1=-1,c2=-1,c3=-1,c4=-1,c5=-1,cLast=-1;
+        for (int j = 0; j < n; j++) {
+            if (line[j] == ',') {
+                if      (c1 < 0) c1 = j;
+                else if (c2 < 0) c2 = j;
+                else if (c3 < 0) c3 = j;
+                else if (c4 < 0) c4 = j;
+                else if (c5 < 0) c5 = j;
+                cLast = j;
+            }
+        }
+        if (c1<0||c2<0||c3<0||c4<0||c5<0||cLast<0||cLast<=c5) continue;
+        int idLen = c5 - c4 - 1;
+        if (idLen != 8 || memcmp(line + c4 + 1, parentId, 8) != 0) continue;
+        if (line[n-1] != '1') break;  // parent not approved
+        parentFound = true;
+        int replyToLen = cLast - c5 - 1;
+        if (replyToLen == 0) {
+            parentIsTopLevel = true;
+        } else if (replyToLen == 8) {
+            memcpy(parentsParentId, line + c5 + 1, 8);
+            parentsParentId[8] = '\0';
+        }
+        break;
+    }
+    if (!parentFound) { f.close(); return false; }
+    if (parentIsTopLevel)  { f.close(); return true; }
+    if (parentsParentId[0] == '\0') { f.close(); return false; }
+
+    // Second pass: the parent is itself a reply; its parent (the grandparent
+    // of the new reply) must be top-level. Allowing this means the new entry
+    // lands at level 2 at most.
+    f.seek(0);
+    bool grandIsTopLevel = false;
+    while (f.available()) {
+        int n = f.readBytesUntil('\n', line, sizeof(line) - 1);
+        if (n <= 0) continue;
+        line[n] = '\0';
+        while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
+        if (n == 0) continue;
+        int c1=-1,c2=-1,c3=-1,c4=-1,c5=-1,cLast=-1;
+        for (int j = 0; j < n; j++) {
+            if (line[j] == ',') {
+                if      (c1 < 0) c1 = j;
+                else if (c2 < 0) c2 = j;
+                else if (c3 < 0) c3 = j;
+                else if (c4 < 0) c4 = j;
+                else if (c5 < 0) c5 = j;
+                cLast = j;
+            }
+        }
+        if (c1<0||c2<0||c3<0||c4<0||c5<0||cLast<0||cLast<=c5) continue;
+        int idLen = c5 - c4 - 1;
+        if (idLen != 8 || memcmp(line + c4 + 1, parentsParentId, 8) != 0) continue;
+        if (line[n-1] != '1') break;
+        int replyToLen = cLast - c5 - 1;
+        if (replyToLen == 0) grandIsTopLevel = true;
+        break;
+    }
+    f.close();
+    return grandIsTopLevel;
 }
 
 // Generate an 8-char Crockford base32 ID for guestbook entries.
@@ -1379,6 +2018,167 @@ static void migrateGuestbookCsvToV2() {
     logError("migrate", msg);
 }
 
+// v3: time,country,name,message,id,reply_to,status
+// reply_to is empty for top-level entries, or the 8-char id of the parent.
+// Only one level of nesting is allowed (enforced at submit time, not here).
+static void migrateGuestbookCsvToV3() {
+    if (readGuestbookSchemaVersion() >= 3) return;
+
+    // Mid-rename crash recovery, same shape as v2.
+    if (!SD.exists("/guestbook.csv")) {
+        if (SD.exists("/guestbook.csv.tmp")) {
+            if (SD.rename("/guestbook.csv.tmp", "/guestbook.csv")) {
+                Serial.println("[migrate] recovered csv from .tmp (prior crash)");
+            }
+        }
+        if (!SD.exists("/guestbook.csv") && SD.exists("/guestbook.csv.bak")) {
+            if (SD.rename("/guestbook.csv.bak", "/guestbook.csv")) {
+                Serial.println("[migrate] recovered csv from .bak (prior crash)");
+            }
+        }
+    }
+
+    if (!SD.exists("/guestbook.csv")) {
+        writeGuestbookSchemaVersion(3);
+        return;
+    }
+
+    int commas = -1;
+    {
+        File probe = SD.open("/guestbook.csv", FILE_READ);
+        if (!probe) { migrationAbort("cannot read guestbook.csv to probe schema"); return; }
+        char line[400];
+        while (probe.available()) {
+            int n = probe.readBytesUntil('\n', line, sizeof(line) - 1);
+            if (n <= 0) continue;
+            line[n] = '\0';
+            while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) n--;
+            if (n == 0) continue;
+            commas = 0;
+            for (int i = 0; i < n; i++) if (line[i] == ',') commas++;
+            break;
+        }
+        probe.close();
+    }
+
+    if (commas < 0) {
+        writeGuestbookSchemaVersion(3);
+        return;
+    }
+    if (commas == 6) {
+        writeGuestbookSchemaVersion(3);
+        Serial.println("[migrate] guestbook.csv already v3, stamped marker");
+        return;
+    }
+    if (commas != 5) {
+        char buf[72];
+        snprintf(buf, sizeof(buf), "guestbook.csv unexpected commas=%d for v3", commas);
+        migrationAbort(buf);
+        return;
+    }
+
+    Serial.println("[migrate] guestbook.csv is v2, migrating to v3 (adds reply_to column)");
+
+    if (!SD.exists("/guestbook.csv.v2")) {
+        File src = SD.open("/guestbook.csv", FILE_READ);
+        File dst = SD.open("/guestbook.csv.v2", FILE_WRITE);
+        if (!src || !dst) {
+            if (src) src.close();
+            if (dst) dst.close();
+            migrationAbort("cannot open files for v2 backup copy");
+            return;
+        }
+        uint8_t buf[1024];
+        int rd;
+        while ((rd = src.read(buf, sizeof(buf))) > 0) {
+            if (dst.write(buf, rd) != (size_t)rd) {
+                src.close(); dst.close();
+                migrationAbort("v2 backup write failed");
+                return;
+            }
+        }
+        src.close();
+        dst.close();
+    }
+
+    File in  = SD.open("/guestbook.csv", FILE_READ);
+    File out = SD.open("/guestbook.csv.tmp", FILE_WRITE);
+    if (!in || !out) {
+        if (in) in.close();
+        if (out) out.close();
+        migrationAbort("cannot open files for v3 rewrite");
+        return;
+    }
+
+    int migrated = 0;
+    bool writeFailed = false;
+    char line[400];
+
+    auto writeAll = [&](const uint8_t* data, size_t len) {
+        if (writeFailed) return;
+        if (out.write(data, len) != len) writeFailed = true;
+    };
+    auto writeByte = [&](uint8_t b) {
+        if (writeFailed) return;
+        if (out.write(b) != 1) writeFailed = true;
+    };
+
+    while (in.available() && !writeFailed) {
+        int n = in.readBytesUntil('\n', line, sizeof(line) - 1);
+        if (n <= 0) continue;
+        line[n] = '\0';
+        while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
+        if (n == 0) continue;
+
+        // Split at last comma: [time,country,name,message,id],status. Insert "," (empty reply_to) between them.
+        int last = -1;
+        for (int i = n - 1; i >= 0; i--) if (line[i] == ',') { last = i; break; }
+        if (last < 0) {
+            Serial.printf("[migrate] skipping malformed row: %s\n", line);
+            writeAll((const uint8_t*)line, n);
+            writeByte('\n');
+            continue;
+        }
+
+        writeAll((const uint8_t*)line, last);              // [time,country,name,message,id]
+        writeByte(',');                                    // empty reply_to
+        writeAll((const uint8_t*)(line + last), n - last); // ,status
+        writeByte('\n');
+        migrated++;
+    }
+    in.close();
+    out.close();
+
+    if (writeFailed) {
+        SD.remove("/guestbook.csv.tmp");
+        migrationAbort("v3 rewrite failed (SD full or write error); original kept");
+        return;
+    }
+
+    if (SD.exists("/guestbook.csv.bak")) SD.remove("/guestbook.csv.bak");
+    if (!SD.rename("/guestbook.csv", "/guestbook.csv.bak")) {
+        SD.remove("/guestbook.csv.tmp");
+        migrationAbort("rename csv -> csv.bak failed; original kept");
+        return;
+    }
+    if (!SD.rename("/guestbook.csv.tmp", "/guestbook.csv")) {
+        SD.rename("/guestbook.csv.bak", "/guestbook.csv");
+        SD.remove("/guestbook.csv.tmp");
+        migrationAbort("rename tmp -> guestbook.csv failed; original restored from .bak");
+        return;
+    }
+
+    if (!writeGuestbookSchemaVersion(3)) {
+        migrationAbort("wrote new csv but failed to write schema marker");
+        return;
+    }
+
+    char msg[72];
+    snprintf(msg, sizeof(msg), "guestbook: migrated %d entries to v3 schema", migrated);
+    Serial.printf("[migrate] %s\n", msg);
+    logError("migrate", msg);
+}
+
 // Recompute guestbook counts (pendingGuestbook, gbCountApproved, gbCountDenied,
 // gbCountAll) by streaming through guestbook.csv. Avoids loading the whole file
 // into RAM. Called once at boot and as a safety net after delete/compact operations.
@@ -1398,13 +2198,14 @@ void countPendingGuestbook() {
         // trim trailing whitespace / CR
         while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
         if (n == 0) continue;
-        gbCountAll++;
-        // Status is always the last char. Works on both v1 (4 commas) and v2 (5 commas).
         char s = line[n-1];
+        // Tombstones (status=3) stay physically in the CSV so reply chains can
+        // reference them, but they don't count toward any user-facing total.
+        if (s == '3') continue;
+        gbCountAll++;
         if      (s == '0') pendingGuestbook++;
         else if (s == '1') gbCountApproved++;
         else if (s == '2') gbCountDenied++;
-        // status '3' (tombstoned) would be ignored; current code uses full rewrite for delete
     }
     f.close();
 }
@@ -1417,10 +2218,15 @@ void notifyPendingIfIncreased() {
     if (!wsConnected || !wsClient.connected()) return;
     String msg = "{\"type\":\"event\",\"event\":\"pending_guestbook\",\"count\":";
     msg += pendingGuestbook;
-    if (notifyEntryName[0] != '\0') {
-        msg += ",\"name\":\"";    msg += notifyEntryName;    msg += "\"";
-        msg += ",\"country\":\""; msg += notifyEntryCountry; msg += "\"";
-        msg += ",\"message\":\""; msg += notifyEntryMessage; msg += "\"";
+    // Skip per-entry preview when delta > 1; the notifyEntry* buffers hold
+    // only the most-recent submission and would mis-attribute under bursts.
+    int delta = pendingGuestbook - lastNotifiedPending;
+    if (notifyEntryName[0] != '\0' && delta == 1) {
+        // jsonEscape rather than relying on sanitizeCsv; loosening CSV
+        // escaping later shouldn't silently break the worker's JSON.parse.
+        msg += ",\"name\":\"";    msg += jsonEscape(notifyEntryName);    msg += "\"";
+        msg += ",\"country\":\""; msg += jsonEscape(notifyEntryCountry); msg += "\"";
+        msg += ",\"message\":\""; msg += jsonEscape(notifyEntryMessage); msg += "\"";
     }
     msg += "}";
     wsSendText(wsClient, msg);
@@ -1445,21 +2251,31 @@ void loadDailyVisitors() {
     int nl = all.indexOf('\n', comma + 1);
     int count = comma > 0 ? all.substring(comma + 1, nl > 0 ? nl : all.length()).toInt() : 0;
 
+    // Preserve disk count regardless of NTP state. The visit-handler's
+    // tm_mday != lastVisitorDay check resets to 0 cleanly once NTP arrives
+    // if the date no longer matches; pre-NTP zeroing would lose yesterday's
+    // count before Hall-of-Fame records it.
+    dailyVisitors = count;
+    if (date.length() == 10) {
+        strncpy(dailyVisitorsDate, date.c_str(), sizeof(dailyVisitorsDate) - 1);
+        dailyVisitorsDate[sizeof(dailyVisitorsDate) - 1] = '\0';
+    }
+
     struct tm timeinfo;
     if (getLocalTime(&timeinfo)) {
         char today[12];
         strftime(today, sizeof(today), "%Y-%m-%d", &timeinfo);
         if (date == String(today)) {
-            dailyVisitors = count;
             lastVisitorDay = timeinfo.tm_mday;
-            // Preserve the date across reboots so the Hall of Fame "Busiest day" record stays
-            // anchored to the day the visits actually accrued on.
-            strncpy(dailyVisitorsDate, today, sizeof(dailyVisitorsDate) - 1);
-            dailyVisitorsDate[sizeof(dailyVisitorsDate) - 1] = '\0';
-            return;
+        } else {
+            // Different day: zero in-memory tally; visit handler sets
+            // lastVisitorDay on first visit. Keep dailyVisitorsDate as the
+            // OLD date so a pending Hall-of-Fame check still attributes right.
+            dailyVisitors = 0;
         }
     }
-    dailyVisitors = 0;
+    // If NTP failed: keep loaded count, leave lastVisitorDay = -1 so the
+    // first visit triggers a clean rollover check.
 }
 
 void saveDailyVisitors() {
@@ -1524,6 +2340,13 @@ SensorData readSensors() {
 
 // CSV logging
 void logStats() {
+    // Skip entirely if NTP isn't synced yet. Otherwise getLogFilename()
+    // returns "/logs/fallback.csv" which never gets migrated to a dated file
+    // and is invisible to /logs viewers (filename doesn't match
+    // YYYY-MM-DD pattern), losing 5-30 min of stats per cold boot.
+    struct tm tCheck;
+    if (!getLocalTime(&tCheck, 0)) return;
+
     String filename = getLogFilename();
     bool isNew = !SD.exists(filename);
 
@@ -1580,8 +2403,7 @@ String buildStatsJson() {
     char buf[1536];
     String ts = getTimestamp();
     String ut = uptime_formatter::getUptime();
-    int op = 0;
-    op += snprintf(buf + op, sizeof(buf) - op,
+    snprintf(buf, sizeof(buf),
         "{\"response_ms\":%lu"
         ",\"timestamp\":\"%s\""
         ",\"uptime\":\"%s\""
@@ -1600,7 +2422,7 @@ String buildStatsJson() {
         ",\"co2_ppm\":%u"
         ",\"voc_ppb\":%u"
         ",\"countries\":%d"
-        ",\"sensors\":{\"bme_ok\":%s,\"ccs_ok\":%s}"
+        ",\"sensors\":{\"bme_ok\":%s,\"ccs_ok\":%s,\"oled_ok\":%s,\"rtc_ok\":%s}"
         "}",
         responseMs,
         ts.c_str(),
@@ -1621,7 +2443,9 @@ String buildStatsJson() {
         (unsigned)cached_voc,
         countryCount,
         bmeDegraded() ? "false" : "true",
-        ccsDegraded() ? "false" : "true");
+        ccsDegraded() ? "false" : "true",
+        oledOk ? "true" : "false",
+        rtcOk ? "true" : "false");
     return String(buf);
 }
 
@@ -1684,6 +2508,10 @@ static void backupSendFile(uint32_t seq, const char* path, const char* name, siz
 
     uint8_t buf[3072];
     while (f.available()) {
+        // If the WS dropped mid-stream, the wsSendText calls below would
+        // no-op and we'd still pay the SD-read + base64-encode cost for
+        // every remaining chunk on every remaining file.
+        if (!wsConnected || !wsClient.connected()) break;
         int rd = f.read(buf, sizeof(buf));
         if (rd <= 0) break;
         backupSendChunk(seq, buf, rd);
@@ -1704,6 +2532,7 @@ static void backupSendFile(uint32_t seq, const char* path, const char* name, siz
 // on-device log rotation don't belong in a restore bundle.
 static bool backupExcludeDir(const char* absPath) {
     if (strcmp(absPath, "/logs") == 0)  return true;
+    if (strcmp(absPath, "/fw") == 0)    return true;  // firmware staging, not backup-worthy (1-2MB each)
     if (strcmp(absPath, "/System Volume Information") == 0) return true;
     return false;
 }
@@ -1716,6 +2545,10 @@ static bool backupExcludeFile(const char* absPath, const char* base) {
         if (strcmp(ext, ".tmp") == 0) return true;
         if (strcmp(ext, ".bak") == 0) return true;
     }
+    // Migration snapshots (.v1, .v2, .v3 etc) are duplicates of the live file.
+    // Skip so each schema bump doesn't double-up the backup size forever.
+    if (bl >= 3 && base[bl - 3] == '.' && base[bl - 2] == 'v' &&
+        base[bl - 1] >= '0' && base[bl - 1] <= '9') return true;
     if (base[0] == '.') return true; // hidden / OS metadata (._DS_Store etc)
     return false;
 }
@@ -1800,6 +2633,56 @@ static void saveLastBackupDate(const char* date) {
     SD.rename(LAST_BACKUP_TMP, LAST_BACKUP_PATH);
 }
 
+#define MAINTENANCE_STATE_PATH "/stats/maintenance.txt"
+#define MAINTENANCE_STATE_TMP  "/stats/maintenance.tmp"
+
+// Persist maintenance window across reboots so the admin panel keeps showing
+// "currently in maintenance" instead of dropping to "off" while the Worker
+// still serves the maintenance page to public visitors.
+void loadMaintenanceState() {
+    localMaintenanceUntilUnix = 0;
+    localMaintenanceMessage[0] = '\0';
+    if (!SD.exists(MAINTENANCE_STATE_PATH) && SD.exists(MAINTENANCE_STATE_TMP))
+        SD.rename(MAINTENANCE_STATE_TMP, MAINTENANCE_STATE_PATH);
+    if (!SD.exists(MAINTENANCE_STATE_PATH)) return;
+    File f = SD.open(MAINTENANCE_STATE_PATH, FILE_READ);
+    if (!f) return;
+    String tsLine  = f.readStringUntil('\n');
+    String msgLine = f.readStringUntil('\n');
+    f.close();
+    tsLine.trim();
+    msgLine.trim();
+    uint32_t ts = (uint32_t)tsLine.toInt();
+    if (ts == 0) return;
+    // If the window already expired by the time we boot, drop the file
+    // and stay inactive. nowSec == 0 means NTP hasn't synced yet; in that
+    // case keep the saved value, the active check in /admin/info gates on
+    // a real nowSec anyway.
+    time_t nowSec = time(nullptr);
+    if (nowSec > 0 && (uint32_t)nowSec >= ts) {
+        SD.remove(MAINTENANCE_STATE_PATH);
+        return;
+    }
+    localMaintenanceUntilUnix = ts;
+    strncpy(localMaintenanceMessage, msgLine.c_str(), sizeof(localMaintenanceMessage) - 1);
+    localMaintenanceMessage[sizeof(localMaintenanceMessage) - 1] = '\0';
+}
+
+static void saveMaintenanceState() {
+    if (localMaintenanceUntilUnix == 0) {
+        if (SD.exists(MAINTENANCE_STATE_PATH)) SD.remove(MAINTENANCE_STATE_PATH);
+        if (SD.exists(MAINTENANCE_STATE_TMP)) SD.remove(MAINTENANCE_STATE_TMP);
+        return;
+    }
+    File f = SD.open(MAINTENANCE_STATE_TMP, FILE_WRITE);
+    if (!f) return;
+    f.println(localMaintenanceUntilUnix);
+    f.println(localMaintenanceMessage);
+    f.close();
+    if (SD.exists(MAINTENANCE_STATE_PATH)) SD.remove(MAINTENANCE_STATE_PATH);
+    SD.rename(MAINTENANCE_STATE_TMP, MAINTENANCE_STATE_PATH);
+}
+
 // Persist the Worker's backup_committed confirmation so admin UI state survives reboots.
 // Format: single line "YYYY-MM-DD BYTES FILES UNIX_SEC"
 void loadLastCommit() {
@@ -1856,9 +2739,17 @@ static bool isBackupDue() {
     return strcmp(today, lastBackupDate) != 0;
 }
 
+// True for the duration of a buildAndSendBackup() call. The 60s safety-net
+// reboot in loop() includes this in its localBusy gate so a slow backup
+// (~30-60s on a full SD) doesn't get cut off and leave R2 with a partial
+// snapshot. Volatile because the safety-net read runs from the same task
+// after backupRunning is set, but defensive in case async_tcp pre-empts.
+volatile bool backupRunning = false;
+
 void buildAndSendBackup() {
     if (!wsConnected || !wsClient.connected()) return;
 
+    backupRunning = true;
     uint32_t seq = (uint32_t)millis();
     size_t totalOut = 0;
 
@@ -1894,6 +2785,7 @@ void buildAndSendBackup() {
         lastBackupDate[sizeof(lastBackupDate) - 1] = '\0';
         saveLastBackupDate(today);
     }
+    backupRunning = false;
 }
 
 // handle incoming WebSocket message from Worker
@@ -1920,6 +2812,14 @@ void handleWsRelay(String& data) {
             }
             struct tm tm;
             if (getLocalTime(&tm, 0)) testEmailAtUnix = mktime(&tm);
+            data = "";
+            return;
+        }
+        if (data.indexOf("\"event\":\"snake_clear_result\"") >= 0) {
+            int p1 = data.indexOf("\"ok\":");
+            if (p1 >= 0) snakeClearOk = (data.indexOf("true", p1) == p1 + 5);
+            struct tm tm;
+            if (getLocalTime(&tm, 0)) snakeClearAtUnix = mktime(&tm);
             data = "";
             return;
         }
@@ -1983,6 +2883,7 @@ void handleWsRelay(String& data) {
     char path[256] = "/";
     char cfIP[48] = "";
     char cfCountry[4] = "";
+    char acceptEncoding[64] = "";
     int reqId = 0;
 
     int idStart = data.indexOf("\"id\":") + 5;
@@ -2012,6 +2913,12 @@ void handleWsRelay(String& data) {
         data.substring(ccStart, data.indexOf("\"", ccStart)).toCharArray(cfCountry, sizeof(cfCountry));
     }
 
+    int aeStart = data.indexOf("\"Accept-Encoding\":\"");
+    if (aeStart >= 0) {
+        aeStart += 19;
+        data.substring(aeStart, data.indexOf("\"", aeStart)).toCharArray(acceptEncoding, sizeof(acceptEncoding));
+    }
+
     String body = "";
     int bStart = data.indexOf("\"body\":\"");
     if (bStart >= 0) {
@@ -2030,6 +2937,7 @@ void handleWsRelay(String& data) {
     for (size_t i = 0; path[i]; i++) if (path[i] == '\r' || path[i] == '\n') { path[0] = '\0'; break; }
     for (size_t i = 0; cfIP[i]; i++) if (cfIP[i] == '\r' || cfIP[i] == '\n') { cfIP[0] = '\0'; break; }
     for (size_t i = 0; cfCountry[i]; i++) if (cfCountry[i] == '\r' || cfCountry[i] == '\n') { cfCountry[0] = '\0'; break; }
+    for (size_t i = 0; acceptEncoding[i]; i++) if (acceptEncoding[i] == '\r' || acceptEncoding[i] == '\n') { acceptEncoding[0] = '\0'; break; }
     if (method[0] == '\0' || path[0] == '\0') {
         String err = "{\"id\":";
         err += reqId;
@@ -2058,6 +2966,7 @@ void handleWsRelay(String& data) {
     localClient.print("Host: 127.0.0.1\r\n");
     if (cfIP[0]) localClient.printf("CF-Connecting-IP: %s\r\n", cfIP);
     if (cfCountry[0]) localClient.printf("CF-IPCountry: %s\r\n", cfCountry);
+    if (acceptEncoding[0]) localClient.printf("Accept-Encoding: %s\r\n", acceptEncoding);
     if (strcmp(method, "POST") == 0 && body.length() > 0) {
         localClient.print("Content-Type: application/x-www-form-urlencoded\r\n");
         localClient.printf("Content-Length: %u\r\n", (unsigned)body.length());
@@ -2097,6 +3006,7 @@ void handleWsRelay(String& data) {
     // headers
     String contentType = "text/html";
     String cacheControl = "";
+    String contentEncoding = "";
     int contentLength = -1;
     while (localClient.available()) {
         String header = localClient.readStringUntil('\n');
@@ -2107,12 +3017,14 @@ void handleWsRelay(String& data) {
         String hName = header.substring(0, colon);
         String hVal = header.substring(colon + 1);
         hVal.trim();
-        if (hName.equalsIgnoreCase("Content-Type")) contentType = hVal;
-        if (hName.equalsIgnoreCase("Content-Length")) contentLength = hVal.toInt();
-        if (hName.equalsIgnoreCase("Cache-Control")) cacheControl = hVal;
+        if (hName.equalsIgnoreCase("Content-Type"))     contentType = hVal;
+        if (hName.equalsIgnoreCase("Content-Length"))   contentLength = hVal.toInt();
+        if (hName.equalsIgnoreCase("Cache-Control"))    cacheControl = hVal;
+        if (hName.equalsIgnoreCase("Content-Encoding")) contentEncoding = hVal;
     }
 
-    // send metadata text frame
+    // send metadata text frame. ce field added so the worker can forward
+    // Content-Encoding to the browser; required for gzipped HTML serving.
     String meta = "{\"id\":";
     meta += reqId;
     meta += ",\"status\":";
@@ -2125,6 +3037,11 @@ void handleWsRelay(String& data) {
         meta += cacheControl;
         meta += "\"";
     }
+    if (contentEncoding.length() > 0) {
+        meta += ",\"ce\":\"";
+        meta += contentEncoding;
+        meta += "\"";
+    }
     meta += ",\"len\":";
     meta += contentLength;
     meta += "}";
@@ -2132,30 +3049,24 @@ void handleWsRelay(String& data) {
     wsSendText(wsClient, meta);
     meta = "";
 
-    // Stream body as base64-encoded text frames (3 KB raw = 4 KB b64 per chunk).
-    // Use a static char buffer for the base64 output instead of building an Arduino String via repeated `+=` ops.
+    // stream body as base64-encoded text frames (4KB raw = ~5.3KB b64 per chunk)
     const char* b64c = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    static uint8_t chunk[3072];
-    static char b64Buf[4200];   // (3072 / 3) * 4 = 4096, + padding
-    int totalSent = 0;
+    uint8_t chunk[3072];
     while (localClient.available() && millis() - start < 15000) {
         int rd = localClient.read(chunk, sizeof(chunk));
         if (rd > 0) {
-            int op = 0;
+            String b64;
+            b64.reserve((rd * 4) / 3 + 4);
             for (int i = 0; i < rd; i += 3) {
                 uint32_t n = ((uint32_t)chunk[i]) << 16;
                 if (i + 1 < rd) n |= ((uint32_t)chunk[i + 1]) << 8;
                 if (i + 2 < rd) n |= chunk[i + 2];
-                b64Buf[op++] = b64c[(n >> 18) & 0x3F];
-                b64Buf[op++] = b64c[(n >> 12) & 0x3F];
-                b64Buf[op++] = (i + 1 < rd) ? b64c[(n >> 6) & 0x3F] : '=';
-                b64Buf[op++] = (i + 2 < rd) ? b64c[n & 0x3F] : '=';
+                b64 += b64c[(n >> 18) & 0x3F];
+                b64 += b64c[(n >> 12) & 0x3F];
+                b64 += (i + 1 < rd) ? b64c[(n >> 6) & 0x3F] : '=';
+                b64 += (i + 2 < rd) ? b64c[n & 0x3F] : '=';
             }
-            b64Buf[op] = '\0';
-            // wsSendText takes a String; the String() wrapper allocates once (O(1)
-            // heap for the whole chunk) instead of O(N) per-char realloc through +=.
-            wsSendText(wsClient, String(b64Buf));
-            totalSent += rd;
+            wsSendText(wsClient, b64);
         }
     }
     // end marker: empty text frame
@@ -2178,7 +3089,11 @@ static void hmacSha256Hex(const char* key, const char* msg, char* outHex65) {
     outHex65[64] = '\0';
 }
 
-// WebSocket handshake
+// True when connectWorker() failed at DNS specifically (vs TCP/TLS).
+// Reconnect loop short-circuits to WiFi.reconnect() in that case since DNS
+// failures at the WiFi layer almost always need a fresh association.
+volatile bool wsLastFailWasDns = false;
+
 bool connectWorker() {
     if (strlen(cfgWorkerUrl) == 0 || strlen(cfgWorkerKey) == 0) {
         Serial.println("[ws] skipped: worker_url or worker_key blank");
@@ -2186,16 +3101,21 @@ bool connectWorker() {
     }
 
     wsClient.setInsecure();
-    // Defaults are 120s handshake and 30s per-write. Under backpressure those
-    // block the main loop forever; 10s each is plenty for a healthy peer.
-    wsClient.setHandshakeTimeout(10);
-    wsClient.setTimeout(10);
 
-    Serial.printf("[ws] connecting to %s:443 (free=%u largest=%u)\n",
-                  cfgWorkerUrl, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+    Serial.printf("[ws] connecting to %s:443\n", cfgWorkerUrl);
+
+    // Pre-flight DNS so the reconnect loop can tell a resolver problem
+    // (LAN cascade, fixable by WiFi.reconnect) from a CF/TCP issue.
+    IPAddress workerIP;
+    if (!WiFi.hostByName(cfgWorkerUrl, workerIP)) {
+        Serial.println("[ws] DNS resolve failed; flagging for fast WiFi recovery");
+        wsLastFailWasDns = true;
+        return false;
+    }
+    wsLastFailWasDns = false;
+
     if (!wsClient.connect(cfgWorkerUrl, 443)) {
-        Serial.printf("[ws] TCP/TLS connect failed (free=%u largest=%u)\n",
-                      (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+        Serial.println("[ws] TCP/TLS connect failed");
         return false;
     }
 
@@ -2236,11 +3156,14 @@ bool connectWorker() {
         if (line.length() == 0) break;
     }
 
-    // Optional HMAC handshake. If the worker sends an auth_challenge within 2s,
-    // we respond with HMAC-SHA256(device_key, nonce). If no challenge arrives
-    // (worker has no HMAC_SECRET set), we proceed normally.
-    unsigned long hmacWait = millis();
-    while (!wsClient.available() && millis() - hmacWait < 2000) delay(10);
+    // Optional HMAC handshake. If the worker sends an auth_challenge within
+    // 2s, respond with HMAC-SHA256(device_key, nonce). Always wait for the
+    // challenge so a config mismatch (worker has HMAC_SECRET, device_key
+    // empty) gets caught instead of triggering a silent reconnect storm.
+    {
+        unsigned long hmacWait = millis();
+        while (!wsClient.available() && millis() - hmacWait < 2000) delay(10);
+    }
     if (wsClient.available()) {
         String msg = wsRead(wsClient);
         int typeIdx = msg.indexOf("\"auth_challenge\"");
@@ -2285,6 +3208,12 @@ void setup() {
 
     if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
         Serial.println("OLED init failed (check I2C wiring and 0x3C address)");
+        // Can't bootLog here yet (lambda defined further down, and it uses
+        // display.println which would no-op anyway on a failed display).
+        // logError persists to SD so admin can see post-reboot.
+        logError("hw", "oled init failed at 0x3C; check wiring + bus pull-ups");
+    } else {
+        oledOk = true;
     }
     display.clearDisplay();
     display.setTextSize(1);
@@ -2319,15 +3248,67 @@ void setup() {
     bootLog(verBuf);
     Serial.println(verBuf);
 
-    // SD card
+    // SD card at 10MHz SPI. Briefly dropped to 4MHz when SI issues surfaced
+    // (CS line crossing I2C SDA/SCL caused capacitive crosstalk + bus
+    // glitches), but rerouting CS to arch above the I2C plane via solid-
+    // core wire restored 10MHz operation cleanly. 1mm air gap kills the
+    // coupling that was the actual problem. Bump back to 4MHz if errors
+    // ever recur after wire shuffles.
+    //
+    // Mount retry: if the previous run crashed mid-SD-write (abort from
+    // bad_alloc during request parsing, etc.), the card's internal MCU
+    // can be left stuck in a half-finished transaction. VCC stays powered
+    // across ESP.restart(): the ESP reboots, but the card doesn't, so
+    // f_mount returns NOT_READY until the card is physically power-cycled.
+    // We can't reset the card's power (that'd need a MOSFET on SD VCC),
+    // but we can sometimes wake it by quiescing SPI, waiting long enough
+    // for the card's watchdog to time out its pending operation, and
+    // retrying. Second attempt drops to 4MHz because if the card is
+    // already marginal, higher clocks just fail again. Third attempt
+    // (last chance) is the bare-minimum 1MHz startup speed.
     bootLog("[fs] mounting sd");
-    if (!SD.begin(SD_CS)) {
-        Serial.println("SD card failed or not present");
-        bootLog("[fs] sd FAIL");
-        while (1) { delay(1000); }
+    bool sdMounted = SD.begin(SD_CS, SPI, 10000000U);
+    if (sdMounted) sdSpeedHz = 10000000U;
+    if (!sdMounted) {
+        Serial.println("[fs] sd mount failed, retrying with SPI reset @ 4MHz");
+        bootLog("[fs] sd retry 4MHz");
+        SD.end();
+        SPI.end();
+        delay(500);
+        SPI.begin();
+        sdMounted = SD.begin(SD_CS, SPI, 4000000U);
+        if (sdMounted) sdSpeedHz = 4000000U;
+    }
+    if (!sdMounted) {
+        Serial.println("[fs] sd mount failed again, last-chance retry @ 1MHz");
+        bootLog("[fs] sd retry 1MHz");
+        SD.end();
+        SPI.end();
+        delay(1000);
+        SPI.begin();
+        sdMounted = SD.begin(SD_CS, SPI, 1000000U);
+        if (sdMounted) sdSpeedHz = 1000000U;
+    }
+    if (!sdMounted) {
+        Serial.println("SD card failed or not present; auto-restarting in 60s");
+        bootLog("[fs] sd FAIL retry");
+        // Don't infinite-loop on a framed-behind-glass device: a transient
+        // SPI hiccup or brown-out is recoverable on a fresh boot. The 60s
+        // delay gives the OLED time to display the failure for an observer
+        // (and prevents a tight reboot loop if the SD is actually dead).
+        delay(60000);
+        ESP.restart();
     }
     Serial.println("SD card initialized");
     bootLog("[fs] sd ok");
+
+    // Ensure /fw/ directory exists for firmware staging (SD-flash feature).
+    // Admin uploads .bin files here via the file manager; the SD-flash
+    // endpoint reads from here. Created once at boot so the file manager
+    // has a landing spot.
+    if (!SD.exists("/fw")) {
+        SD.mkdir("/fw");
+    }
 
     // config
     bootLog("[fs] loading config");
@@ -2358,6 +3339,21 @@ void setup() {
                 String val = line.substring(eq + 1);
                 key.trim();
                 val.trim();
+                // Strip control chars and DEL inside the value. trim() only
+                // touches leading/trailing whitespace, so a worker_key with
+                // an embedded CR/LF would survive and inject extra request
+                // lines into the WS upgrade at line 3049 (printf("GET ...
+                // %s ...", cfgWorkerKey)). Owner controls config, but make
+                // header injection structurally impossible.
+                {
+                    String clean;
+                    clean.reserve(val.length());
+                    for (size_t i = 0; i < val.length(); i++) {
+                        unsigned char c = (unsigned char)val.charAt(i);
+                        if (c >= 0x20 && c != 0x7F) clean += (char)c;
+                    }
+                    val = clean;
+                }
                 if (key == "wifi_ssid")   val.toCharArray(cfgSsid, sizeof(cfgSsid));
                 if (key == "wifi_pass")   val.toCharArray(cfgWifiPass, sizeof(cfgWifiPass));
                 if (key == "admin_user")  val.toCharArray(cfgAdminUser, sizeof(cfgAdminUser));
@@ -2366,6 +3362,7 @@ void setup() {
                 if (key == "worker_key")  val.toCharArray(cfgWorkerKey, sizeof(cfgWorkerKey));
                 if (key == "device_key")  val.toCharArray(cfgDeviceKey, sizeof(cfgDeviceKey));
                 if (key == "timezone")    val.toCharArray(cfgTimezone, sizeof(cfgTimezone));
+                if (key == "worker_exclusive") cfgWorkerExclusive = (val == "true");
             }
             bootLog("[fs] config loaded");
         }
@@ -2388,6 +3385,7 @@ void setup() {
     // Already-migrated boots return almost immediately via the version check.
     bootLog("[mig] guestbook");
     migrateGuestbookCsvToV2();
+    migrateGuestbookCsvToV3();
     countPendingGuestbook();
     lastNotifiedPending = pendingGuestbook; // don't email for pre-existing pending entries on boot
 
@@ -2404,27 +3402,71 @@ void setup() {
 
     bootLog("[hw] init sensors");
 
+    // Bound I2C reads to 100ms BEFORE any sensor begin(). Without this, a
+    // BME-fail+CCS-success boot leaves the Wire timeout at the library
+    // default (often unbounded) so a stuck CCS read could hang the loop
+    // forever. Wire.begin() runs implicitly inside the first sensor's
+    // begin(), so set the timeout up-front to cover all subsequent I2C ops.
+    Wire.setTimeOut(100);
+
     // Continue boot even if a sensor fails to init. The site is the higher-value
     // workload; safeBme*/cached_* fallbacks keep serving last-known values, and
     // the admin UI shows the degraded state.
     if (!bme.begin(0x76)) {
         Serial.println("BME280 init failed, check wiring.");
-        bootLog("[hw] bme280 FAIL (continuing in degraded mode)");
+        bootLog("[hw] bme280 FAIL");
         logError("hw", "bme280 init failed; continuing without temp/humidity/pressure");
     } else {
-        Wire.setTimeOut(100);
         safeBmeTemp(); safeBmeHumidity(); safeBmePressureHpa(); safeBmeAltitudeFt();
         bootLog("[hw] bme280 ok");
     }
 
     if (!ccs.begin()) {
         Serial.println("CCS811 init failed, check wiring.");
-        bootLog("[hw] ccs811 FAIL (continuing in degraded mode)");
+        bootLog("[hw] ccs811 FAIL");
         logError("hw", "ccs811 init failed; continuing without eCO2/VOC");
     } else {
         bootLog("[hw] ccs811 ok");
     }
     // CCS811 warmup happens in the background; runtime reads check ccs.available() each cycle
+
+    // DS3231 RTC. Pre-seeds the system clock from battery-backed time so
+    // log/sensor timestamps are correct from the first millisecond, even if
+    // NTP is slow or unreachable. NTP, when it lands, calls rtc.adjust() to
+    // re-sync the RTC against authoritative time. Apply TZ early so any
+    // pre-NTP timestamps render in local time.
+    setenv("TZ", cfgTimezone, 1);
+    tzset();
+    if (!rtc.begin()) {
+        Serial.println("DS3231 init failed, continuing without RTC.");
+        bootLog("[hw] ds3231 FAIL");
+        logError("hw", "ds3231 init failed; relying on NTP only for time");
+    } else {
+        rtcOk = true;
+        if (rtc.lostPower()) {
+            // Battery dead or first power-up. RTC has no valid time; skip
+            // the pre-seed and let NTP fill it in. We'll write back to the
+            // RTC after NTP succeeds, which also clears the lostPower flag.
+            rtcLostPowerAtBoot = true;
+            bootLog("[hw] ds3231 no time");
+            logError("hw", "ds3231 lostPower flag set; CR1220 backup battery may need replacement");
+        } else {
+            DateTime n = rtc.now();
+            // Sanity: lostPower clears once NTP writes back, but a bus glitch
+            // mid-read or bit-rot in the time registers could still produce a
+            // wildly wrong year while OSF stays clear. Refuse to seed the
+            // system clock with garbage; NTP will fill in shortly.
+            if (n.year() >= 2024 && n.year() <= 2100) {
+                struct timeval tv;
+                tv.tv_sec = n.unixtime();
+                tv.tv_usec = 0;
+                settimeofday(&tv, NULL);
+                bootLog("[hw] ds3231 preseeded");
+            } else {
+                bootLog("[hw] ds3231 bad year");
+            }
+        }
+    }
 
     bootLog("[net] wifi connecting");
     WiFi.mode(WIFI_STA);
@@ -2468,16 +3510,31 @@ void setup() {
         retry++;
     }
     if (retry == 30) {
-        // SNTP daemon keeps retrying in background; boot continues
+        // SNTP daemon keeps retrying in background; boot continues. The
+        // main loop has a watchdog (see `if (bootTime == 0 ...)` block)
+        // that re-captures bootTime once NTP eventually arrives.
         Serial.println("NTP not yet synced at boot; background sync continues");
         bootLog("[net] ntp pending");
     } else {
         Serial.println("NTP synced: " + getTimestamp());
-        if (getLocalTime(&timeinfo)) lastVisitorDay = timeinfo.tm_mday;
         bootTime = mktime(&timeinfo);
-        loadDailyVisitors();
+        // Stamp period start times if zero. Otherwise /history.json shows
+        // "Started: 1970-01-01" until the next period boundary.
+        uint32_t nowUnix = (uint32_t)bootTime;
+        if (currentWeek.started_unix  == 0) currentWeek.started_unix  = nowUnix;
+        if (currentMonth.started_unix == 0) currentMonth.started_unix = nowUnix;
+        if (currentYear.started_unix  == 0) currentYear.started_unix  = nowUnix;
         bootLog("[net] ntp ok");
+        // Write authoritative time back to DS3231. Also clears the lostPower
+        // flag if this was a fresh-battery boot.
+        if (rtcOk) {
+            rtc.adjust(DateTime(nowUnix));
+            bootLog("[hw] ds3231 ntp sync");
+        }
     }
+    // Loaded outside the NTP-success branch so a late-NTP boot doesn't
+    // zero out yesterday's daily count before the first visit lands.
+    loadDailyVisitors();
     // Independent of NTP: loading the persisted backup date is a pure SD read. If it were
     // inside the NTP-success branch, a late NTP sync would leave lastBackupDate empty and
     // trigger a duplicate same-day backup.
@@ -2485,15 +3542,21 @@ void setup() {
     // Restore the last Worker-confirmed commit state so the admin UI doesn't show "never
     // confirmed" after a reboot between backup completion and receiving the ack event.
     loadLastCommit();
+    // Restore maintenance state so the admin panel still shows "active" if a
+    // reboot happened mid-window. Worker DO is authoritative for whether the
+    // public site shows the maintenance page; this just keeps the admin UI
+    // honest after RAM was lost.
+    loadMaintenanceState();
 
     // Routes
 
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (redirectLanToWorker(request)) return;
         // AsyncWebServer routes URLs with adjacent slashes (e.g. "//anything") to this handler.
         // Reject those requests with a real 404 so they don't inflate visitor counts.
         String reqUrl = request->url();
         if (reqUrl != "/" && reqUrl.indexOf("//") >= 0) {
-            AsyncWebServerResponse *r = request->beginResponse(SD, "/404.html", "text/html");
+            AsyncWebServerResponse *r = beginResponseGzipOrRaw(request, "/404.html", "text/html");
             r->setCode(404);
             request->send(r);
             return;
@@ -2537,17 +3600,18 @@ void setup() {
             tallyCountry(cc);
         }
 
-        request->send(SD, "/index.html", "text/html");
+        sendGzipOrRaw(request, "/index.html", "text/html");
         logConsole(request, 200);
     });
 
-    server.on("/stats", HTTP_GET, [](AsyncWebServerRequest *request) {
-        String json = buildStatsJson();
-        request->send(200, "application/json", json);
-        logConsole(request, 200);
-    });
+    // /stats is intentionally NOT registered via server.on() because
+    // ESPAsyncWebServer's path matching is prefix-based: server.on("/stats", ...)
+    // also matches /stats/weekly/<label>, shadowing the archive-label handlers
+    // in onNotFound below. Handling it in onNotFound (where exact-match string
+    // comparison is the routing logic) avoids that collision.
 
     server.on("/countries", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (redirectLanToWorker(request)) return;
         String json;
         json.reserve(512);
         json = "{";
@@ -2557,21 +3621,29 @@ void setup() {
         }
         json += "}";
         AsyncWebServerResponse *r = request->beginResponse(200, "application/json", json);
-        // 60s edge cache. Country list updates only when a new country's first visitor arrives;
-        // up to a minute of staleness is fine and drastically reduces refresh-spam load.
         r->addHeader("Cache-Control", "public, max-age=60");
         request->send(r);
         logConsole(request, 200);
     });
 
     server.on("/console", HTTP_GET, [](AsyncWebServerRequest *request) {
-        AsyncWebServerResponse *r = request->beginResponse(SD, "/console.html", "text/html");
+        if (redirectLanToWorker(request)) return;
+        AsyncWebServerResponse *r = beginResponseGzipOrRaw(request, "/console.html", "text/html");
+        r->addHeader("Cache-Control", "public, max-age=300");
+        request->send(r);
+        logConsole(request, 200);
+    });
+
+    server.on("/about", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (redirectLanToWorker(request)) return;
+        AsyncWebServerResponse *r = beginResponseGzipOrRaw(request, "/about.html", "text/html");
         r->addHeader("Cache-Control", "public, max-age=300");
         request->send(r);
         logConsole(request, 200);
     });
 
     server.on("/console.json", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (redirectLanToWorker(request)) return;
         String json;
         json.reserve(5120);
         json = "[";
@@ -2594,6 +3666,7 @@ void setup() {
     });
 
     server.on("/records.json", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (redirectLanToWorker(request)) return;
         String json;
         json.reserve(512);
         json = "{";
@@ -2612,7 +3685,7 @@ void setup() {
         rec("highest_temp_f",    rec_highest_temp_f,    false, false);
         rec("lowest_temp_f",     rec_lowest_temp_f,     false, false);
         rec("most_visitors_day", rec_most_visitors_day, false, true);
-        rec("longest_uptime_d",  rec_longest_uptime_d,  true,  true);
+        rec("longest_uptime_d",  rec_longest_uptime_d,  true,  false);
         json += "}";
         AsyncWebServerResponse *r = request->beginResponse(200, "application/json", json);
         r->addHeader("Cache-Control", "public, max-age=300");
@@ -2634,11 +3707,21 @@ void setup() {
     };
     for (auto& f : staticFiles) {
         server.on(f.path, HTTP_GET, [f](AsyncWebServerRequest *request) {
+            if (redirectLanToWorker(request)) return;
             AsyncWebServerResponse *response = request->beginResponse(SD, f.path, f.type);
             response->addHeader("Cache-Control", "public, max-age=86400");
             request->send(response);
         });
     }
+
+    // /_stream is served by the Worker, not the device. On LAN (direct to
+    // ESP) this path has no handler, so it used to fall through to
+    // onNotFound → 404.html. EventSource auto-retries 404 responses every
+    // ~3 seconds forever, which under sustained LAN viewing pile-drove the
+    // TCP stack. HTTP 204 is the spec-defined "stop permanently" signal.
+    server.on("/_stream", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send(204);
+    });
 
     server.on("/ping", HTTP_GET, [](AsyncWebServerRequest *request) {
         AsyncWebServerResponse *r = request->beginResponse(200, "text/plain", "pong");
@@ -2688,11 +3771,20 @@ void setup() {
             "Disallow: /admin\n"
             "Disallow: /_upload\n"
             "Disallow: /_ota\n"
+            "Disallow: /_stream\n"
             "Disallow: /guestbook/submit\n"
             "Disallow: /guestbook/entries\n"
             "Disallow: /guestbook/pending\n"
             "Disallow: /guestbook/moderate\n"
+            "Disallow: /guestbook/replies\n"
+            "Disallow: /guestbook/locate\n"
+            "Disallow: /guestbook/translate\n"
             "Disallow: /countries\n"
+            "Disallow: /console.json\n"
+            "Disallow: /history.json\n"
+            "Disallow: /records.json\n"
+            "Disallow: /snake/seed\n"
+            "Disallow: /snake/score\n"
             "\n"
             "Sitemap: https://helloesp.com/sitemap.xml\n");
     });
@@ -2705,6 +3797,7 @@ void setup() {
             "  <url><loc>https://helloesp.com/guestbook</loc><changefreq>daily</changefreq><priority>0.8</priority></url>\n"
             "  <url><loc>https://helloesp.com/history</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>\n"
             "  <url><loc>https://helloesp.com/console</loc><changefreq>always</changefreq><priority>0.5</priority></url>\n"
+            "  <url><loc>https://helloesp.com/about</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>\n"
             "  <url><loc>https://helloesp.com/changelog.rss</loc><changefreq>monthly</changefreq><priority>0.4</priority></url>\n"
             "  <url><loc>https://helloesp.com/guestbook.rss</loc><changefreq>daily</changefreq><priority>0.4</priority></url>\n"
             "</urlset>\n");
@@ -2715,7 +3808,7 @@ void setup() {
     // keep this list in sync with the changelog section in index.html
     server.on("/changelog.rss", HTTP_GET, [](AsyncWebServerRequest *request) {
         String rss;
-        rss.reserve(2048);
+        rss.reserve(3500);
         rss = F("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                 "<rss version=\"2.0\"><channel>"
                 "<title>HelloESP | Changelog</title>"
@@ -2733,6 +3826,20 @@ void setup() {
             rss += text;
             rss += "</description></item>";
         };
+        item("Apr 29, 2026", "Wed, 29 Apr 2026 12:00:00 GMT",
+             "Added a DS3231 real-time clock module on the breadboard. Boot logs and timestamps are correct right away instead of being wrong for a few seconds until NTP syncs. History page got a year-grouped collapsible layout that stays readable as archives pile up over time. New /about page with the short version of the project story for casual visitors.");
+        item("Apr 27, 2026", "Mon, 27 Apr 2026 12:00:00 GMT",
+             "Snake now has a global leaderboard. Top 10 with 3-letter initials, shared across the 404, offline, and timeout pages. Anti-cheat is server-side: the worker hands out a seed at game start, you submit your move log on game over, and the worker replays it to confirm the score. Only way onto the board is actually playing.");
+        item("Apr 26, 2026", "Sun, 26 Apr 2026 12:00:00 GMT",
+             "Snake added to the 404, offline, and timeout fallback pages. WebSocket reconnect path is simpler now and recovers faster from transient drops.");
+        item("Apr 25, 2026", "Sat, 25 Apr 2026 12:00:00 GMT",
+             "Live uptime's &quot;Best&quot; substat shows from the start instead of waiting a full day.");
+        item("Apr 24, 2026", "Fri, 24 Apr 2026 12:00:00 GMT",
+             "Homepage sections lazy-load now, so quick visitors don't fetch things they never scroll to. Inline one-tap translate on non-English guestbook entries via Cloudflare Workers AI. Reply forms got the same character counter as the main form. Console flag tooltips show the full country name on hover.");
+        item("Apr 23, 2026", "Thu, 23 Apr 2026 12:00:00 GMT",
+             "Guestbook got two-level reply threading with inline previews and per-message share/copy links. Pagination expanded with a jump-to-page input once past 10 pages. Moderation deletes now tombstone, so the reply chain stays intact with the original message blanked. HTML pages now serve pre-gzipped, cutting transfer size about 4&times; on every page load.");
+        item("Apr 21, 2026", "Tue, 21 Apr 2026 12:00:00 GMT",
+             "Fixed a URL quirk where &quot;//anything&quot; was leaking through as a page view. Visitors had discovered it and were &quot;chatting&quot; by putting messages in URLs that showed up on the console. Those now return a proper 404. Reboots switched to a deep-sleep wakeup so the device comes back cleanly after OTA updates, instead of needing a physical power cycle.");
         item("Apr 19, 2026", "Sun, 19 Apr 2026 12:00:00 GMT",
              "Public relaunch on a fresh ESP32. Full rebuild: air quality sensors, historical charts, guestbook with moderation, admin panel, OLED dashboard, daily off-site backups, and a Cloudflare Worker relay so it can live on WiFi without a tunnel.");
         item("Nov 2023", "Wed, 15 Nov 2023 12:00:00 GMT",
@@ -2762,6 +3869,11 @@ void setup() {
             if (!adminAuth(request)) return;
             String path = request->hasParam("path", true) ? request->getParam("path", true)->value() : "/";
             if (!safePath(path)) { request->send(400, "text/plain", "Invalid path"); return; }
+            if (uploadRejectedExisting) {
+                uploadRejectedExisting = false;
+                request->send(409, "text/plain", "File exists; resubmit with overwrite=1 to replace");
+                return;
+            }
             request->send(200, "text/plain", "OK");
         },
         [](AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final) {
@@ -2778,9 +3890,17 @@ void setup() {
             if (path != "/" && !path.endsWith("/")) path += "/";
 
             if (index == 0) {
+                uploadRejectedExisting = false;
                 // Close any handle left over from a prior aborted upload before reopening.
                 if (uploadFile) uploadFile.close();
                 String fullPath = path + filename;
+                bool wantOverwrite = request->hasParam("overwrite", true) &&
+                                     request->getParam("overwrite", true)->value() == "1";
+                if (SD.exists(fullPath) && !wantOverwrite) {
+                    uploadRejectedExisting = true;
+                    Serial.println("Upload rejected (exists, no overwrite): " + fullPath);
+                    return;
+                }
                 uploadFile = SD.open(fullPath, FILE_WRITE);
                 if (!uploadFile) {
                     Serial.println("Upload failed to open: " + fullPath);
@@ -2803,8 +3923,12 @@ void setup() {
     server.on("/_ota", HTTP_POST,
         [](AsyncWebServerRequest *request) {
             if (!adminAuth(request)) return;
-            bool success = !Update.hasError();
-            request->send(200, "text/plain", success ? "OTA success, rebooting..." : "OTA failed");
+            // Require BOTH no-error AND finished. `hasError()` can be false
+            // on a clean-but-truncated upload (no `final=true` chunk ever
+            // arrived); rebooting at that point flashes a partial image.
+            // isFinished() flips true only after Update.end(true) succeeded.
+            bool success = !Update.hasError() && Update.isFinished();
+            request->send(200, "text/plain", success ? "OTA success, rebooting..." : "OTA failed (truncated or invalid image)");
             if (success) {
                 delay(500);
                 cleanRestart();
@@ -2818,23 +3942,41 @@ void setup() {
             if (isAuthLockedOut((uint32_t)request->client()->remoteIP())) return;
             if (!request->authenticate(cfgAdminUser, cfgAdminPass)) return;
 
+            // Per-request flag tracking whether Update.end has already run
+            // for this stream. Multipart edge cases (re-entry, retransmits)
+            // could otherwise call Update.write after Update.end, which is
+            // undefined and could leave the partition table inconsistent.
+            static bool otaCommitted = false;
+
             if (index == 0) {
+                otaCommitted = false;
                 Serial.println("OTA update start: " + filename);
                 if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
                     Update.printError(Serial);
+                    // Defensive: don't process this chunk. The isRunning()
+                    // check below catches this case too, but early return
+                    // makes the failure path explicit and safer against
+                    // future refactors.
+                    return;
                 }
             }
             lastUploadChunkMs = millis();
-            if (Update.isRunning()) {
+            if (Update.isRunning() && !otaCommitted) {
                 if (Update.write(data, len) != len) {
                     Update.printError(Serial);
+                    // Abort so the next OTA can start; without this the slot
+                    // stays in-progress until reboot and Update.begin() fails.
+                    Update.abort();
+                    otaCommitted = true;
                 }
             }
-            if (final) {
+            if (final && !otaCommitted) {
+                otaCommitted = true;
                 if (Update.end(true)) {
                     Serial.println("OTA complete: " + String(index + len) + " bytes");
                 } else {
                     Update.printError(Serial);
+                    if (Update.isRunning()) Update.abort();
                 }
             }
         }
@@ -2843,9 +3985,34 @@ void setup() {
     server.onNotFound([](AsyncWebServerRequest *request) {
         String url = request->url();
 
+        // Worker-exclusive redirect: applies to all public-facing read endpoints
+        // routed through onNotFound. Skip for admin paths (handled below by
+        // returning early before adminAuth checks) and internal endpoints.
+        // Routes that should continue serving on LAN even in exclusive mode:
+        //   - /admin and /admin/* (auth surface)
+        //   - /_ws, /_upload, /_ota, /_stream (internal)
+        //   - /ping (health)
+        //   - /robots.txt, /sitemap.xml (bot-facing, harmless to serve)
+        //   - /guestbook/submit, /guestbook/translate (POST endpoints; redirects
+        //     don't preserve POST body, so let them serve direct)
+        // Anything else gets the redirect when cfgWorkerExclusive is on.
+        if (cfgWorkerExclusive
+            && !url.startsWith("/admin")
+            && !url.startsWith("/_")
+            && url != "/ping"
+            && url != "/robots.txt"
+            && url != "/sitemap.xml"
+            && request->method() == HTTP_GET) {
+            if (redirectLanToWorker(request)) return;
+        }
+
         if (url == "/history") {
-            AsyncWebServerResponse *r = request->beginResponse(SD, "/history.html", "text/html");
-            r->addHeader("Cache-Control", "public, max-age=3600");
+            // 5-min cache to match /console. Short enough that bursts of repeat
+            // visits dedupe at the edge but most distinct user visits still hit
+            // the device (LED blinks, console event fires). Dynamic data on
+            // the page loads via separately-cached JSON endpoints.
+            AsyncWebServerResponse *r = beginResponseGzipOrRaw(request, "/history.html", "text/html");
+            r->addHeader("Cache-Control", "public, max-age=300");
             request->send(r);
             logConsole(request, 200);
             return;
@@ -2867,6 +4034,12 @@ void setup() {
                         File f = dir.openNextFile();
                         if (!f) break;
                         String n = String(f.name());
+                        // openNextFile() returns full path on this library
+                        // version; strip directory prefix so labels in
+                        // history.json are bare (e.g. "2026-W17", not
+                        // "/stats/weekly/2026-W17").
+                        int lastSlash = n.lastIndexOf('/');
+                        if (lastSlash >= 0) n = n.substring(lastSlash + 1);
                         if (n.endsWith(".json")) {
                             if (!first) json += ",";
                             json += "\"" + jsonEscape(n.substring(0, n.length() - 5)) + "\"";
@@ -2950,12 +4123,26 @@ void setup() {
             return;
         }
 
+        if (url == "/stats" && request->method() == HTTP_GET) {
+            String json = buildStatsJson();
+            request->send(200, "application/json", json);
+            logConsole(request, 200);
+            return;
+        }
+
         if (url == "/logs/today") {
             String filename = getLogFilename();
             if (SD.exists(filename)) {
-                request->send(SD, filename, "text/csv");
+                // Go through beginResponseGzipOrRaw rather than the
+                // (FS, path, type) overload directly. That overload
+                // re-opens the file internally and null-derefs under
+                // VFS FD pool exhaustion. The helper opens manually,
+                // null-checks, and returns 503 if SD is saturated.
+                // CSVs aren't pre-gzipped so the helper falls through
+                // to its raw-file path.
+                request->send(beginResponseGzipOrRaw(request, filename.c_str(), "text/csv"));
             } else {
-                AsyncWebServerResponse *r = request->beginResponse(SD, "/404.html", "text/html");
+                AsyncWebServerResponse *r = beginResponseGzipOrRaw(request, "/404.html", "text/html");
                 r->setCode(404);
                 request->send(r);
             }
@@ -2977,6 +4164,11 @@ void setup() {
                         File f = yearDir.openNextFile();
                         if (!f) break;
                         String n = String(f.name());
+                        // Strip directory prefix; openNextFile() returns
+                        // full path on this library version. See history.json
+                        // handler for matching pattern.
+                        int lastSlash = n.lastIndexOf('/');
+                        if (lastSlash >= 0) n = n.substring(lastSlash + 1);
                         if (n.endsWith(".csv")) {
                             if (!first) json += ",";
                             json += "\"" + jsonEscape(n.substring(0, n.length() - 4)) + "\"";
@@ -2986,6 +4178,8 @@ void setup() {
                     }
                 } else {
                     String n = String(yearDir.name());
+                    int lastSlash = n.lastIndexOf('/');
+                    if (lastSlash >= 0) n = n.substring(lastSlash + 1);
                     if (n.endsWith(".csv")) {
                         if (!first) json += ",";
                         json += "\"" + jsonEscape(n.substring(0, n.length() - 4)) + "\"";
@@ -3008,9 +4202,10 @@ void setup() {
                 String filename = "/logs/" + year + "/" + date + ".csv";
                 if (!SD.exists(filename)) filename = "/logs/" + date + ".csv";
                 if (SD.exists(filename)) {
-                    request->send(SD, filename, "text/csv");
+                    // Same FD-safe pattern as /logs/today above.
+                    request->send(beginResponseGzipOrRaw(request, filename.c_str(), "text/csv"));
                 } else {
-                    AsyncWebServerResponse *r = request->beginResponse(SD, "/404.html", "text/html");
+                    AsyncWebServerResponse *r = beginResponseGzipOrRaw(request, "/404.html", "text/html");
                     r->setCode(404);
                     request->send(r);
                 }
@@ -3020,7 +4215,14 @@ void setup() {
 
         // guestbook
         if (url == "/guestbook") {
-            request->send(SD, "/guestbook.html", "text/html");
+            // 5-min cache, consistent with /console and /history. The HTML is
+            // a static wrapper; entries/replies/translations load via XHR with
+            // their own per-endpoint cache headers, so freshness of dynamic
+            // content is unaffected. Form submission, permalinks, and search
+            // (which uses query params, busting the cache key) all still work.
+            AsyncWebServerResponse *r = beginResponseGzipOrRaw(request, "/guestbook.html", "text/html");
+            r->addHeader("Cache-Control", "public, max-age=300");
+            request->send(r);
             logConsole(request, 200);
             return;
         }
@@ -3056,13 +4258,14 @@ void setup() {
                 return;
             }
 
-            // First pass: total approved + unique countries (kept global so the
-            // header is stable across searches), plus match count if q is set.
+            // First pass: total approved top-level + unique countries (kept global
+            // so the header is stable across searches), plus match count if q is set.
+            // Replies (reply_to non-empty) are excluded from the public listing;
+            // they're surfaced only via /guestbook/replies?id=<parent>.
             int totalApproved = 0;
             int totalMatching = 0;
             uint16_t seenCountries[256];
             int seenCountryCount = 0;
-
             char line[400];
             while (f.available()) {
                 int n = f.readBytesUntil('\n', line, sizeof(line) - 1);
@@ -3070,23 +4273,24 @@ void setup() {
                 line[n] = '\0';
                 while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
                 if (n == 0) continue;
-                // v2 schema: time,country,name,message,id,status
-                // c1..c4 = first four commas; cLast = fifth (just before status).
-                int c1 = -1, c2 = -1, c3 = -1, c4 = -1, cLast = -1;
+                // v3 schema: time,country,name,message,id,reply_to,status
+                int c1 = -1, c2 = -1, c3 = -1, c4 = -1, c5 = -1, cLast = -1;
                 for (int j = 0; j < n; j++) {
                     if (line[j] == ',') {
                         if      (c1 < 0) c1 = j;
                         else if (c2 < 0) c2 = j;
                         else if (c3 < 0) c3 = j;
                         else if (c4 < 0) c4 = j;
+                        else if (c5 < 0) c5 = j;
                         cLast = j;
                     }
                 }
-                if (c1 < 0 || c2 < 0 || c3 < 0 || c4 < 0 || cLast < 0) continue;
+                if (c1 < 0 || c2 < 0 || c3 < 0 || c4 < 0 || c5 < 0 || cLast < 0) continue;
                 if (line[n-1] != '1') continue;  // only approved
+                if (cLast - c5 > 1) continue;    // skip replies (reply_to non-empty)
                 totalApproved++;
 
-                // Unique-country tally over all approved entries.
+                // Unique-country tally over all approved top-level entries.
                 int ccLen = c2 - c1 - 1;
                 if (ccLen >= 2) {
                     uint16_t key = ((uint8_t)line[c1 + 1] << 8) | (uint8_t)line[c1 + 2];
@@ -3099,13 +4303,11 @@ void setup() {
                     }
                 }
 
-                if (isSearch) {
-                    bool qMatch = containsCI(line + c2 + 1, c3 - c2 - 1, qCstr, qLen) ||
-                                  containsCI(line + c3 + 1, c4 - c3 - 1, qCstr, qLen);
-                    if (qMatch) totalMatching++;
-                }
+                bool qMatch = !isSearch || (
+                    containsCI(line + c2 + 1, c3 - c2 - 1, qCstr, qLen) ||
+                    containsCI(line + c3 + 1, c4 - c3 - 1, qCstr, qLen));
+                if (qMatch) totalMatching++;
             }
-            if (!isSearch) totalMatching = totalApproved;
 
             if (totalMatching == 0) {
                 f.close();
@@ -3137,7 +4339,7 @@ void setup() {
             // Second pass: stash the 20 rows for this page. Read oldest-first,
             // render in reverse later to get newest-on-top display.
             static char pageEntries[20][400];
-            int pageLens[20];
+            int pageLens[20] = {0};
             int pageCount = 0;
             int matchingIdx = 0;
 
@@ -3148,18 +4350,20 @@ void setup() {
                 line[n] = '\0';
                 while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
                 if (n == 0) continue;
-                int c1 = -1, c2 = -1, c3 = -1, c4 = -1, cLast = -1;
+                int c1 = -1, c2 = -1, c3 = -1, c4 = -1, c5 = -1, cLast = -1;
                 for (int j = 0; j < n; j++) {
                     if (line[j] == ',') {
                         if      (c1 < 0) c1 = j;
                         else if (c2 < 0) c2 = j;
                         else if (c3 < 0) c3 = j;
                         else if (c4 < 0) c4 = j;
+                        else if (c5 < 0) c5 = j;
                         cLast = j;
                     }
                 }
-                if (c1 < 0 || c2 < 0 || c3 < 0 || c4 < 0 || cLast < 0) continue;
+                if (c1 < 0 || c2 < 0 || c3 < 0 || c4 < 0 || c5 < 0 || cLast < 0) continue;
                 if (line[n-1] != '1') continue;
+                if (cLast - c5 > 1) continue;  // skip replies
                 if (isSearch) {
                     bool qMatch = containsCI(line + c2 + 1, c3 - c2 - 1, qCstr, qLen) ||
                                   containsCI(line + c3 + 1, c4 - c3 - 1, qCstr, qLen);
@@ -3173,43 +4377,178 @@ void setup() {
                 matchingIdx++;
                 if (matchingIdx > toIdx) break;
             }
-            f.close();
+
+            // Third pass: count descendants per page entry (reply_count) and
+            // stash file offsets of up to 2 preview-candidate rows per entry.
+            // Level-2 rows always follow their level-1 parent in the CSV
+            // (append-only), so a single forward pass resolves the tree.
+            // Offsets instead of full-row stashing: 160 bytes of stack vs the
+            // 16KB static buffer that was fragmenting heap. Emit loop seeks
+            // directly to each offset rather than rescanning the whole file.
+            int replyCounts[20] = {0};
+            uint32_t previewOffsets[20][2];
+            int previewCount[20] = {0};
+            static const int MAX_L1 = 200;
+            static char level1Ids[MAX_L1][8];
+            static int  level1PageIdx[MAX_L1];
+            int  level1Count = 0;
+            char pageIds[20][8];
+            if (pageCount > 0) {
+                for (int i = 0; i < pageCount; i++) {
+                    const char* lp = pageEntries[i];
+                    int len = pageLens[i];
+                    int k = 0, cnt = 0, c4pos = -1;
+                    for (; k < len; k++) {
+                        if (lp[k] == ',' && ++cnt == 4) { c4pos = k; break; }
+                    }
+                    if (c4pos >= 0 && c4pos + 9 <= len) {
+                        memcpy(pageIds[i], lp + c4pos + 1, 8);
+                    } else {
+                        memset(pageIds[i], 0, 8);
+                    }
+                }
+
+                f.seek(0);
+                while (f.available()) {
+                    uint32_t rowStart = f.position();
+                    int n = f.readBytesUntil('\n', line, sizeof(line) - 1);
+                    if (n <= 0) continue;
+                    line[n] = '\0';
+                    while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
+                    if (n == 0) continue;
+                    char s = line[n-1];
+                    if (s != '1' && s != '3') continue;
+                    int c1 = -1, c2 = -1, c3 = -1, c4 = -1, c5 = -1, cLast = -1;
+                    for (int j = 0; j < n; j++) {
+                        if (line[j] == ',') {
+                            if      (c1 < 0) c1 = j;
+                            else if (c2 < 0) c2 = j;
+                            else if (c3 < 0) c3 = j;
+                            else if (c4 < 0) c4 = j;
+                            else if (c5 < 0) c5 = j;
+                            cLast = j;
+                        }
+                    }
+                    if (c5 < 0 || cLast < 0) continue;
+                    int replyToLen = cLast - c5 - 1;
+                    if (replyToLen != 8) continue;  // top-level or malformed
+                    const char* rt = line + c5 + 1;
+                    int pageIdx = -1;
+                    bool isLevel1 = false;
+                    for (int i = 0; i < pageCount; i++) {
+                        if (memcmp(rt, pageIds[i], 8) == 0) { pageIdx = i; isLevel1 = true; break; }
+                    }
+                    if (!isLevel1) {
+                        for (int i = 0; i < level1Count; i++) {
+                            if (memcmp(rt, level1Ids[i], 8) == 0) { pageIdx = level1PageIdx[i]; break; }
+                        }
+                    }
+                    if (pageIdx < 0) continue;
+                    replyCounts[pageIdx]++;
+                    if (isLevel1 && level1Count < MAX_L1) {
+                        memcpy(level1Ids[level1Count], line + c4 + 1, 8);
+                        level1PageIdx[level1Count] = pageIdx;
+                        level1Count++;
+                    }
+                    // Stash offset of up to 2 approved descendants per entry.
+                    // Final emission depends on the entry's total reply_count.
+                    if (s == '1' && previewCount[pageIdx] < 2) {
+                        previewOffsets[pageIdx][previewCount[pageIdx]] = rowStart;
+                        previewCount[pageIdx]++;
+                    }
+                }
+            }
+            // f stays open here; emit loop seeks to stashed offsets.
 
             String json;
-            // jsonEscape can double a 200-char message worst case, so budget
-            // ~650 bytes per entry. Single alloc, no mid-build reallocs.
-            json.reserve(256 + pageCount * 650);
+            // Heap-friendly reserve: budget ~800 bytes per entry (covers
+            // typical message + preview replies; worst-case escaping grows
+            // via realloc if needed). Dropped from 2000/entry (40KB peak
+            // for 20 entries) because the 40KB contiguous block was
+            // competing with mbedtls's 16KB TLS read buffer under LAN
+            // load, triggering "fillBuffer: Not enough memory" cascades.
+            // 16KB reserve fits comfortably alongside TLS state; if a
+            // specific page has heavy escaping, it grows naturally.
+            json.reserve(256 + pageCount * 800);
             json = "{\"entries\":[";
             bool first = true;
             for (int i = pageCount - 1; i >= 0; i--) {
                 const char* lp = pageEntries[i];
                 int len = pageLens[i];
-                int c1 = -1, c2 = -1, c3 = -1, c4 = -1, cLast = -1;
+                int c1 = -1, c2 = -1, c3 = -1, c4 = -1, c5 = -1, cLast = -1;
                 for (int j = 0; j < len; j++) {
                     if (lp[j] == ',') {
                         if      (c1 < 0) c1 = j;
                         else if (c2 < 0) c2 = j;
                         else if (c3 < 0) c3 = j;
                         else if (c4 < 0) c4 = j;
+                        else if (c5 < 0) c5 = j;
                         cLast = j;
                     }
                 }
-                if (c1 < 0 || c2 < 0 || c3 < 0 || c4 < 0 || cLast < 0 || cLast >= len - 1) continue;
+                if (c1 < 0 || c2 < 0 || c3 < 0 || c4 < 0 || c5 < 0 || cLast < 0 || cLast >= len - 1) continue;
 
                 String timeField(lp);             timeField.remove(c1);
                 String countryField(lp + c1 + 1); countryField.remove(c2 - c1 - 1);
                 String nameField(lp + c2 + 1);    nameField.remove(c3 - c2 - 1);
                 String messageField(lp + c3 + 1); messageField.remove(c4 - c3 - 1);
-                String idField(lp + c4 + 1);      idField.remove(cLast - c4 - 1);
+                String idField(lp + c4 + 1);      idField.remove(c5 - c4 - 1);
 
                 if (!first) json += ",";
                 json += "{\"time\":\""    + jsonEscape(timeField)    + "\",";
                 json += "\"country\":\""  + jsonEscape(countryField) + "\",";
                 json += "\"name\":\""     + jsonEscape(nameField)    + "\",";
                 json += "\"message\":\""  + jsonEscape(messageField) + "\",";
-                json += "\"id\":\""       + jsonEscape(idField)      + "\"}";
+                json += "\"id\":\""       + jsonEscape(idField)      + "\",";
+                json += "\"reply_count\":" + String(replyCounts[i]);
+                // Hybrid preview: bundle only when the thread is small enough
+                // that the preview IS the whole thread (<= 2 replies). Bigger
+                // threads get a "Show N replies" button instead. Pass 3 stashed
+                // the file offset of each candidate row; here we seek to each
+                // offset and read one line. Constant work per preview, no more
+                // O(n^2) full-file rescans under sustained load.
+                if (replyCounts[i] > 0 && replyCounts[i] <= 2 && previewCount[i] > 0) {
+                    json += ",\"preview_replies\":[";
+                    char pline[400];
+                    for (int p = 0; p < previewCount[i]; p++) {
+                        f.seek(previewOffsets[i][p]);
+                        int pn = f.readBytesUntil('\n', pline, sizeof(pline) - 1);
+                        if (pn <= 0) continue;
+                        pline[pn] = '\0';
+                        while (pn > 0 && (pline[pn-1] == '\r' || pline[pn-1] == ' ' || pline[pn-1] == '\t')) { pline[--pn] = '\0'; }
+                        if (pn == 0) continue;
+                        int pc1=-1,pc2=-1,pc3=-1,pc4=-1,pc5=-1,pcLast=-1;
+                        for (int j = 0; j < pn; j++) {
+                            if (pline[j] == ',') {
+                                if      (pc1 < 0) pc1 = j;
+                                else if (pc2 < 0) pc2 = j;
+                                else if (pc3 < 0) pc3 = j;
+                                else if (pc4 < 0) pc4 = j;
+                                else if (pc5 < 0) pc5 = j;
+                                pcLast = j;
+                            }
+                        }
+                        if (pc1<0||pc2<0||pc3<0||pc4<0||pc5<0||pcLast<0) continue;
+                        String pt(pline);             pt.remove(pc1);
+                        String pco(pline + pc1 + 1); pco.remove(pc2 - pc1 - 1);
+                        String pna(pline + pc2 + 1); pna.remove(pc3 - pc2 - 1);
+                        String pms(pline + pc3 + 1); pms.remove(pc4 - pc3 - 1);
+                        String pid(pline + pc4 + 1); pid.remove(pc5 - pc4 - 1);
+                        String prt(pline + pc5 + 1); prt.remove(pcLast - pc5 - 1);
+                        if (p > 0) json += ",";
+                        json += "{\"time\":\""    + jsonEscape(pt)  + "\",";
+                        json += "\"country\":\""  + jsonEscape(pco) + "\",";
+                        json += "\"name\":\""     + jsonEscape(pna) + "\",";
+                        json += "\"message\":\""  + jsonEscape(pms) + "\",";
+                        json += "\"id\":\""       + jsonEscape(pid) + "\",";
+                        json += "\"reply_to\":\"" + jsonEscape(prt) + "\"}";
+                    }
+                    json += "]";
+                }
+                json += "}";
                 first = false;
             }
+            f.close();
             json += "],\"hasMore\":" + String(hasMore ? "true" : "false");
             json += ",\"total\":" + String(totalApproved);
             json += ",\"countries\":" + String(seenCountryCount);
@@ -3224,9 +4563,11 @@ void setup() {
             return;
         }
 
-        // Given id=<id>, return the entry fields plus the page it lives on
-        // (1-indexed, newest-first) so the client can render the pinned block.
-        // Only approved entries are considered.
+        // Given id=<id>, return the top-level entry fields + page number that
+        // contains it. Accepts both top-level ids and reply ids (level-1 or
+        // level-2); for reply ids we trace up to the top-level and also emit
+        // target_id so the client can scroll to the specific reply after the
+        // pinned thread loads. Only approved rows are considered.
         if (url == "/guestbook/locate") {
             if (!request->hasParam("id")) {
                 request->send(400, "application/json", "{\"found\":false}");
@@ -3235,19 +4576,9 @@ void setup() {
             String idQuery = request->getParam("id")->value();
             idQuery.trim();
             idQuery.toLowerCase();
-            // 8-char Crockford base32: digits + lowercase minus i/l/o/u.
-            if (idQuery.length() != 8) {
+            if (!isValidCrockfordId(idQuery.c_str(), idQuery.length())) {
                 request->send(400, "application/json", "{\"found\":false}");
                 return;
-            }
-            for (size_t i = 0; i < 8; i++) {
-                char c = idQuery[i];
-                bool digit  = (c >= '0' && c <= '9');
-                bool letter = (c >= 'a' && c <= 'z') && c != 'i' && c != 'l' && c != 'o' && c != 'u';
-                if (!(digit || letter)) {
-                    request->send(400, "application/json", "{\"found\":false}");
-                    return;
-                }
             }
 
             if (!SD.exists("/guestbook.csv")) {
@@ -3257,47 +4588,125 @@ void setup() {
             File f = SD.open("/guestbook.csv", FILE_READ);
             if (!f) { request->send(200, "application/json", "{\"found\":false}"); return; }
 
-            // Count approved entries and snapshot the matched line in one pass
-            // so we can return fields + page number without a second scan.
-            int totalApproved = 0;
-            int matchOldestFirstIdx = -1;
             const char* idCstr = idQuery.c_str();
-            int idLen = idQuery.length();
 
-            // Snapshot slots. Filled on first match; the loop keeps running
-            // after that only to finish counting totalApproved for the page.
-            char matchedLine[400];
-            int mc1 = -1, mc2 = -1, mc3 = -1, mc4 = -1, mcLast = -1;
-
+            // Pass A: find the queried row (top-level or reply). Capture its
+            // reply_to so we can trace up on subsequent passes.
+            char queryReplyTo[9] = {0};
+            bool queryFound = false;
             char line[400];
-            int approvedIdx = 0;
             while (f.available()) {
                 int n = f.readBytesUntil('\n', line, sizeof(line) - 1);
                 if (n <= 0) continue;
                 line[n] = '\0';
                 while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
                 if (n == 0) continue;
-                // Locate commas.
-                int c1 = -1, c2 = -1, c3 = -1, c4 = -1, cLast = -1;
+                int c1=-1,c2=-1,c3=-1,c4=-1,c5=-1,cLast=-1;
                 for (int j = 0; j < n; j++) {
                     if (line[j] == ',') {
                         if      (c1 < 0) c1 = j;
                         else if (c2 < 0) c2 = j;
                         else if (c3 < 0) c3 = j;
                         else if (c4 < 0) c4 = j;
+                        else if (c5 < 0) c5 = j;
                         cLast = j;
                     }
                 }
-                if (c1 < 0 || c2 < 0 || c3 < 0 || c4 < 0 || cLast < 0) continue;
+                if (c1<0||c2<0||c3<0||c4<0||c5<0||cLast<0) continue;
                 if (line[n-1] != '1') continue;
-                int entryIdLen = cLast - c4 - 1;
-                if (entryIdLen == idLen &&
-                    memcmp(line + c4 + 1, idCstr, idLen) == 0 &&
+                int entryIdLen = c5 - c4 - 1;
+                if (entryIdLen != 8 || memcmp(line + c4 + 1, idCstr, 8) != 0) continue;
+                queryFound = true;
+                int replyToLen = cLast - c5 - 1;
+                if (replyToLen == 8) memcpy(queryReplyTo, line + c5 + 1, 8);
+                break;
+            }
+            if (!queryFound) { f.close(); request->send(200, "application/json", "{\"found\":false}"); return; }
+
+            char topLevelId[9] = {0};
+            bool queryIsTopLevel = (queryReplyTo[0] == '\0');
+            if (queryIsTopLevel) {
+                memcpy(topLevelId, idCstr, 8);
+            } else {
+                // Pass B: resolve the query's immediate parent to reach the
+                // top-level. Accept tombstones (status=3) here so that a
+                // permalink to an approved level-2 whose level-1 parent was
+                // tombstoned still resolves to the top-level thread.
+                f.seek(0);
+                bool parentFound = false;
+                while (f.available()) {
+                    int n = f.readBytesUntil('\n', line, sizeof(line) - 1);
+                    if (n <= 0) continue;
+                    line[n] = '\0';
+                    while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
+                    if (n == 0) continue;
+                    int c1=-1,c2=-1,c3=-1,c4=-1,c5=-1,cLast=-1;
+                    for (int j = 0; j < n; j++) {
+                        if (line[j] == ',') {
+                            if      (c1 < 0) c1 = j;
+                            else if (c2 < 0) c2 = j;
+                            else if (c3 < 0) c3 = j;
+                            else if (c4 < 0) c4 = j;
+                            else if (c5 < 0) c5 = j;
+                            cLast = j;
+                        }
+                    }
+                    if (c1<0||c2<0||c3<0||c4<0||c5<0||cLast<0) continue;
+                    if (line[n-1] != '1' && line[n-1] != '3') continue;
+                    int entryIdLen = c5 - c4 - 1;
+                    if (entryIdLen != 8 || memcmp(line + c4 + 1, queryReplyTo, 8) != 0) continue;
+                    parentFound = true;
+                    int replyToLen = cLast - c5 - 1;
+                    if (replyToLen == 0) {
+                        memcpy(topLevelId, queryReplyTo, 8);
+                    } else if (replyToLen == 8) {
+                        memcpy(topLevelId, line + c5 + 1, 8);
+                    }
+                    break;
+                }
+                if (!parentFound || topLevelId[0] == '\0') {
+                    f.close();
+                    request->send(200, "application/json", "{\"found\":false}");
+                    return;
+                }
+            }
+
+            // Pass C: snapshot the top-level row + count approved top-levels
+            // for page computation (matches /guestbook/entries pagination).
+            f.seek(0);
+            int totalApproved = 0;
+            int matchOldestFirstIdx = -1;
+            int approvedIdx = 0;
+            char matchedLine[400];
+            int mc1 = -1, mc2 = -1, mc3 = -1, mc4 = -1, mc5 = -1;
+            while (f.available()) {
+                int n = f.readBytesUntil('\n', line, sizeof(line) - 1);
+                if (n <= 0) continue;
+                line[n] = '\0';
+                while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
+                if (n == 0) continue;
+                int c1=-1,c2=-1,c3=-1,c4=-1,c5=-1,cLast=-1;
+                for (int j = 0; j < n; j++) {
+                    if (line[j] == ',') {
+                        if      (c1 < 0) c1 = j;
+                        else if (c2 < 0) c2 = j;
+                        else if (c3 < 0) c3 = j;
+                        else if (c4 < 0) c4 = j;
+                        else if (c5 < 0) c5 = j;
+                        cLast = j;
+                    }
+                }
+                if (c1<0||c2<0||c3<0||c4<0||c5<0||cLast<0) continue;
+                if (line[n-1] != '1') continue;
+                if (cLast - c5 > 1) continue;  // only top-levels participate in pagination
+                int entryIdLen = c5 - c4 - 1;
+                if (entryIdLen == 8 &&
+                    memcmp(line + c4 + 1, topLevelId, 8) == 0 &&
                     matchOldestFirstIdx < 0) {
                     matchOldestFirstIdx = approvedIdx;
                     memcpy(matchedLine, line, n);
                     matchedLine[n] = '\0';
-                    mc1 = c1; mc2 = c2; mc3 = c3; mc4 = c4; mcLast = cLast;
+                    mc1 = c1; mc2 = c2; mc3 = c3; mc4 = c4; mc5 = c5;
                 }
                 approvedIdx++;
                 totalApproved++;
@@ -3308,19 +4717,17 @@ void setup() {
                 request->send(200, "application/json", "{\"found\":false}");
                 return;
             }
-            // Convert to newest-first index, then to 1-based page number.
             int newestFirstIdx = totalApproved - 1 - matchOldestFirstIdx;
             int pageNum = (newestFirstIdx / 20) + 1;
 
-            // Pull fields out of the snapshot for the response body.
             String timeF(matchedLine);             timeF.remove(mc1);
             String countryF(matchedLine + mc1 + 1); countryF.remove(mc2 - mc1 - 1);
             String nameF(matchedLine + mc2 + 1);    nameF.remove(mc3 - mc2 - 1);
             String msgF(matchedLine + mc3 + 1);     msgF.remove(mc4 - mc3 - 1);
-            String idF(matchedLine + mc4 + 1);      idF.remove(mcLast - mc4 - 1);
+            String idF(matchedLine + mc4 + 1);      idF.remove(mc5 - mc4 - 1);
 
             String body;
-            body.reserve(512);
+            body.reserve(576);
             body = "{\"found\":true,\"page\":";
             body += pageNum;
             body += ",\"entry\":{";
@@ -3328,8 +4735,143 @@ void setup() {
             body += "\"country\":\""; body += jsonEscape(countryF); body += "\",";
             body += "\"name\":\"";    body += jsonEscape(nameF);    body += "\",";
             body += "\"message\":\""; body += jsonEscape(msgF);     body += "\",";
-            body += "\"id\":\"";      body += jsonEscape(idF);      body += "\"}}";
+            body += "\"id\":\"";      body += jsonEscape(idF);      body += "\"}";
+            if (!queryIsTopLevel) {
+                body += ",\"target_id\":\"";
+                body += idQuery;
+                body += "\"";
+            }
+            body += "}";
             request->send(200, "application/json", body);
+            logConsole(request, 200);
+            return;
+        }
+
+        // Full reply subtree for a top-level entry (direct + indirect replies).
+        // Two passes over the CSV:
+        //   Pass A: collect ids of direct replies (reply_to == topLevelId).
+        //   Pass B: emit any approved-or-tombstoned row whose reply_to is either
+        //           the top-level id (level-1) or any collected level-1 id
+        //           (level-2). Rows include their own reply_to so the client
+        //           can render "replying to X" attribution on level-2.
+        // Tombstones (status=3) are emitted with name+message empty and a
+        // removed=true flag so the client can render "[removed]" in place.
+        if (url == "/guestbook/replies") {
+            if (!request->hasParam("id")) {
+                request->send(400, "application/json", "{\"entries\":[]}");
+                return;
+            }
+            String pid = request->getParam("id")->value();
+            pid.trim();
+            pid.toLowerCase();
+            if (!isValidCrockfordId(pid.c_str(), pid.length())) {
+                request->send(400, "application/json", "{\"entries\":[]}");
+                return;
+            }
+
+            if (!SD.exists("/guestbook.csv")) {
+                request->send(200, "application/json", "{\"entries\":[]}");
+                return;
+            }
+            File f = SD.open("/guestbook.csv", FILE_READ);
+            if (!f) { request->send(200, "application/json", "{\"entries\":[]}"); return; }
+
+            const char* pidCstr = pid.c_str();
+            // Cap at 200 level-1 replies per top-level; realistic ceiling and
+            // bounds worst-case pass-B lookup cost.
+            static const int MAX_L1 = 200;
+            static char level1Ids[MAX_L1][8];
+            int level1Count = 0;
+
+            char line[400];
+            // Pass A.
+            while (f.available()) {
+                int n = f.readBytesUntil('\n', line, sizeof(line) - 1);
+                if (n <= 0) continue;
+                line[n] = '\0';
+                while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
+                if (n == 0) continue;
+                char s = line[n-1];
+                if (s != '1' && s != '3') continue;  // approved or tombstone
+                int c1 = -1, c2 = -1, c3 = -1, c4 = -1, c5 = -1, cLast = -1;
+                for (int j = 0; j < n; j++) {
+                    if (line[j] == ',') {
+                        if      (c1 < 0) c1 = j;
+                        else if (c2 < 0) c2 = j;
+                        else if (c3 < 0) c3 = j;
+                        else if (c4 < 0) c4 = j;
+                        else if (c5 < 0) c5 = j;
+                        cLast = j;
+                    }
+                }
+                if (c1 < 0 || c2 < 0 || c3 < 0 || c4 < 0 || c5 < 0 || cLast < 0) continue;
+                if (cLast - c5 - 1 != 8) continue;
+                if (memcmp(line + c5 + 1, pidCstr, 8) != 0) continue;
+                if (level1Count < MAX_L1) {
+                    memcpy(level1Ids[level1Count], line + c4 + 1, 8);
+                    level1Count++;
+                }
+            }
+
+            String json;
+            json.reserve(4096);
+            json = "{\"entries\":[";
+            bool first = true;
+
+            // Pass B: emit level-1 and level-2 rows chronologically.
+            f.seek(0);
+            while (f.available()) {
+                int n = f.readBytesUntil('\n', line, sizeof(line) - 1);
+                if (n <= 0) continue;
+                line[n] = '\0';
+                while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
+                if (n == 0) continue;
+                char s = line[n-1];
+                if (s != '1' && s != '3') continue;
+                int c1 = -1, c2 = -1, c3 = -1, c4 = -1, c5 = -1, cLast = -1;
+                for (int j = 0; j < n; j++) {
+                    if (line[j] == ',') {
+                        if      (c1 < 0) c1 = j;
+                        else if (c2 < 0) c2 = j;
+                        else if (c3 < 0) c3 = j;
+                        else if (c4 < 0) c4 = j;
+                        else if (c5 < 0) c5 = j;
+                        cLast = j;
+                    }
+                }
+                if (c1 < 0 || c2 < 0 || c3 < 0 || c4 < 0 || c5 < 0 || cLast < 0) continue;
+                int replyToLen = cLast - c5 - 1;
+                if (replyToLen != 8) continue;  // top-level row; not part of subtree
+                bool isLevel1 = (memcmp(line + c5 + 1, pidCstr, 8) == 0);
+                bool isLevel2 = false;
+                if (!isLevel1) {
+                    for (int i = 0; i < level1Count; i++) {
+                        if (memcmp(line + c5 + 1, level1Ids[i], 8) == 0) { isLevel2 = true; break; }
+                    }
+                    if (!isLevel2) continue;
+                }
+
+                String timeField(line);             timeField.remove(c1);
+                String countryField(line + c1 + 1); countryField.remove(c2 - c1 - 1);
+                String nameField(line + c2 + 1);    nameField.remove(c3 - c2 - 1);
+                String messageField(line + c3 + 1); messageField.remove(c4 - c3 - 1);
+                String idField(line + c4 + 1);      idField.remove(c5 - c4 - 1);
+                String replyToField(line + c5 + 1); replyToField.remove(cLast - c5 - 1);
+
+                if (!first) json += ",";
+                json += "{\"time\":\""    + jsonEscape(timeField)    + "\",";
+                json += "\"country\":\""  + jsonEscape(countryField) + "\",";
+                json += "\"name\":\""     + jsonEscape(nameField)    + "\",";
+                json += "\"message\":\""  + jsonEscape(messageField) + "\",";
+                json += "\"id\":\""       + jsonEscape(idField)      + "\",";
+                json += "\"reply_to\":\"" + jsonEscape(replyToField) + "\"";
+                if (s == '3') json += ",\"removed\":true";
+                json += "}";
+                first = false;
+            }
+            f.close();
+            json += "]}";
+            request->send(200, "application/json", json);
             logConsole(request, 200);
             return;
         }
@@ -3369,10 +4911,15 @@ void setup() {
                         String line = f.readStringUntil('\n');
                         line.trim();
                         if (line.length() == 0) continue;
+                        // v3: need last two commas (cLast=before status, c5=before reply_to)
+                        // to detect top-level (reply_to empty) approved rows.
                         int cLast = line.lastIndexOf(',');
                         if (cLast < 0) continue;
+                        int c5 = line.lastIndexOf(',', cLast - 1);
+                        if (c5 < 0) continue;
                         String a = line.substring(cLast + 1); a.trim();
                         if (a != "1") continue;
+                        if (cLast - c5 > 1) continue;  // skip replies
                         ring[head] = line;
                         head = (head + 1) % 20;
                         if (count < 20) count++;
@@ -3382,18 +4929,18 @@ void setup() {
                     for (int k = 0; k < count; k++) {
                         int idx = (head - 1 - k + 20) % 20;
                         String& line = ring[idx];
-                        // v2 schema: time,country,name,message,id,status
+                        // v3 schema: time,country,name,message,id,reply_to,status
                         int c1 = line.indexOf(',');
                         int c2 = line.indexOf(',', c1 + 1);
                         int c3 = line.indexOf(',', c2 + 1);
                         int c4 = line.indexOf(',', c3 + 1);
-                        int cLast = line.lastIndexOf(',');
-                        if (c1 < 0 || c2 < 0 || c3 < 0 || c4 < 0 || cLast < 0 || cLast <= c4) continue;
+                        int c5 = line.indexOf(',', c4 + 1);
+                        if (c1 < 0 || c2 < 0 || c3 < 0 || c4 < 0 || c5 < 0 || c5 <= c4) continue;
                         String t = line.substring(0, c1);
                         String country = line.substring(c1 + 1, c2);
                         String name = xmlEscape(line.substring(c2 + 1, c3));
                         String msg = xmlEscape(line.substring(c3 + 1, c4));
-                        String entryId = line.substring(c4 + 1, cLast);
+                        String entryId = line.substring(c4 + 1, c5);
                         rss += "<item><title>";
                         rss += name;
                         if (country.length() > 0 && country != "??") { rss += " ("; rss += country; rss += ")"; }
@@ -3443,17 +4990,45 @@ void setup() {
                 request->send(400, "text/plain", "Name (1-32 chars) and message (1-200 chars) required");
                 return;
             }
-            // strip control chars and neutralize CSV delimiters
+            // Strip control chars, neutralize CSV delimiters, and drop the
+            // Unicode bidi-override + invisible-formatting code points. UTF-8
+            // encodes those as fixed 3-byte sequences:
+            //   E2 80 8B..8F  (U+200B..U+200F, ZWSP/ZWNJ/ZWJ/LRM/RLM)
+            //   E2 80 AA..AE  (U+202A..U+202E, LRE/RLE/PDF/LRO/RLO)
+            //   E2 81 A6..A9  (U+2066..U+2069, LRI/RLI/FSI/PDI)
+            //   EF BB BF      (U+FEFF, BOM / ZWNBSP)
+            // Without this, an attacker can RTL-override a guestbook display
+            // name to spoof another entry in the rendered list.
             auto sanitizeCsv = [](String &s) {
                 String out;
                 out.reserve(s.length());
-                for (size_t i = 0; i < s.length(); i++) {
-                    char c = s[i];
-                    if ((unsigned char)c < 0x20 || c == 0x7F) continue;
-                    if (c == '\\') continue;
-                    if (c == ',') out += ' ';
-                    else if (c == '"') out += '\'';
-                    else out += c;
+                size_t i = 0;
+                while (i < s.length()) {
+                    unsigned char c = (unsigned char)s[i];
+                    if (c < 0x20 || c == 0x7F) { i++; continue; }
+                    if (c == '\\') { i++; continue; }
+                    if (c == ',')  { out += ' '; i++; continue; }
+                    if (c == '"')  { out += '\''; i++; continue; }
+                    // U+200B..U+200F, U+202A..U+202E (E2 80 ..)
+                    if (c == 0xE2 && i + 2 < s.length()
+                        && (unsigned char)s[i+1] == 0x80
+                        && (((unsigned char)s[i+2] >= 0x8B && (unsigned char)s[i+2] <= 0x8F) ||
+                            ((unsigned char)s[i+2] >= 0xAA && (unsigned char)s[i+2] <= 0xAE))) {
+                        i += 3; continue;
+                    }
+                    // U+2066..U+2069 (E2 81 A6..A9)
+                    if (c == 0xE2 && i + 2 < s.length()
+                        && (unsigned char)s[i+1] == 0x81
+                        && (unsigned char)s[i+2] >= 0xA6 && (unsigned char)s[i+2] <= 0xA9) {
+                        i += 3; continue;
+                    }
+                    // U+FEFF (EF BB BF)
+                    if (c == 0xEF && i + 2 < s.length()
+                        && (unsigned char)s[i+1] == 0xBB && (unsigned char)s[i+2] == 0xBF) {
+                        i += 3; continue;
+                    }
+                    out += (char)c;
+                    i++;
                 }
                 s = out;
                 s.trim();
@@ -3471,6 +5046,24 @@ void setup() {
                 ccBuf);
             String country(ccBuf);
 
+            // Optional reply_to: must be 8-char Crockford, must name an existing
+            // approved entry that is either top-level or itself a reply to a
+            // top-level entry. The data layer alone caps nesting at 2 levels.
+            String replyTo = request->hasParam("reply_to", true)
+                ? request->getParam("reply_to", true)->value() : String("");
+            replyTo.trim();
+            replyTo.toLowerCase();
+            if (replyTo.length() > 0) {
+                if (!isValidCrockfordId(replyTo.c_str(), replyTo.length())) {
+                    request->send(400, "text/plain", "Invalid reply target");
+                    return;
+                }
+                if (!isValidReplyParent(replyTo.c_str())) {
+                    request->send(400, "text/plain", "Reply target not found");
+                    return;
+                }
+            }
+
             File f = SD.open("/guestbook.csv", FILE_APPEND);
             if (!f) {
                 logError("sd", "guestbook.csv append failed");
@@ -3483,7 +5076,8 @@ void setup() {
             f.print(country);       f.print(",");
             f.print(name);          f.print(",");
             f.print(message);       f.print(",");
-            f.print(newId);         f.println(",0");
+            f.print(newId);         f.print(",");
+            f.print(replyTo);       f.println(",0");
             f.close();
             pendingGuestbook++;
             gbCountAll++;
@@ -3496,6 +5090,11 @@ void setup() {
             notifyEntryCountry[sizeof(notifyEntryCountry) - 1] = '\0';
             strncpy(notifyEntryMessage, message.c_str(), sizeof(notifyEntryMessage) - 1);
             notifyEntryMessage[sizeof(notifyEntryMessage) - 1] = '\0';
+            // Release fence: ensure the buffer writes above are visible to
+            // the main-loop reader before it sees pendingNotifyFlag=true.
+            // Without this, AsyncTCP (often core 0) can publish the flag
+            // before the strncpy stores propagate to core 1's view.
+            std::atomic_thread_fence(std::memory_order_release);
             pendingNotifyFlag = true;
 
             request->send(200, "text/plain", "Thanks! Your message will appear after review.");
@@ -3552,8 +5151,8 @@ void setup() {
             if (!f) { request->send(500, "text/plain", "Read failed"); return; }
 
             static char pageEntries[20][400];
-            int pageLens[20];
-            int pageIdxs[20];
+            int pageLens[20] = {0};
+            int pageIdxs[20] = {0};
             int pageCount = 0;
 
             char line[400];
@@ -3580,18 +5179,20 @@ void setup() {
                     line[n] = '\0';
                     while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
                     if (n == 0) continue;
-                    // v2 schema: time,country,name,message,id,status
-                    int c1 = -1, c2 = -1, c3 = -1, c4 = -1, cLast = -1;
+                    // v3 schema: time,country,name,message,id,reply_to,status
+                    int c1 = -1, c2 = -1, c3 = -1, c4 = -1, c5 = -1, cLast = -1;
                     for (int j = 0; j < n; j++) {
                         if (line[j] == ',') {
                             if      (c1 < 0) c1 = j;
                             else if (c2 < 0) c2 = j;
                             else if (c3 < 0) c3 = j;
                             else if (c4 < 0) c4 = j;
+                            else if (c5 < 0) c5 = j;
                             cLast = j;
                         }
                     }
-                    if (c1 < 0 || c2 < 0 || c3 < 0 || c4 < 0 || cLast < 0) continue;
+                    if (c1 < 0 || c2 < 0 || c3 < 0 || c4 < 0 || c5 < 0 || cLast < 0) continue;
+                    if (line[n-1] == '3') continue;  // tombstones are invisible to admin UI
                     const char* nameStart = line + c2 + 1;
                     int nameLen = c3 - c2 - 1;
                     const char* msgStart = line + c3 + 1;
@@ -3647,20 +5248,22 @@ void setup() {
                 while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
                 if (n == 0) continue;
 
+                if (line[n-1] == '3') { rawIdx++; continue; }  // hide tombstones from admin UI
                 bool statusMatches = matchAny || line[n-1] == wantStatus;
                 bool qMatches = true;
                 if (isSearch) {
-                    int c1 = -1, c2 = -1, c3 = -1, c4 = -1, cLast = -1;
+                    int c1 = -1, c2 = -1, c3 = -1, c4 = -1, c5 = -1, cLast = -1;
                     for (int j = 0; j < n; j++) {
                         if (line[j] == ',') {
                             if      (c1 < 0) c1 = j;
                             else if (c2 < 0) c2 = j;
                             else if (c3 < 0) c3 = j;
                             else if (c4 < 0) c4 = j;
+                            else if (c5 < 0) c5 = j;
                             cLast = j;
                         }
                     }
-                    if (c1 < 0 || c2 < 0 || c3 < 0 || c4 < 0 || cLast < 0) { rawIdx++; continue; }
+                    if (c1 < 0 || c2 < 0 || c3 < 0 || c4 < 0 || c5 < 0 || cLast < 0) { rawIdx++; continue; }
                     qMatches = containsCI(line + c2 + 1, c3 - c2 - 1, qCstr, qLen) ||
                                containsCI(line + c3 + 1, c4 - c3 - 1, qCstr, qLen);
                 }
@@ -3689,24 +5292,26 @@ void setup() {
             for (int i = pageCount - 1; i >= 0; i--) {
                 const char* lp = pageEntries[i];
                 int len = pageLens[i];
-                // v2 schema: time,country,name,message,id,status
-                int c1 = -1, c2 = -1, c3 = -1, c4 = -1, cLast = -1;
+                // v3 schema: time,country,name,message,id,reply_to,status
+                int c1 = -1, c2 = -1, c3 = -1, c4 = -1, c5 = -1, cLast = -1;
                 for (int j = 0; j < len; j++) {
                     if (lp[j] == ',') {
                         if      (c1 < 0) c1 = j;
                         else if (c2 < 0) c2 = j;
                         else if (c3 < 0) c3 = j;
                         else if (c4 < 0) c4 = j;
+                        else if (c5 < 0) c5 = j;
                         cLast = j;
                     }
                 }
-                if (c1 < 0 || c2 < 0 || c3 < 0 || c4 < 0 || cLast < 0 || cLast >= len - 1) continue;
+                if (c1 < 0 || c2 < 0 || c3 < 0 || c4 < 0 || c5 < 0 || cLast < 0 || cLast >= len - 1) continue;
 
                 String timeField(lp);             timeField.remove(c1);
                 String countryField(lp + c1 + 1); countryField.remove(c2 - c1 - 1);
                 String nameField(lp + c2 + 1);    nameField.remove(c3 - c2 - 1);
                 String messageField(lp + c3 + 1); messageField.remove(c4 - c3 - 1);
-                String idField(lp + c4 + 1);      idField.remove(cLast - c4 - 1);
+                String idField(lp + c4 + 1);      idField.remove(c5 - c4 - 1);
+                String replyToField(lp + c5 + 1); replyToField.remove(cLast - c5 - 1);
                 char statusChar = lp[cLast + 1];
 
                 if (!first) json += ",";
@@ -3716,89 +5321,13 @@ void setup() {
                 json += "\"name\":\""     + jsonEscape(nameField)    + "\",";
                 json += "\"message\":\""  + jsonEscape(messageField) + "\",";
                 json += "\"id\":\""       + jsonEscape(idField)      + "\",";
+                json += "\"reply_to\":\"" + jsonEscape(replyToField) + "\",";
                 json += "\"approved\":"; json += statusChar; json += "}";
                 first = false;
             }
             json += "],\"hasMore\":" + String(hasMore ? "true" : "false") + ",";
             json += buildCountsJson() + "}";
             request->send(200, "application/json", json);
-            return;
-        }
-
-        // guestbook moderation (single-entry endpoint; client code prefers the batch
-        // endpoint below for rapid moderation, but this remains for simple/legacy use).
-        if (url == "/guestbook/moderate" && request->method() == HTTP_POST) {
-            if (!adminAuth(request)) return;
-            if (!request->hasParam("idx", true) || !request->hasParam("status", true)) {
-                request->send(400, "text/plain", "Missing idx or status");
-                return;
-            }
-            int targetIdx = request->getParam("idx", true)->value().toInt();
-            String newStatusStr = request->getParam("status", true)->value();
-            if (newStatusStr != "0" && newStatusStr != "1" && newStatusStr != "2" && newStatusStr != "3") {
-                request->send(400, "text/plain", "Invalid status");
-                return;
-            }
-            char newStatus = newStatusStr.charAt(0);
-
-            if (!SD.exists("/guestbook.csv")) {
-                request->send(404, "text/plain", "No guestbook data");
-                return;
-            }
-
-            File f = SD.open("/guestbook.csv", FILE_READ);
-            if (!f) { request->send(500, "text/plain", "Read failed"); return; }
-            File out = SD.open("/guestbook.tmp", FILE_WRITE);
-            if (!out) { f.close(); request->send(500, "text/plain", "Write failed"); return; }
-
-            // Char-buffer streaming rewrite. No Arduino String allocations, so heap stays
-            // flat regardless of CSV size. Scales cleanly to tens of thousands of entries.
-            char line[400];
-            int idx = 0;
-            char oldStatusOfTarget = 0;  // captured to update counters after rename
-            while (f.available()) {
-                int n = f.readBytesUntil('\n', line, sizeof(line) - 1);
-                if (n <= 0) continue;
-                line[n] = '\0';
-                // trim trailing \r/space/tab
-                while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
-                if (n == 0) continue;
-                if (idx == targetIdx) {
-                    oldStatusOfTarget = line[n-1];  // last char is the current status
-                    if (newStatus == '3') {
-                        // Permanent delete: skip this line entirely (not written to tmp).
-                        idx++;
-                        continue;
-                    }
-                    line[n-1] = newStatus;
-                }
-                out.write((const uint8_t*)line, n);
-                out.write('\n');
-                idx++;
-            }
-            f.close();
-            out.close();
-
-            if (SD.exists("/guestbook.bak")) SD.remove("/guestbook.bak");
-            if (SD.exists("/guestbook.csv")) SD.rename("/guestbook.csv", "/guestbook.bak");
-            SD.rename("/guestbook.tmp", "/guestbook.csv");
-
-            // Update counters in-memory based on the transition. Avoids a full rescan.
-            if (oldStatusOfTarget != 0) {
-                if      (oldStatusOfTarget == '0') pendingGuestbook--;
-                else if (oldStatusOfTarget == '1') gbCountApproved--;
-                else if (oldStatusOfTarget == '2') gbCountDenied--;
-                if (newStatus == '3') {
-                    gbCountAll--;  // permanently deleted
-                } else {
-                    if      (newStatus == '0') pendingGuestbook++;
-                    else if (newStatus == '1') gbCountApproved++;
-                    else if (newStatus == '2') gbCountDenied++;
-                }
-            }
-            pendingNotifyFlag = true;
-
-            request->send(200, "text/plain", "Updated");
             return;
         }
 
@@ -3887,13 +5416,41 @@ void setup() {
                 if (applyStatus != 0) {
                     char oldS = line[n-1];
                     if (applyStatus == '3') {
-                        // permanent delete: skip line, track counter delta
-                        if      (oldS == '0') dPending--;
-                        else if (oldS == '1') dApproved--;
-                        else if (oldS == '2') dDenied--;
-                        dAll--;
-                        appliedCount++;
-                        anyDeletes = true;
+                        // Tombstone: rewrite with name + message blanked so the
+                        // row stays parseable and replies can still trace chain
+                        // continuity, but the original content is gone.
+                        int c1=-1,c2=-1,c3=-1,c4=-1,c5=-1,cLast=-1;
+                        for (int j = 0; j < n; j++) {
+                            if (line[j] == ',') {
+                                if      (c1 < 0) c1 = j;
+                                else if (c2 < 0) c2 = j;
+                                else if (c3 < 0) c3 = j;
+                                else if (c4 < 0) c4 = j;
+                                else if (c5 < 0) c5 = j;
+                                cLast = j;
+                            }
+                        }
+                        if (c1>=0&&c2>=0&&c3>=0&&c4>=0&&c5>=0&&cLast>=0) {
+                            if      (oldS == '0') dPending--;
+                            else if (oldS == '1') dApproved--;
+                            else if (oldS == '2') dDenied--;
+                            dAll--;
+                            appliedCount++;
+                            out.write((const uint8_t*)line, c2 + 1);
+                            out.write((uint8_t)',');
+                            out.write((uint8_t)',');
+                            out.write((const uint8_t*)(line + c4 + 1), cLast - c4);
+                            out.write((uint8_t)'3');
+                            out.write('\n');
+                            idx++;
+                            continue;
+                        }
+                        // Malformed row + tombstone op: pass through unchanged.
+                        // Falling into the status-change branch below would stamp
+                        // '3' onto the last byte and decrement counters without
+                        // balancing dAll, corrupting both the row and the totals.
+                        out.write((const uint8_t*)line, n);
+                        out.write('\n');
                         idx++;
                         continue;
                     }
@@ -3906,7 +5463,7 @@ void setup() {
                         else if (applyStatus == '2') dDenied++;
                         line[n-1] = applyStatus;
                     }
-                    appliedCount++;  // counted even for no-op transitions (client sent intent)
+                    appliedCount++;
                 }
                 out.write((const uint8_t*)line, n);
                 out.write('\n');
@@ -3925,10 +5482,11 @@ void setup() {
             gbCountAll      += dAll;
             pendingNotifyFlag = true;
 
-            // Response reports what actually matched + whether any deletes happened
-            // (clients use the deletes flag to know they must reload the entry list,
-            // since deleting a line shifts all subsequent indexes and stale data-idx
-            // values in the DOM would no longer map correctly).
+            // Response reports what actually matched + whether any hard-deletes
+            // happened. Currently always false: status=3 is a tombstone that keeps
+            // the row at the same idx, so client-side data-idx attributes stay
+            // valid. The flag is preserved as wire contract in case hard-delete
+            // ever returns; clients reload the list when it's true.
             char resp[96];
             snprintf(resp, sizeof(resp), "{\"applied\":%d,\"submitted\":%d,\"deletes\":%s}",
                      appliedCount, opCount, anyDeletes ? "true" : "false");
@@ -3939,7 +5497,7 @@ void setup() {
         // admin routes (safePath defined at file scope)
         if (url == "/admin") {
             if (!adminAuth(request)) return;
-            request->send(SD, "/admin.html", "text/html");
+            sendGzipOrRaw(request, "/admin.html", "text/html");
             return;
         }
 
@@ -3955,6 +5513,11 @@ void setup() {
                     File f = dir.openNextFile();
                     if (!f) break;
                     String name = String(f.name());
+                    // openNextFile() returns full path on this library
+                    // version; strip directory prefix so the recursive walk
+                    // builds clean paths instead of "//foo//foo/bar.bin".
+                    int lastSlash = name.lastIndexOf('/');
+                    if (lastSlash >= 0) name = name.substring(lastSlash + 1);
                     String fullPath = prefix + (prefix.endsWith("/") ? "" : "/") + name;
                     if (f.isDirectory()) {
                         File sub = SD.open(fullPath);
@@ -3987,15 +5550,37 @@ void setup() {
             json.reserve(1024);
             json = "[";
             bool first = true;
+            String pathPrefix = (path == "/") ? String("/") : (path + "/");
             while (true) {
                 File f = dir.openNextFile();
                 if (!f) break;
-                if (!first) json += ",";
-                json += "{\"name\":\"" + jsonEscape(String(f.name())) + "\",";
-                json += "\"size\":" + String(f.size()) + ",";
-                json += "\"dir\":" + String(f.isDirectory() ? "true" : "false") + "}";
-                first = false;
+                String name = String(f.name());
+                int lastSlash = name.lastIndexOf('/');
+                if (lastSlash >= 0) name = name.substring(lastSlash + 1);
+                bool isDir = f.isDirectory();
+                size_t fsize = f.size();
                 f.close();
+
+                // Tag gzip pairs so the UI can warn before someone deletes the
+                // companion and breaks gzip-serve. `gz` marks the .gz file
+                // itself; `paired` is true on either half when its sibling
+                // exists in the same directory.
+                bool isGz = !isDir && name.endsWith(".gz");
+                bool paired = false;
+                if (!isDir) {
+                    String siblingPath = isGz
+                        ? (pathPrefix + name.substring(0, name.length() - 3))
+                        : (pathPrefix + name + ".gz");
+                    paired = SD.exists(siblingPath);
+                }
+
+                if (!first) json += ",";
+                json += "{\"name\":\"" + jsonEscape(name) + "\",";
+                json += "\"size\":" + String(fsize) + ",";
+                json += "\"dir\":" + String(isDir ? "true" : "false") + ",";
+                json += "\"gz\":" + String(isGz ? "true" : "false") + ",";
+                json += "\"paired\":" + String(paired ? "true" : "false") + "}";
+                first = false;
             }
             dir.close();
             json += "]";
@@ -4037,6 +5622,12 @@ void setup() {
             json += "\"worker_connected\":" + String((wsConnected && wsClient.connected()) ? "true" : "false") + ",";
             json += "\"worker_reconnects\":" + String(wsReconnectCount) + ",";
             json += "\"worker_last_activity_ms\":" + String((wsConnected && lastWsActivity > 0) ? (millis() - lastWsActivity) : 0) + ",";
+            // Maintenance state for the admin UI. Worker DO is authoritative.
+            time_t nowSec = time(nullptr);
+            bool maintActive = (localMaintenanceUntilUnix > 0 && nowSec > 0 && (uint32_t)nowSec < localMaintenanceUntilUnix);
+            json += "\"maintenance_active\":" + String(maintActive ? "true" : "false") + ",";
+            json += "\"maintenance_until_unix\":" + String(maintActive ? localMaintenanceUntilUnix : 0) + ",";
+            json += "\"maintenance_message\":\"" + jsonEscape(maintActive ? localMaintenanceMessage : "") + "\",";
             json += "\"health_heap\":[";
             for (int i = 0; i < healthCount; i++) {
                 int idx = (healthHead - healthCount + i + HEALTH_SAMPLES) % HEALTH_SAMPLES;
@@ -4153,22 +5744,54 @@ void setup() {
                 ccsOk ? (String(cached_co2) + " ppm eCO2, " + String(cached_voc) + " ppb VOC")
                       : "sensor stale; CCS811 warms up over first 20 minutes");
 
+            // 2b. OLED. Write-only display, so liveness is "did init succeed
+            // at boot AND does the chip still ACK on the bus." Catches "wire
+            // came loose" / "chip died" but NOT "displaying garbage" (which
+            // requires eyeballs since SSD1306 has no readback path).
+            if (!oledOk) {
+                addTest("OLED", "fail", "init failed at boot; check wiring at 0x3C");
+            } else {
+                Wire.beginTransmission(0x3C);
+                bool live = (Wire.endTransmission() == 0);
+                addTest("OLED", live ? "pass" : "fail",
+                    live ? "responding at 0x3C"
+                         : "init ok at boot but no longer responding (wire loose? bus hang?)");
+            }
+
             // 3. SD write/read cycle
             bool sdOk = false;
             String sdDetail = "SD test failed";
             {
                 const char* testPath = "/_selftest.tmp";
                 uint32_t token = (uint32_t)millis();
-                File tf = SD.open(testPath, FILE_WRITE);
-                if (tf) {
-                    tf.println(token);
-                    tf.close();
+                File wf = SD.open(testPath, FILE_WRITE);
+                if (wf) {
+                    wf.println(token);
+                    wf.close();
                     File rf = SD.open(testPath, FILE_READ);
                     if (rf) {
                         String line = rf.readStringUntil('\n');
                         line.trim();
                         rf.close();
-                        if (line.toInt() == (int)token) { sdOk = true; sdDetail = "write+read+delete OK"; }
+                        // Compare as uint32_t. After ~24 days uptime millis()
+                        // exceeds INT32_MAX; line.toInt() returns int32 and
+                        // wraps, making the int-cast comparison spuriously
+                        // fail. strtoul handles the full uint32_t range.
+                        if ((uint32_t)strtoul(line.c_str(), nullptr, 10) == token) {
+                            sdOk = true;
+                            // Capacity reported in MB to avoid overflow on large cards (uint64 → uint32 cast)
+                            uint32_t cardMb = (uint32_t)(SD.cardSize() / (1024ULL * 1024ULL));
+                            const char* cardKind;
+                            switch (SD.cardType()) {
+                                case CARD_MMC:  cardKind = "MMC";   break;
+                                case CARD_SD:   cardKind = "SDSC";  break;
+                                case CARD_SDHC: cardKind = "SDHC";  break;
+                                default:        cardKind = "?";     break;
+                            }
+                            sdDetail = "write+read+delete OK; " +
+                                       String(sdSpeedHz / 1000000U) + " MHz SPI, " +
+                                       String(cardMb) + " MB " + cardKind;
+                        }
                         else sdDetail = "readback mismatch";
                     } else sdDetail = "read failed";
                     SD.remove(testPath);
@@ -4194,13 +5817,42 @@ void setup() {
                 addTest("NTP", "warn", "not yet synced; background daemon retrying");
             }
 
+            // 5b. DS3231 RTC
+            if (!rtcOk) {
+                addTest("DS3231 RTC", "warn", "not detected at boot; running on NTP only");
+            } else if (rtcLostPowerAtBoot) {
+                // Latched at boot so this stays visible after NTP clears the live flag.
+                // CR1220 needs replacement; until then NTP fills the gap each boot.
+                DateTime r = rtc.now();
+                float rtcTempC = rtc.getTemperature();
+                String detail = "lostPower at boot (CR1220 likely depleted); " +
+                                String(r.year()) + "-" +
+                                (r.month() < 10 ? "0" : "") + String(r.month()) + "-" +
+                                (r.day() < 10 ? "0" : "") + String(r.day()) + " " +
+                                (r.hour() < 10 ? "0" : "") + String(r.hour()) + ":" +
+                                (r.minute() < 10 ? "0" : "") + String(r.minute()) + " UTC, " +
+                                String(rtcTempC, 1) + "C internal";
+                addTest("DS3231 RTC", "warn", detail);
+            } else {
+                DateTime r = rtc.now();
+                float rtcTempC = rtc.getTemperature();
+                String detail = String(r.year()) + "-" +
+                                (r.month() < 10 ? "0" : "") + String(r.month()) + "-" +
+                                (r.day() < 10 ? "0" : "") + String(r.day()) + " " +
+                                (r.hour() < 10 ? "0" : "") + String(r.hour()) + ":" +
+                                (r.minute() < 10 ? "0" : "") + String(r.minute()) + ":" +
+                                (r.second() < 10 ? "0" : "") + String(r.second()) + " UTC, " +
+                                String(rtcTempC, 1) + "C internal";
+                addTest("DS3231 RTC", "pass", detail);
+            }
+
             // 6. Free heap
             uint32_t freeHeap = ESP.getFreeHeap();
             uint32_t minHeap = ESP.getMinFreeHeap();
             if (freeHeap >= 50000) {
                 addTest("Free heap", "pass", String(freeHeap / 1024) + " KB free, " + String(minHeap / 1024) + " KB min ever");
-            } else if (freeHeap >= 20000) {
-                addTest("Free heap", "warn", String(freeHeap / 1024) + " KB free (close to 20 KB watchdog threshold)");
+            } else if (freeHeap >= 30000) {
+                addTest("Free heap", "warn", String(freeHeap / 1024) + " KB free (close to 30 KB watchdog threshold)");
             } else {
                 addTest("Free heap", "fail", String(freeHeap / 1024) + " KB free; heap watchdog will reboot soon");
             }
@@ -4219,8 +5871,8 @@ void setup() {
             } else if (r2CommittedAtUnix == 0) {
                 addTest("R2 backup", "warn", "no commit confirmation yet (trigger one from the backup panel)");
             } else {
-                time_t now = time(nullptr);
-                long ageHours = (long)((now - (time_t)r2CommittedAtUnix) / 3600);
+                time_t nowSec = time(nullptr);
+                long ageHours = (long)((nowSec - (time_t)r2CommittedAtUnix) / 3600);
                 String detail = "last commit " + String(r2CommittedDate) + " (" + String(ageHours) + "h ago, " + String(r2CommittedFiles) + " files)";
                 if (ageHours <= 25)      addTest("R2 backup", "pass", detail);
                 else if (ageHours <= 72) addTest("R2 backup", "warn", detail + " - overdue");
@@ -4232,6 +5884,386 @@ void setup() {
             AsyncWebServerResponse *r = request->beginResponse(200, "application/json", json);
             r->addHeader("Cache-Control", "no-store");
             request->send(r);
+            return;
+        }
+
+        if (url == "/admin/i2cscan" && request->method() == HTTP_GET) {
+            if (!adminAuth(request)) return;
+            auto nameForAddr = [](uint8_t a) -> const char* {
+                switch (a) {
+                    case 0x3C: return "OLED (SSD1306)";
+                    case 0x3D: return "OLED (SSD1306, alt)";
+                    case 0x40: return "INA219";
+                    case 0x57: return "AT24C32 EEPROM (often bundled with DS3231)";
+                    case 0x5A: return "CCS811";
+                    case 0x5B: return "CCS811 (alt)";
+                    case 0x68: return "DS3231 RTC";
+                    case 0x76: return "BME280";
+                    case 0x77: return "BME280 (alt) / BMP180";
+                    default:   return "unknown";
+                }
+            };
+            String json;
+            json.reserve(512);
+            json = "{\"at\":\"" + getTimestamp() + "\",\"devices\":[";
+            int count = 0;
+            bool first = true;
+            for (uint8_t addr = 0x08; addr <= 0x77; addr++) {
+                Wire.beginTransmission(addr);
+                if (Wire.endTransmission() == 0) {
+                    if (!first) json += ",";
+                    first = false;
+                    char buf[8];
+                    snprintf(buf, sizeof(buf), "0x%02X", addr);
+                    json += "{\"addr\":\"";
+                    json += buf;
+                    json += "\",\"name\":\"";
+                    json += nameForAddr(addr);
+                    json += "\"}";
+                    count++;
+                }
+            }
+            json += "],\"count\":" + String(count) + "}";
+            AsyncWebServerResponse *r = request->beginResponse(200, "application/json", json);
+            r->addHeader("Cache-Control", "no-store");
+            request->send(r);
+            return;
+        }
+
+        if (url == "/admin/repair-periods" && request->method() == HTTP_POST) {
+            if (!adminAuth(request)) return;
+            struct tm now;
+            if (!getLocalTime(&now, 100)) {
+                request->send(503, "application/json",
+                    "{\"ok\":false,\"error\":\"no time available; wait for NTP and retry\"}");
+                return;
+            }
+            int curYear  = now.tm_year + 1900;
+            int curMonth = now.tm_mon + 1;
+            char curYearStr[5];
+            snprintf(curYearStr, sizeof(curYearStr), "%04d", curYear);
+
+            // Snapshot the in-progress week so we can re-add it after the reset.
+            PeriodStats inProgress = currentWeek;
+
+            // Reset month/year accumulators (preserve started_unix so the
+            // /history "Started: ..." text doesn't go to 1970).
+            uint32_t monthStarted = currentMonth.started_unix;
+            uint32_t yearStarted  = currentYear.started_unix;
+            resetPeriod(currentMonth);
+            resetPeriod(currentYear);
+            if (monthStarted > 0) currentMonth.started_unix = monthStarted;
+            if (yearStarted  > 0) currentYear.started_unix  = yearStarted;
+
+            int weeksYear = 0, weeksMonth = 0;
+            File dir = SD.open("/stats/weekly");
+            if (dir) {
+                while (true) {
+                    File f = dir.openNextFile();
+                    if (!f) break;
+                    String name = String(f.name());
+                    int lastSlash = name.lastIndexOf('/');
+                    if (lastSlash >= 0) name = name.substring(lastSlash + 1);
+                    if (!name.endsWith(".json")) { f.close(); continue; }
+                    // Year filter via filename prefix (faster than parsing).
+                    if (!name.startsWith(curYearStr)) { f.close(); continue; }
+
+                    String content;
+                    content.reserve(f.size() + 1);
+                    while (f.available()) content += (char)f.read();
+                    f.close();
+                    // /stats/weekly/ can hold a year's worth of files; keep
+                    // async_tcp alive between archive parses.
+                    yield();
+                    esp_task_wdt_reset();
+
+                    PeriodStats wk;
+                    time_t wkStarted = 0;
+                    if (!parseWeeklyJson(content, wk, wkStarted)) continue;
+
+                    // Always aggregate into yearly (year matched via filename).
+                    aggregatePeriodInto(currentYear, wk);
+                    weeksYear++;
+
+                    // Month determination: parse week number from the filename
+                    // ("2026-W16.json" → year=2026, week=16) and compute the
+                    // Monday's calendar month via ISO week math. This avoids
+                    // relying on started_unix in the JSON, which may be 0 in
+                    // archives created before NTP synced (e.g. Week 16 here).
+                    int dashW = name.indexOf("-W");
+                    if (dashW > 0 && (int)name.length() > dashW + 2) {
+                        int wkYear = name.substring(0, dashW).toInt();
+                        int wkNum  = name.substring(dashW + 2, name.length() - 5).toInt();
+                        int wkMonth = 0;
+                        if (wkYear == curYear && isoWeekMonth(wkYear, wkNum, wkMonth)
+                            && wkMonth == curMonth) {
+                            aggregatePeriodInto(currentMonth, wk);
+                            weeksMonth++;
+                        }
+                    }
+                }
+                dir.close();
+            }
+
+            // Re-add the in-progress week (currentWeek): it isn't archived yet
+            // and would otherwise be missing from the rebuilt month/year totals.
+            aggregatePeriodInto(currentMonth, inProgress);
+            aggregatePeriodInto(currentYear,  inProgress);
+
+            saveCheckpoint();
+            logError("admin",
+                ("repaired periods from weekly archives (year=" + String(weeksYear) +
+                 " weeks, month=" + String(weeksMonth) + " weeks)").c_str());
+            String resp = "{\"ok\":true,\"weeks_year\":" + String(weeksYear) +
+                          ",\"weeks_month\":" + String(weeksMonth) +
+                          ",\"month_visitors\":" + String(currentMonth.visitors) +
+                          ",\"year_visitors\":" + String(currentYear.visitors) + "}";
+            request->send(200, "application/json", resp);
+            return;
+        }
+
+        if (url == "/admin/sanitize-csvs" && request->method() == HTTP_POST) {
+            if (!adminAuth(request)) return;
+            // CSV column layout (must match logStats header):
+            //   0:timestamp 1:cpu_temp_c 2:cpu_temp_f 3:memory_percent
+            //   4:temperature_c 5:temperature_f 6:humidity_percent 7:pressure_hpa
+            //   8:altitude_ft 9:co2_ppm 10:voc_ppb 11:heat_index_c 12:heat_index_f
+            //   13:rssi 14:sd_free_mb 15:requests_interval
+            // Drop any row where the BME280-derived columns (4, 6, 7) are out of spec.
+            // CCS811 columns (9, 10) aren't bounded here because their datasheet
+            // upper bound (32k+ ppm) is loose enough that a value being "high"
+            // is rarely a clear glitch indicator on its own.
+            // Two-mode endpoint to keep each request short enough to survive any
+            // 30s timeout in the chain (CF Worker subrequest, idle TCP, etc.):
+            //
+            //   POST /admin/sanitize-csvs           → list mode: returns the
+            //       set of CSV file paths that need scanning. Client iterates.
+            //   POST /admin/sanitize-csvs?file=PATH → process one file in
+            //       isolation. Returns rows_scanned / rows_dropped for it.
+            //
+            // The client (admin.html) calls list mode first, then loops the
+            // per-file mode for each path, accumulating totals locally.
+            const String logsPath = "/logs";
+
+            if (request->hasParam("file", true)) {
+                String csvPath = request->getParam("file", true)->value();
+                // Path safety: only allow paths under /logs/ with a .csv suffix
+                // and no path-traversal sequences.
+                if (!csvPath.startsWith("/logs/") || csvPath.indexOf("..") >= 0
+                    || !csvPath.endsWith(".csv")) {
+                    request->send(400, "application/json",
+                        "{\"ok\":false,\"error\":\"invalid file path\"}");
+                    return;
+                }
+                if (!SD.exists(csvPath)) {
+                    request->send(404, "application/json",
+                        "{\"ok\":false,\"error\":\"file not found\"}");
+                    return;
+                }
+                String tmpPath = csvPath + ".tmp";
+                String bakPath = csvPath + ".bak";
+                File rf = SD.open(csvPath, FILE_READ);
+                if (!rf) {
+                    request->send(500, "application/json",
+                        "{\"ok\":false,\"error\":\"open read failed\"}");
+                    return;
+                }
+                File wf = SD.open(tmpPath, FILE_WRITE);
+                if (!wf) {
+                    rf.close();
+                    request->send(500, "application/json",
+                        "{\"ok\":false,\"error\":\"open tmp failed\"}");
+                    return;
+                }
+                int rowsScanned = 0, rowsDropped = 0;
+                bool isHeader = true;
+                while (rf.available()) {
+                    String line = rf.readStringUntil('\n');
+                    line.trim();
+                    if (line.length() == 0) continue;
+                    if (isHeader) { wf.println(line); isHeader = false; continue; }
+                    int col = 0, start = 0;
+                    bool dropRow = false;
+                    for (int i = 0; i <= (int)line.length(); i++) {
+                        if (i == (int)line.length() || line[i] == ',') {
+                            if (col == 4) {
+                                float v = line.substring(start, i).toFloat();
+                                if (isnan(v) || v < BME_TEMP_MIN_C || v > BME_TEMP_MAX_C) dropRow = true;
+                            } else if (col == 6) {
+                                float v = line.substring(start, i).toFloat();
+                                if (isnan(v) || v < BME_HUM_MIN || v > BME_HUM_MAX) dropRow = true;
+                            } else if (col == 7) {
+                                float v = line.substring(start, i).toFloat();
+                                if (isnan(v) || v < BME_PRESS_MIN_HPA || v > BME_PRESS_MAX_HPA) dropRow = true;
+                            }
+                            start = i + 1;
+                            col++;
+                            if (col > 7 || dropRow) break;
+                        }
+                    }
+                    rowsScanned++;
+                    if (dropRow) rowsDropped++;
+                    else wf.println(line);
+                    // Long synchronous SD loops can starve the async_tcp task
+                    // watchdog (5s) even with yield(). yield()/delay(0) only
+                    // reschedules; it doesn't feed the WDT. Explicit reset
+                    // here keeps a large CSV from tripping task_wdt mid-scan.
+                    if ((rowsScanned & 0x3F) == 0) {
+                        yield();
+                        esp_task_wdt_reset();
+                    }
+                }
+                rf.close();
+                wf.close();
+                if (rowsDropped > 0) {
+                    if (SD.exists(bakPath)) SD.remove(bakPath);
+                    SD.rename(csvPath, bakPath);
+                    if (!SD.rename(tmpPath, csvPath)) {
+                        if (SD.exists(bakPath)) SD.rename(bakPath, csvPath);
+                        request->send(500, "application/json",
+                            "{\"ok\":false,\"error\":\"rename failed; original restored\"}");
+                        return;
+                    }
+                    if (SD.exists(bakPath)) SD.remove(bakPath);
+                    logError("admin",
+                        ("sanitize-csvs: dropped " + String(rowsDropped) +
+                         " row(s) from " + csvPath).c_str());
+                } else {
+                    SD.remove(tmpPath);
+                }
+                String resp = "{\"ok\":true,\"file\":\"" + jsonEscape(csvPath) +
+                              "\",\"rows_scanned\":" + String(rowsScanned) +
+                              ",\"rows_dropped\":" + String(rowsDropped) + "}";
+                request->send(200, "application/json", resp);
+                return;
+            }
+
+            // List mode: enumerate /logs/YYYY/*.csv and return paths.
+            String list = "{\"ok\":true,\"files\":[";
+            int count = 0;
+            File logsRoot = SD.open(logsPath);
+            if (logsRoot) {
+                while (true) {
+                    File yearDir = logsRoot.openNextFile();
+                    if (!yearDir) break;
+                    if (!yearDir.isDirectory()) { yearDir.close(); continue; }
+                    String yearName = String(yearDir.name());
+                    int yLast = yearName.lastIndexOf('/');
+                    if (yLast >= 0) yearName = yearName.substring(yLast + 1);
+                    yearDir.close();
+                    String yearPath = logsPath + "/" + yearName;
+
+                    File yd = SD.open(yearPath);
+                    if (!yd) continue;
+                    while (true) {
+                        File csv = yd.openNextFile();
+                        if (!csv) break;
+                        String csvName = String(csv.name());
+                        csv.close();
+                        int lastSlash = csvName.lastIndexOf('/');
+                        String bareName = (lastSlash >= 0) ? csvName.substring(lastSlash + 1) : csvName;
+                        if (!bareName.endsWith(".csv")) continue;
+                        if (count > 0) list += ",";
+                        list += "\"";
+                        list += yearPath + "/" + bareName;
+                        list += "\"";
+                        count++;
+                    }
+                    yd.close();
+                }
+                logsRoot.close();
+            }
+            list += "],\"count\":" + String(count) + "}";
+            request->send(200, "application/json", list);
+            return;
+        }
+
+        if (url == "/admin/fix-record-timestamps" && request->method() == HTTP_POST) {
+            if (!adminAuth(request)) return;
+            const char* path = "/stats/records.json";
+            const char* tmp  = "/stats/records.tmp";
+            const char* bak  = "/stats/records.bak";
+            File rf = SD.open(path, FILE_READ);
+            if (!rf) {
+                request->send(404, "application/json",
+                    "{\"ok\":false,\"error\":\"records.json not found\"}");
+                return;
+            }
+            String content;
+            content.reserve(rf.size() + 32);
+            while (rf.available()) content += (char)rf.read();
+            rf.close();
+            // records.json is normally <1 KB, but yield once after the read
+            // so this admin handler doesn't starve async_tcp on a degenerate
+            // file that grew unexpectedly.
+            yield();
+            esp_task_wdt_reset();
+
+            // Scan for truncated ISO 8601 timezone offsets. Pattern is exactly
+            // ":DD[+-]DDD\"" where DD is digits (the seconds field) and DDD is
+            // a 3-digit offset (truncated from 4). Pad with a trailing '0'
+            // before the closing quote. Works for whole-hour TZs (US Mountain,
+            // Pacific, Central, Eastern, etc); India/Newfoundland's :30/:45
+            // offsets would need different padding but those cases are rare
+            // and would have failed differently anyway.
+            String fixed;
+            fixed.reserve(content.length() + 32);
+            int fixes = 0;
+            int i = 0;
+            while (i < (int)content.length()) {
+                bool isTruncatedOffset =
+                    (i + 4 < (int)content.length())
+                    && (content[i] == '+' || content[i] == '-')
+                    && isdigit((unsigned char)content[i+1])
+                    && isdigit((unsigned char)content[i+2])
+                    && isdigit((unsigned char)content[i+3])
+                    && content[i+4] == '"'
+                    && (i >= 3)
+                    && content[i-3] == ':'
+                    && isdigit((unsigned char)content[i-2])
+                    && isdigit((unsigned char)content[i-1]);
+                if (isTruncatedOffset) {
+                    fixed += content.substring(i, i + 4);
+                    fixed += '0';
+                    fixed += '"';
+                    i += 5;
+                    fixes++;
+                } else {
+                    fixed += content[i];
+                    i++;
+                }
+            }
+
+            if (fixes == 0) {
+                request->send(200, "application/json",
+                    "{\"ok\":true,\"fixes\":0,\"note\":\"no truncated timestamps found\"}");
+                return;
+            }
+
+            // Atomic write: tmp → bak rotate → rename. Same pattern as saveRecords.
+            File wf = SD.open(tmp, FILE_WRITE);
+            if (!wf) {
+                request->send(500, "application/json",
+                    "{\"ok\":false,\"error\":\"failed to open tmp file\"}");
+                return;
+            }
+            wf.print(fixed);
+            wf.close();
+            if (SD.exists(bak)) SD.remove(bak);
+            if (SD.exists(path)) SD.rename(path, bak);
+            if (!SD.rename(tmp, path)) {
+                if (SD.exists(bak)) SD.rename(bak, path);
+                request->send(500, "application/json",
+                    "{\"ok\":false,\"error\":\"rename failed; original restored\"}");
+                return;
+            }
+            if (SD.exists(bak)) SD.remove(bak);
+
+            // Reload so in-memory record state matches the file on disk.
+            loadRecords();
+
+            String resp = "{\"ok\":true,\"fixes\":" + String(fixes) + "}";
+            request->send(200, "application/json", resp);
             return;
         }
 
@@ -4306,6 +6338,32 @@ void setup() {
             return;
         }
 
+        if (url == "/admin/snake-clear" && request->method() == HTTP_POST) {
+            if (!adminAuth(request)) return;
+            if (!wsConnected || !wsClient.connected()) {
+                request->send(503, "text/plain", "Worker link offline");
+                return;
+            }
+            pendingSnakeClearFlag = true;
+            request->send(200, "text/plain", "Triggered - poll /admin/snake-clear-result for outcome");
+            return;
+        }
+
+        if (url == "/admin/snake-clear-result" && request->method() == HTTP_GET) {
+            if (!adminAuth(request)) return;
+            time_t now = time(nullptr);
+            long ageSecs = snakeClearAtUnix ? (long)(now - (time_t)snakeClearAtUnix) : -1;
+            String json = "{";
+            json += "\"at_unix\":" + String(snakeClearAtUnix) + ",";
+            json += "\"age_s\":" + String(ageSecs) + ",";
+            json += "\"ok\":" + String(snakeClearOk ? "true" : "false");
+            json += "}";
+            AsyncWebServerResponse *r = request->beginResponse(200, "application/json", json);
+            r->addHeader("Cache-Control", "no-store");
+            request->send(r);
+            return;
+        }
+
         if (url == "/admin/r2-healthcheck" && request->method() == HTTP_POST) {
             if (!adminAuth(request)) return;
             if (!wsConnected || !wsClient.connected()) {
@@ -4364,6 +6422,11 @@ void setup() {
                 return;
             }
             String path = request->getParam("path", true)->value();
+            if (isProtectedPath(path)) {
+                request->send(403, "text/plain",
+                    "Refusing to delete protected file. Upload a replacement instead.");
+                return;
+            }
             if (!SD.exists(path)) {
                 request->send(404, "text/plain", "Not found");
                 return;
@@ -4442,6 +6505,162 @@ void setup() {
             return;
         }
 
+        // List firmware .bin files in /fw/. Used by the admin UI to populate
+        // the "Flash from SD" picker. Returns name, size, mtime per file.
+        if (url == "/admin/firmware-list" && request->method() == HTTP_GET) {
+            if (!adminAuth(request)) return;
+            String json = "{\"canRollBack\":";
+            json += Update.canRollBack() ? "true" : "false";
+            json += ",\"files\":[";
+            File dir = SD.open("/fw");
+            bool first = true;
+            if (dir && dir.isDirectory()) {
+                File f = dir.openNextFile();
+                while (f) {
+                    String name = f.name();
+                    // openNextFile returns full path on some library
+                    // versions and bare name on others; normalize.
+                    int lastSlash = name.lastIndexOf('/');
+                    String bare = lastSlash >= 0 ? name.substring(lastSlash + 1) : name;
+                    if (!f.isDirectory() && bare.endsWith(".bin")) {
+                        if (!first) json += ",";
+                        json += "{\"name\":\"" + jsonEscape(bare) + "\",";
+                        json += "\"size\":" + String(f.size()) + ",";
+                        json += "\"mtime\":" + String((uint32_t)f.getLastWrite()) + "}";
+                        first = false;
+                    }
+                    f.close();
+                    f = dir.openNextFile();
+                }
+                dir.close();
+            }
+            json += "]}";
+            request->send(200, "application/json", json);
+            return;
+        }
+
+        // Schedule a flash from an SD-stored firmware .bin. The actual flash
+        // happens in the main loop so we can respond quickly (the flash
+        // takes 30-60s and we don't want to hold the HTTP connection).
+        // Path must be under /fw/ and end in .bin (basic validation; the
+        // handler also null-checks the file exists before scheduling).
+        if (url == "/admin/flash-from-sd" && request->method() == HTTP_POST) {
+            if (!adminAuth(request)) return;
+            if (pendingSDFlash || pendingRollback) {
+                request->send(409, "text/plain", "Another flash or rollback is already scheduled");
+                return;
+            }
+            if (!request->hasParam("path", true)) {
+                request->send(400, "text/plain", "Missing path");
+                return;
+            }
+            String path = request->getParam("path", true)->value();
+            if (!path.startsWith("/fw/") || !path.endsWith(".bin") ||
+                path.indexOf("..") >= 0 || path.length() >= sizeof(pendingSDFlashPath)) {
+                request->send(400, "text/plain", "Invalid path (must be /fw/<name>.bin)");
+                return;
+            }
+            if (!SD.exists(path)) {
+                request->send(404, "text/plain", "Firmware file not found on SD");
+                return;
+            }
+            File f = SD.open(path, FILE_READ);
+            if (!f) {
+                request->send(500, "text/plain", "Could not open firmware file");
+                return;
+            }
+            size_t sz = f.size();
+            f.close();
+            if (sz < 64 * 1024 || sz > 4 * 1024 * 1024) {
+                // ESP32 firmwares typically 500KB-2MB. Reject absurd sizes.
+                request->send(400, "text/plain", "File size outside expected firmware range (64KB - 4MB)");
+                return;
+            }
+            strncpy(pendingSDFlashPath, path.c_str(), sizeof(pendingSDFlashPath) - 1);
+            pendingSDFlashPath[sizeof(pendingSDFlashPath) - 1] = '\0';
+            pendingSDFlash = true;
+            request->send(200, "text/plain", "Flash scheduled. Device will reboot on success.");
+            logConsole(request, 200);
+            return;
+        }
+
+        // Schedule SHA256 computation for a firmware .bin on SD. Returns
+        // immediately; result polled via /admin/firmware-sha256-result.
+        // Reading 1.5MB off SD takes ~6s which is too close to the 5s
+        // async_tcp watchdog for a sync handler, so compute runs on main
+        // loop like the flash path.
+        if (url == "/admin/firmware-sha256" && request->method() == HTTP_POST) {
+            if (!adminAuth(request)) return;
+            if (sha256Computing || pendingSha256) {
+                request->send(409, "text/plain", "Another checksum is already in progress");
+                return;
+            }
+            if (!request->hasParam("path", true)) {
+                request->send(400, "text/plain", "Missing path");
+                return;
+            }
+            String path = request->getParam("path", true)->value();
+            if (!path.startsWith("/fw/") || !path.endsWith(".bin") ||
+                path.indexOf("..") >= 0 || path.length() >= sizeof(pendingSha256Path)) {
+                request->send(400, "text/plain", "Invalid path");
+                return;
+            }
+            if (!SD.exists(path)) {
+                request->send(404, "text/plain", "File not found");
+                return;
+            }
+            strncpy(pendingSha256Path, path.c_str(), sizeof(pendingSha256Path) - 1);
+            pendingSha256Path[sizeof(pendingSha256Path) - 1] = '\0';
+            sha256Result[0] = '\0';
+            sha256ResultPath[0] = '\0';
+            pendingSha256 = true;
+            request->send(202, "text/plain", "Computing...");
+            return;
+        }
+
+        // Poll the result of the most-recent SHA256 computation. Returns
+        // 200 + hex if the last completed result matches `path`, 202
+        // "computing" if still working on `path`, 404 if no result yet
+        // for `path`.
+        if (url == "/admin/firmware-sha256-result" && request->method() == HTTP_GET) {
+            if (!adminAuth(request)) return;
+            if (!request->hasParam("path")) {
+                request->send(400, "text/plain", "Missing path");
+                return;
+            }
+            String path = request->getParam("path")->value();
+            if (sha256Computing && strcmp(pendingSha256Path, path.c_str()) == 0) {
+                request->send(202, "text/plain", "Computing...");
+                return;
+            }
+            if (sha256Result[0] != '\0' && strcmp(sha256ResultPath, path.c_str()) == 0) {
+                request->send(200, "text/plain", sha256Result);
+                return;
+            }
+            request->send(404, "text/plain", "No checksum yet for this path");
+            return;
+        }
+
+        // Flip the active OTA partition back to the previously-active one.
+        // No state tracking, no watchdog; the user made the decision by
+        // clicking the button. Deferred to main loop for consistency with
+        // the flash path (and to respond quickly).
+        if (url == "/admin/rollback" && request->method() == HTTP_POST) {
+            if (!adminAuth(request)) return;
+            if (pendingSDFlash || pendingRollback) {
+                request->send(409, "text/plain", "Another flash or rollback is already scheduled");
+                return;
+            }
+            if (!Update.canRollBack()) {
+                request->send(400, "text/plain", "No previous firmware available to roll back to");
+                return;
+            }
+            pendingRollback = true;
+            request->send(200, "text/plain", "Rollback scheduled. Device will reboot.");
+            logConsole(request, 200);
+            return;
+        }
+
         if (url == "/admin/maintenance" && request->method() == HTTP_POST) {
             if (!adminAuth(request)) return;
             if (strlen(cfgWorkerUrl) == 0) {
@@ -4464,6 +6683,9 @@ void setup() {
             pendingMaintenanceMinutes = mins;
             strncpy(pendingMaintenanceMessage, msg.c_str(), sizeof(pendingMaintenanceMessage) - 1);
             pendingMaintenanceMessage[sizeof(pendingMaintenanceMessage) - 1] = '\0';
+            // Pair with the acquire-fence on the loop reader so the buffer
+            // writes above are guaranteed visible before the flag is observed.
+            std::atomic_thread_fence(std::memory_order_release);
             pendingMaintenanceFlag = true;
             if (mins == 0) {
                 request->send(200, "text/plain", "Maintenance cancelled");
@@ -4474,7 +6696,7 @@ void setup() {
             return;
         }
 
-        AsyncWebServerResponse *r = request->beginResponse(SD, "/404.html", "text/html");
+        AsyncWebServerResponse *r = beginResponseGzipOrRaw(request, "/404.html", "text/html");
         r->setCode(404);
         request->send(r);
         logConsole(request, 404);
@@ -4536,25 +6758,73 @@ static void tryI2cRecovery() {
 
 // Main loop
 void loop() {
+    // Loop-stall detector: if a previous iteration took unusually long
+    // (> 30s gap between ticks), log it so the admin error log captures
+    // pathological blocks. Skips the very first iteration and millis()
+    // wraparound (49.7-day rollover would otherwise look like a stall).
+    static unsigned long lastLoopTickMs = 0;
+    unsigned long nowTickMs = millis();
+    if (lastLoopTickMs != 0 && nowTickMs > lastLoopTickMs) {
+        unsigned long gap = nowTickMs - lastLoopTickMs;
+        if (gap > 30000UL) {
+            char buf[96];
+            snprintf(buf, sizeof(buf), "loop blocked %lums (free=%u, rssi=%d, wifi=%d)",
+                     gap, (unsigned)ESP.getFreeHeap(),
+                     (int)WiFi.RSSI(), (int)WiFi.status());
+            logError("perf", buf);
+        }
+    }
+    lastLoopTickMs = nowTickMs;
+
+    // Late-NTP recovery: re-capture bootTime + period starts if NTP synced
+    // after the 6s boot window. At most once per minute.
+    static unsigned long lastNtpCheck = 0;
+    if (bootTime == 0 && millis() - lastNtpCheck > 60000) {
+        lastNtpCheck = millis();
+        struct tm tNow;
+        if (getLocalTime(&tNow, 0)) {
+            time_t nowEpoch = mktime(&tNow);
+            // bootTime represents the epoch second of boot. Approximate by
+            // subtracting elapsed millis since boot.
+            bootTime = nowEpoch - (time_t)(millis() / 1000UL);
+            uint32_t nowUnix = (uint32_t)nowEpoch;
+            if (currentWeek.started_unix  == 0) currentWeek.started_unix  = nowUnix;
+            if (currentMonth.started_unix == 0) currentMonth.started_unix = nowUnix;
+            if (currentYear.started_unix  == 0) currentYear.started_unix  = nowUnix;
+            Serial.println("[ntp] late-sync recovered; bootTime + period starts stamped");
+            // Trust NTP over RTC: write current authoritative time back to RTC.
+            if (rtcOk) rtc.adjust(DateTime(nowUnix));
+        }
+    }
+
+    // Flush dirty country tallies on a 30s cadence (instead of per-visit
+    // SD rewrite). Critical under flash-crowd traffic where per-visit SD
+    // writes would saturate the bus and starve AsyncTCP.
+    maybeFlushCountries();
+
     // While an upload is streaming (and for a grace window after the last
     // chunk), AsyncTCP owns the SD bus. WS writes can block ~10s under that
     // contention and connect() up to 10s on handshake, which freezes the OLED
     // and starves sensor reads. Every WS code path below checks this flag.
     bool busyWithUpload = lastUploadChunkMs && (millis() - lastUploadChunkMs < UPLOAD_QUIET_MS);
 
-    // On the transition to busy (upload just started), proactively close the
-    // WS so the Worker sees a clean socket close instead of a dangling idle
-    // connection, and reset the fail counter so post-upload reconnect starts
-    // fresh rather than resuming an in-progress escalation. Without this,
-    // uploads rolled into a 4-fails-restart after the quiet window.
+    // On transition to busy (upload just started), reset the fail counter
+    // so any in-progress WS escalation doesn't roll into a reboot after the
+    // quiet window ends. The WS handling block below is gated on
+    // !busyWithUpload, so reconnects don't run during uploads.
+    // Recency guard: only count as "upload started" if the last chunk was
+    // within the last 2s, otherwise stale lastUploadChunkMs would trigger
+    // a spurious counter reset on every loop().
     static bool wasBusyWithUpload = false;
     if (busyWithUpload && !wasBusyWithUpload) {
-        Serial.println("[ws] upload in progress, closing WS until it finishes");
-        if (wsConnected || wsClient.connected()) {
-            wsClient.stop();
-            wsConnected = false;
+        if (millis() - lastUploadChunkMs < 2000) {
+            Serial.printf("[ws] upload started, suspending WS loop (was fails=%d)\n", wsReconnectFails);
+            wsReconnectFails = 0;
+            wsFastFails = 0;
+        } else {
+            Serial.printf("[ws] stale busy transition ignored (last chunk %lums ago)\n",
+                          (unsigned long)(millis() - lastUploadChunkMs));
         }
-        wsReconnectFails = 0;
     }
     wasBusyWithUpload = busyWithUpload;
 
@@ -4589,7 +6859,6 @@ void loop() {
 
     // 1px horizontal shift per page for OLED burn-in protection
     int shiftX = displayPage % 2;
-    int shiftY = 0;
 
     display.clearDisplay();
 
@@ -4620,7 +6889,9 @@ void loop() {
         case 1: {
             float tf = safeBmeTemp() * 9.0f / 5.0f + 32.0f;
             float hu = safeBmeHumidity();
-            float p = safeBmePressureHpa();
+            // Refresh cached pressure for its side effect (lastBmeGoodAt
+            // bump + cached_pressure_hpa update); altitude derives from it.
+            (void)safeBmePressureHpa();
             bool bmeBad = bmeDegraded();
             bool ccsBad = ccsDegraded();
             display.setTextSize(1);
@@ -4708,9 +6979,18 @@ void loop() {
     if (ccs.available()) {
         ccs.setEnvironmentalData(safeBmeHumidity(), safeBmeTemp());
         if (!ccs.readData()) {
-            cached_co2 = ccs.geteCO2();
-            cached_voc = ccs.getTVOC();
-            lastCcsGoodAt = millis();
+            uint16_t co2 = ccs.geteCO2();
+            uint16_t voc = ccs.getTVOC();
+            // CCS811 algorithm output: eCO2 400-32768 ppm, TVOC 0-32768 ppb.
+            // Bus-error reads can return 0xFFFF (65535); reject those so they
+            // don't poison cached values, period averages, or hall-of-fame.
+            // Mark the read as good if at least one channel was in range,
+            // since partial corruption (e.g. only co2 mangled) is still
+            // informative for the other channel.
+            bool gotAny = false;
+            if (co2 <= 32768) { cached_co2 = co2; gotAny = true; }
+            if (voc <= 32768) { cached_voc = voc; gotAny = true; }
+            if (gotAny) lastCcsGoodAt = millis();
         } else {
             Serial.println("CCS811 read error");
         }
@@ -4722,7 +7002,22 @@ void loop() {
         if (minute % 5 == 0 && minute != lastLoggedMinute) {
             lastLoggedMinute = minute;
             logStats();
-            cachedSdUsedMB = (float)SD.usedBytes() / (1024.0f * 1024.0f);
+            // SD.usedBytes() scans the whole FAT; "seconds" on a healthy
+            // card, but on a fragmented / heavy-use card it can block much
+            // longer and cascade into a WS drop. Refresh only at minute 0/30
+            // and time the call so we see it in the admin Error Log if it
+            // ever exceeds the threshold.
+            if (minute == 0 || minute == 30) {
+                unsigned long sdStart = millis();
+                cachedSdUsedMB = (float)SD.usedBytes() / (1024.0f * 1024.0f);
+                unsigned long sdMs = millis() - sdStart;
+                if (sdMs > 3000) {
+                    char buf[80];
+                    snprintf(buf, sizeof(buf), "SD.usedBytes() blocked %lums (used=%.1fMB)",
+                             sdMs, cachedSdUsedMB);
+                    logError("perf", buf);
+                }
+            }
             Serial.println("Logged at: " + getTimestamp());
         }
     }
@@ -4766,13 +7061,135 @@ void loop() {
         if (healthCount < HEALTH_SAMPLES) healthCount++;
     }
 
-    // HTTP handlers run on the AsyncTCP task; send WS frames from the main loop only
+    // HTTP handlers run on the AsyncTCP task; send WS frames from the main loop only.
+    // Acquire fence pairs with the release fence on the writer side so the
+    // notify buffers (notifyEntryName/Country/Message) are guaranteed visible
+    // here before we read them.
     if (pendingNotifyFlag) {
+        std::atomic_thread_fence(std::memory_order_acquire);
         pendingNotifyFlag = false;
         notifyPendingIfIncreased();
     }
 
+    // SHA256 of a firmware .bin on SD. Yields between chunks so async_tcp
+    // stays alive through the ~6s read on a 1.5MB file. Result is cached
+    // in sha256Result/sha256ResultPath; clients poll via the status endpoint.
+    if (pendingSha256) {
+        pendingSha256 = false;
+        sha256Computing = true;
+        File f = SD.open(pendingSha256Path, FILE_READ);
+        if (f) {
+            mbedtls_sha256_context ctx;
+            mbedtls_sha256_init(&ctx);
+            mbedtls_sha256_starts(&ctx, 0);  // 0 = SHA256, 1 = SHA224
+            // static so we don't reserve 2KB on loop()'s stack; stack canary
+            // would trip under deep call chains otherwise.
+            static uint8_t buf[2048];
+            while (f.available()) {
+                size_t n = f.read(buf, sizeof(buf));
+                if (n == 0) break;
+                mbedtls_sha256_update(&ctx, buf, n);
+                delay(1);  // yield to async_tcp between chunks
+            }
+            f.close();
+            uint8_t hash[32];
+            mbedtls_sha256_finish(&ctx, hash);
+            mbedtls_sha256_free(&ctx);
+            for (int i = 0; i < 32; i++) {
+                snprintf(sha256Result + i * 2, 3, "%02x", hash[i]);
+            }
+            sha256Result[64] = '\0';
+            strncpy(sha256ResultPath, pendingSha256Path, sizeof(sha256ResultPath) - 1);
+            sha256ResultPath[sizeof(sha256ResultPath) - 1] = '\0';
+            Serial.printf("[fw] sha256 %s = %s\n", pendingSha256Path, sha256Result);
+        } else {
+            sha256Result[0] = '\0';
+            sha256ResultPath[0] = '\0';
+            Serial.printf("[fw] sha256: open failed for %s\n", pendingSha256Path);
+        }
+        sha256Computing = false;
+    }
+
+    // Firmware rollback via partition-pointer flip. No file I/O, just
+    // Update.rollBack() + reboot.
+    if (pendingRollback) {
+        pendingRollback = false;
+        Serial.println("[fw] rollback requested, flipping partition pointer");
+        if (Update.canRollBack() && Update.rollBack()) {
+            Serial.println("[fw] rollback ok, restarting");
+            delay(500);
+            cleanRestart();
+        } else {
+            Serial.println("[fw] rollback failed");
+            logError("fw", "rollback failed (canRollBack was true at request time)");
+        }
+    }
+
+    // Firmware flash from an SD-stored .bin. The heavy work runs here on
+    // the main loop so AsyncTCP stays responsive while chunks are read.
+    // Copy of the existing /_ota flash pattern but sourced from SD.
+    if (pendingSDFlash) {
+        pendingSDFlash = false;
+        Serial.printf("[fw] SD-flash starting from %s\n", pendingSDFlashPath);
+        // Pause WS activity during flash; flash writes disable flash cache
+        // and we don't want stats pushes fighting for bandwidth either.
+        lastUploadChunkMs = millis();
+        File f = SD.open(pendingSDFlashPath, FILE_READ);
+        if (!f) {
+            Serial.println("[fw] SD-flash: open failed");
+            logError("fw", "SD-flash open failed");
+        } else {
+            size_t total = f.size();
+            if (!Update.begin(total)) {
+                Serial.println("[fw] SD-flash: Update.begin failed");
+                Update.printError(Serial);
+                logError("fw", "SD-flash Update.begin failed");
+                f.close();
+            } else {
+                // static so we don't reserve 4KB on loop()'s stack; the
+                // SHA256 path has a similar 2KB buffer, combined stack
+                // footprint would blow the Arduino loopTask stack canary.
+                static uint8_t buf[4096];
+                size_t written = 0;
+                bool ok = true;
+                while (f.available() && ok) {
+                    size_t n = f.read(buf, sizeof(buf));
+                    if (n == 0) break;
+                    if (Update.write(buf, n) != n) {
+                        Serial.printf("[fw] SD-flash: write failed at %u/%u\n",
+                                      (unsigned)written, (unsigned)total);
+                        Update.printError(Serial);
+                        ok = false;
+                        break;
+                    }
+                    written += n;
+                    lastUploadChunkMs = millis();  // keep busyWithUpload fresh
+                    delay(1);  // yield to async_tcp
+                }
+                f.close();
+                if (ok && Update.end(true)) {
+                    Serial.printf("[fw] SD-flash complete: %u bytes, restarting\n",
+                                  (unsigned)written);
+                    delay(500);
+                    cleanRestart();
+                } else {
+                    // Release the in-progress Update slot. Without this, the
+                    // partition stays "in progress" and the next Update.begin()
+                    // refuses to start until a reboot.
+                    if (Update.isRunning()) Update.abort();
+                    Serial.println("[fw] SD-flash: Update.end failed or short write");
+                    Update.printError(Serial);
+                    char errBuf[96];
+                    snprintf(errBuf, sizeof(errBuf),
+                             "SD-flash failed at %u/%u", (unsigned)written, (unsigned)total);
+                    logError("fw", errBuf);
+                }
+            }
+        }
+    }
+
     if (pendingMaintenanceFlag) {
+        std::atomic_thread_fence(std::memory_order_acquire);
         pendingMaintenanceFlag = false;
         if (wsConnected && wsClient.connected()) {
             String msg = "{\"type\":\"event\",\"event\":\"maintenance\",\"minutes\":";
@@ -4781,12 +7198,31 @@ void loop() {
             msg += jsonEscape(String(pendingMaintenanceMessage));
             msg += "\"}";
             wsSendText(wsClient, msg);
+            // Stamp local UI state. Worker is authoritative; this is just
+            // so the admin panel can show "currently in maintenance, ends
+            // in 23 min" without polling the worker.
+            if (pendingMaintenanceMinutes == 0) {
+                localMaintenanceUntilUnix = 0;
+                localMaintenanceMessage[0] = '\0';
+            } else {
+                struct tm tm;
+                if (getLocalTime(&tm, 0)) {
+                    localMaintenanceUntilUnix = (uint32_t)mktime(&tm) + (uint32_t)pendingMaintenanceMinutes * 60;
+                }
+                strncpy(localMaintenanceMessage, pendingMaintenanceMessage, sizeof(localMaintenanceMessage) - 1);
+                localMaintenanceMessage[sizeof(localMaintenanceMessage) - 1] = '\0';
+            }
+            saveMaintenanceState();
         }
     }
 
-    // 5s SSE stats push: constant cost regardless of viewer count
+    // SSE stats push every 15s. Cadence chosen over 5s because tighter pushes
+    // collide with LAN homepage parallel GETs and saturate lwIP pbufs, which
+    // can cascade into WS write failures. 15s freshness is well within
+    // "ambient stats" tolerance for SSE viewers.
     static unsigned long lastStatsPush = 0;
-    if (!busyWithUpload && wsConnected && wsClient.connected() && millis() - lastStatsPush > 5000) {
+    if (!busyWithUpload && wsConnected && wsClient.connected() &&
+        millis() - lastStatsPush > 15000) {
         lastStatsPush = millis();
         String body = buildStatsJson();
         String msg  = "{\"type\":\"event\",\"event\":\"stats_update\",\"data\":";
@@ -4795,7 +7231,7 @@ void loop() {
         wsSendText(wsClient, msg);
     }
 
-    // event-driven /console push: fires the instant a tracked request lands
+    // event-driven /console push: fires the instant a tracked request lands.
     if (pendingConsolePush) {
         pendingConsolePush = false;
         if (!busyWithUpload && wsConnected && wsClient.connected() && consoleCount > 0) {
@@ -4851,8 +7287,67 @@ void loop() {
         }
     }
 
-    if (strlen(cfgWorkerUrl) > 0 && !busyWithUpload) {
+    if (pendingSnakeClearFlag) {
+        pendingSnakeClearFlag = false;
         if (wsConnected && wsClient.connected()) {
+            wsSendText(wsClient, String("{\"type\":\"event\",\"event\":\"snake_clear\"}"));
+        } else {
+            // Record a failure locally so the admin UI's polling sees the
+            // result instead of staring at stale data forever. Mirrors the
+            // r2_healthcheck / test_email offline fallback pattern.
+            snakeClearOk = false;
+            struct tm tm;
+            if (getLocalTime(&tm, 0)) snakeClearAtUnix = mktime(&tm);
+        }
+    }
+
+    // Diagnostic: if busyWithUpload is preventing WS recovery, log it. The
+    // entire WS loop below is gated on !busyWithUpload, including the 120s
+    // safety-net reboot. If lastUploadChunkMs keeps getting updated (e.g.,
+    // by a stuck upload that never completes), we'd be permanently blocked.
+    // Logged at most once per 30s so it doesn't flood serial.
+    if (strlen(cfgWorkerUrl) > 0 && busyWithUpload && !wsConnected) {
+        static unsigned long lastBusyBlockLog = 0;
+        if (millis() - lastBusyBlockLog > 30000) {
+            Serial.printf("[ws] recovery blocked: busyWithUpload=true (last chunk %lums ago)\n",
+                          lastUploadChunkMs ? (unsigned long)(millis() - lastUploadChunkMs) : 0UL);
+            lastBusyBlockLog = millis();
+        }
+    }
+
+    if (strlen(cfgWorkerUrl) > 0 && !busyWithUpload) {
+        // Detect the "wsConnected was true but client.connected() just flipped
+        // to false" case explicitly: this is the silent path where TCP gets
+        // RST'd externally (CF closes us, network drops us, keepalive miss)
+        // without any of our write/read helpers firing. Most common disconnect
+        // trigger in the cascade logs; worth catching by itself.
+        if (wsConnected && !wsClient.connected()) {
+            // RSSI + WiFi status at the moment of disconnect: correlates
+            // silent drops with signal dips / AP kicks. Typical reading
+            // on healthy LAN is -55 to -70 dBm, WL_CONNECTED (3). If we
+            // see RSSI < -80 dBm or WiFi.status() != 3 at drop time,
+            // the cause is almost certainly the radio, not CF/TCP.
+            Serial.printf("[ws] wsClient.connected() went false (free=%u, largest=%u, rssi=%d, wifi=%d)\n",
+                          (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap(),
+                          (int)WiFi.RSSI(), (int)WiFi.status());
+            wsConnected = false;
+        }
+        if (wsConnected && wsClient.connected()) {
+            // Healthy branch resets the safety-net timer. Without this, a
+            // flapping connection (up 3s, down 5s, repeat) would hit 120s
+            // wall-clock and reboot even though most of that time was "up."
+            // Repurpose wsDisconnectedSince==0 as the "healthy entry" signal
+            // and use a separate counter for healthy-since-when.
+            static unsigned long healthySince = 0;
+            if (wsDisconnectedSince != 0) healthySince = millis();  // first tick after recovery
+            wsDisconnectedSince = 0;
+            // After 60s of sustained healthy connection, clear the escalation
+            // ladder so a brief WiFi blip later doesn't jump straight to
+            // cleanRestart() because of a stale level=1 from the prior recovery.
+            if (wsEscalationLevel != 0 && healthySince != 0 && millis() - healthySince > 60000) {
+                wsEscalationLevel = 0;
+                Serial.println("[ws] escalation level cleared after sustained healthy connection");
+            }
             // Cap at 8 messages per loop tick. Under a flood of queued relays
             // the old `while available` drained everything in one go and
             // starved OLED/sensor work; this yields after a bounded batch so
@@ -4877,38 +7372,159 @@ void loop() {
             }
         } else {
             wsConnected = false;
-            // exponential backoff: 5s, 10s, 20s, 40s, 80s, 160s, then capped at 300s
-            unsigned long backoff = WS_RECONNECT_MS * (1UL << (wsReconnectFails < 6 ? wsReconnectFails : 6));
-            if (backoff > 300000UL) backoff = 300000UL;
-            if (millis() - lastWsAttempt > backoff) {
-                lastWsAttempt = millis();
-                wsClient.stop();
-                // Give LWIP time to fully release the socket fd before we grab
-                // a new one. Without this, connect() sometimes races with the
-                // prior socket's teardown and returns errno 113 immediately.
-                delay(200);
-
-                // Escalation ladder:
-                //   2 consecutive fails -> WiFi.reconnect() refreshes the AP
-                //     association, flushes ARP, renews DHCP. Clears the most
-                //     common cause (stale gateway ARP, aged route).
-                //   4 consecutive fails -> full reboot. Last resort when the
-                //     WiFi driver itself is wedged. Cumulative ~75s from first
-                //     fail so we recover quickly instead of the old 10+ min.
-                if (wsReconnectFails == 2) {
-                    Serial.println("[ws] 2 consecutive fails, refreshing WiFi");
-                    logError("ws", "2 consecutive ws fails, reconnecting wifi");
-                    WiFi.reconnect();
-                    // Don't try connectWorker this round, wifi needs a moment.
-                    wsReconnectFails++;
-                } else if (wsReconnectFails >= 4) {
-                    Serial.println("[ws] 4 consecutive fails, restarting");
-                    logError("ws", "4 consecutive ws fails, restarting");
+            // Safety net: if we've been disconnected for 60s CONTINUOUSLY
+            // (no successful reconnect in between) without a legitimate
+            // upload pause, something is wedged that the escalation ladder
+            // didn't catch. Blunt reboot. wsDisconnectedSince is reset at
+            // the top of the healthy branch so flapping connections don't
+            // accumulate wall-clock time toward this threshold.
+            //
+            // 60s (down from 120s): tightened to halve the user-visible
+            // blank window. Originally went to 45s but that was too tight:
+            // a WiFi.reconnect at t≈30s plus 5-10s WiFi reassociation plus
+            // post-WiFi WS handshake doesn't always fit under 45s, leading
+            // to reboots mid-recovery. 60s gives the recovery path room
+            // to finish naturally.
+            // Skip the safety-net reboot during any in-progress local
+            // operation that would leave SD or flash in a stuck state if
+            // interrupted: file upload (busyWithUpload), SD-flash of a
+            // .bin (pendingSDFlash), SHA256 computation (sha256Computing),
+            // or an in-progress R2 backup (backupRunning). A full SD
+            // backup can take ~30-60s; without this gate the safety-net
+            // would cut it off and leave R2 with a partial snapshot.
+            // SD writes mid-reboot are the exact pattern that leaves the
+            // card's MCU in NOT_READY until physical power cycle. The
+            // disconnected timer resets on the way out so it doesn't
+            // accumulate during these grace periods.
+            bool localBusy = busyWithUpload || pendingSDFlash || sha256Computing || backupRunning;
+            if (!localBusy) {
+                if (wsDisconnectedSince == 0) wsDisconnectedSince = millis();
+                if (millis() - wsDisconnectedSince > 60000UL) {
+                    Serial.println("[ws] disconnected 60s, hard restart");
+                    logError("ws", "ws disconnected 60s, hard restart");
+                    wsDisconnectedSince = 0;
                     delay(200);
                     cleanRestart();
+                }
+            } else {
+                wsDisconnectedSince = 0;
+            }
+
+            // Backoff schedule. First retry is immediate (500ms) because most
+            // drops are transient (LAN-burst TCP stall, momentary WiFi dip);
+            // waiting 5s for the first attempt means 5s of blank UX for what
+            // usually resolves in one round-trip. After that, LINEAR growth
+            // (5s * fails, capped 30s) instead of exponential. Exponential
+            // sent us into 40s+ gaps between attempts which couldn't recover
+            // within the 45s safety-net window.
+            unsigned long backoff;
+            if (wsReconnectFails == 0) {
+                backoff = 500;
+            } else {
+                backoff = WS_RECONNECT_MS * wsReconnectFails;
+                if (backoff > 30000UL) backoff = 30000UL;
+            }
+            if (millis() - lastWsAttempt > backoff) {
+                lastWsAttempt = millis();
+                Serial.printf("[ws] reconnect attempt (fails=%d fastFails=%d)\n",
+                              wsReconnectFails, wsFastFails);
+                wsClient.stop();
+                // Give LWIP time to fully release the socket fd before we
+                // grab a new one. Under socket exhaustion the teardown path
+                // can stall longer than a simple close.
+                delay(500);
+
+                // Escalation ladder at fails=3:
+                //   level 0: WiFi.reconnect() to refresh AP association.
+                //   level 1+: cleanRestart(). Going straight to reboot when
+                //     a refresh didn't help avoids leaving AsyncWebServer's
+                //     listening socket in a torn-down state, which would
+                //     break LAN access until next boot.
+                //   3 fast-fails (connectWorker returning in <1s) -> reboot:
+                //     LWIP socket pool exhausted, retries won't help.
+                //   60s wall-clock disconnected -> reboot (safety net above).
+                // Fast-path: a DNS-resolution failure at fails=1 means the
+                // resolver state is wedged, not that CF is down. Skip
+                // straight to WiFi.reconnect() instead of waiting another
+                // ~12s for two more fails to ramp through the ladder.
+                // Re-uses the same escalation tracking so a wedged WiFi
+                // (where reconnect() doesn't help) still cleanRestarts at
+                // the next round.
+                if (wsLastFailWasDns && wsReconnectFails >= 1 && wsEscalationLevel == 0) {
+                    Serial.println("[ws] DNS fail; firing WiFi.reconnect early");
+                    logError("ws", "DNS fail short-circuit, reconnecting wifi");
+                    WiFi.reconnect();
+                    wsEscalationLevel = 1;
+                    wsReconnectFails = 1;
+                    wsFastFails = 0;
+                    wsLastFailWasDns = false;
+                    lastWsAttempt = millis();
+                    return;  // back to top of loop, next cycle does the connect
+                }
+
+                if (wsReconnectFails == 3) {
+                    if (wsEscalationLevel == 0) {
+                        Serial.println("[ws] 3 consecutive fails, refreshing WiFi");
+                        logError("ws", "3 consecutive ws fails, reconnecting wifi");
+                        WiFi.reconnect();
+                        wsEscalationLevel = 1;
+                    } else {
+                        Serial.println("[ws] WiFi.reconnect didn't help, cleanRestart");
+                        logError("ws", "WiFi.reconnect failed, restarting");
+                        delay(200);
+                        cleanRestart();
+                    }
+                    // Set fails=1 (NOT 0): backoff for fails=1 is 5s, which
+                    // gives WiFi time to actually reassociate before the
+                    // next connectWorker(). With fails=0, the next attempt
+                    // fires in 500ms, WiFi isn't up yet, connect fast-
+                    // fails with "Host unreachable", wsFastFails increments
+                    // toward the socket-exhaustion threshold, and the device
+                    // reboots mid-recovery, killing in-flight LAN loads.
+                    //
+                    // Reset wsFastFails too: post-recovery attempts may
+                    // legitimately fast-fail if the radio hasn't fully come
+                    // up; that shouldn't count toward exhaustion.
+                    wsReconnectFails = 1;
+                    wsFastFails = 0;
+                    lastWsAttempt = millis();
                 } else {
-                    if (connectWorker()) { wsReconnectFails = 0; wsReconnectCount++; }
-                    else wsReconnectFails++;
+                    unsigned long connStart = millis();
+                    bool connOk = connectWorker();
+                    unsigned long connMs = millis() - connStart;
+                    if (connOk) {
+                        wsReconnectFails = 0;
+                        wsFastFails = 0;
+                        wsEscalationLevel = 0;
+                        wsReconnectCount++;
+                        // Push stats immediately so the Worker has fresh
+                        // lastStats from the moment of connect. Without this,
+                        // a Worker DO restart (CF eviction) leaves lastStats
+                        // null until our regular 15s push cadence rolls
+                        // around, during which every page shows the
+                        // "offline" badge even though the device is fine.
+                        if (wsConnected && wsClient.connected()) {
+                            String body = buildStatsJson();
+                            String msg  = "{\"type\":\"event\",\"event\":\"stats_update\",\"data\":";
+                            msg += body;
+                            msg += "}";
+                            wsSendText(wsClient, msg);
+                        }
+                    } else {
+                        wsReconnectFails++;
+                        if (connMs < 1000) {
+                            wsFastFails++;
+                            Serial.printf("[ws] fast-fail %d (took %lums)\n", wsFastFails, connMs);
+                            if (wsFastFails >= 3) {
+                                Serial.println("[ws] 3 fast-fails, socket exhaustion, restarting");
+                                logError("ws", "3 ws fast-fails, socket exhaustion, restarting");
+                                delay(200);
+                                cleanRestart();
+                            }
+                        } else {
+                            wsFastFails = 0;
+                        }
+                    }
                 }
             }
         }

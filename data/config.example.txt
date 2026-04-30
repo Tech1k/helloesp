@@ -7,7 +7,11 @@ admin_user=admin
 admin_pass=CHANGE_ME
 
 # Cloudflare Worker relay (optional, leave blank to skip)
-worker_url=your-worker.workers.dev
+# worker_url accepts either a custom domain (e.g. "helloesp.com") or the
+# default Cloudflare URL (e.g. "your-worker.workers.dev"). No protocol prefix.
+worker_url=helloesp.com
+# worker_key must match the WORKER_SECRET set on the Worker side.
+# Generate with: openssl rand -hex 32
 worker_key=your-secret-key
 
 # Optional: second secret for HMAC challenge-response on /_ws.
@@ -21,3 +25,11 @@ device_key=
 #   MST7MDT,M3.2.0,M11.1.0  (US Mountain)
 #   PST8PDT,M3.2.0,M11.1.0  (US Pacific)
 timezone=UTC0
+
+# Worker-exclusive mode: when true, direct LAN hits to public pages
+# (/, /guestbook, /console, /history, /stats, etc.) are 302-redirected
+# to https://<worker_url>/<path>. Routes public traffic through the
+# Worker's edge cache, eliminating LAN-burst-vs-WS-write collisions
+# that can crash the device under load. /admin is always served direct
+# on LAN regardless. Requires reboot to take effect.
+worker_exclusive=false

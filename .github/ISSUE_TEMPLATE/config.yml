@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/Tech1k/helloesp/discussions
+    about: For questions, ideas, or general chat. Issues are for bug reports.
+  - name: Security vulnerability
+    url: https://github.com/Tech1k/helloesp/security/policy
+    about: See SECURITY.md for how to report security issues.

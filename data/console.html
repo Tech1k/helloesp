@@ -4,13 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Console / HelloESP</title>
-    <meta name="description" content="Live feed of recent requests to the HelloESP microcontroller.">
+    <meta name="description" content="Live feed of recent public requests to HelloESP, with country flags, paths, and timestamps.">
     <meta name="author" content="Tech1k">
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#2686e6">
     <meta property="og:title" content="Console / HelloESP">
     <meta property="og:site_name" content="HelloESP">
-    <meta property="og:description" content="Live feed of recent requests to the HelloESP microcontroller.">
+    <meta property="og:description" content="Live feed of recent public requests to HelloESP, with country flags, paths, and timestamps.">
     <meta property="og:image" content="https://helloesp.com/og-banner.jpg">
     <meta property="og:image:type" content="image/jpeg">
     <meta property="og:image:width" content="1200">
@@ -20,7 +20,7 @@
     <meta property="og:url" content="https://helloesp.com/console">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Console / HelloESP">
-    <meta name="twitter:description" content="Live feed of recent requests to the HelloESP microcontroller.">
+    <meta name="twitter:description" content="Live feed of recent public requests to HelloESP, with country flags, paths, and timestamps.">
     <meta name="twitter:image" content="https://helloesp.com/og-banner.jpg">
     <meta name="twitter:image:alt" content="HelloESP: a website running on an ESP32">
     <link rel="canonical" href="https://helloesp.com/console">
@@ -203,8 +203,9 @@
 
         .footer-links {
             display: flex;
-            gap: 20px;
+            gap: 15px;
             list-style: none;
+            flex-wrap: wrap;
         }
 
         .served {
@@ -223,7 +224,7 @@
             :root {
                 --bg: #111110;
                 --ink: #e8e6e1;
-                --mid: #666;
+                --mid: #8a8a87;
                 --faint: #2a2a28;
                 --ok: #4fc08d;
                 --warn: #e0a050;
@@ -240,6 +241,7 @@
         <ul class="top-links">
             <li><a href="/guestbook">Guestbook</a></li>
             <li><a href="/history">History</a></li>
+            <li><a href="/about">About</a></li>
         </ul>
     </nav>
 
@@ -261,6 +263,7 @@
         <li><a href="/"><i class="fa-solid fa-house"></i> Home</a></li>
         <li><a href="/guestbook"><i class="fa-solid fa-pen"></i> Guestbook</a></li>
         <li><a href="/history"><i class="fa-solid fa-clock-rotate-left"></i> History</a></li>
+        <li><a href="/about"><i class="fa-solid fa-circle-info"></i> About</a></li>
         <li><a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener"><i class="fa-brands fa-github"></i> GitHub</a></li>
     </ul>
 </footer>
@@ -281,7 +284,22 @@
             return 127397 + c.charCodeAt(0);
         });
         try { return String.fromCodePoint.apply(String, cp); }
-        catch (e) { return code; }
+        catch (e) { return '??'; }  // never return raw `code`, it lands in innerHTML
+    }
+
+    var regionNames = null;
+    try { regionNames = new Intl.DisplayNames(['en'], { type: 'region' }); }
+    catch (e) { regionNames = null; }
+
+    function countryName(code) {
+        if (!code || code === '??') return 'Unknown';
+        var up = String(code).toUpperCase();
+        if (!/^[A-Z]{2}$/.test(up)) return up;
+        if (regionNames) {
+            try { return regionNames.of(up) || up; }
+            catch (e) { return up; }
+        }
+        return up;
     }
 
     function timeAgo(unixTime) {
@@ -300,108 +318,141 @@
         return 'err';
     }
 
-    var lastKeys = new Set();
-
     function keyOf(e) { return e.time + '|' + e.method + '|' + e.path + '|' + e.status; }
 
-    function render(entries) {
-        var el = document.getElementById('feed');
-        if (!entries || entries.length === 0) {
-            el.innerHTML = '<div class="empty">Waiting for activity...</div>';
-            lastKeys = new Set();
-            return;
-        }
-        var newKeys = new Set();
-        var html = '';
-        for (var i = 0; i < entries.length; i++) {
-            var e = entries[i];
-            var k = keyOf(e);
-            newKeys.add(k);
-            var isNew = !lastKeys.has(k);
-            html += '<div class="row' + (isNew ? ' new' : '') + '">';
-            html += '<div class="col-time">' + esc(timeAgo(e.time)) + '</div>';
-            html += '<div class="col-country" title="' + esc(e.country) + '">' + countryFlag(e.country) + '</div>';
-            html += '<div class="col-method">' + esc(e.method) + '</div>';
-            html += '<div class="col-path" title="' + esc(e.path) + '">' + esc(e.path) + '</div>';
-            html += '<div class="col-status ' + statusClass(e.status) + '">' + esc(e.status) + '</div>';
-            html += '</div>';
-        }
-        el.innerHTML = html;
-        lastKeys = newKeys;
+    var feedEl = document.getElementById('feed');
+    var statusEl = document.getElementById('status-text');
+    var entries = [];
+    var keysInDom = new Set();
+
+    function rowHtml(e, isNew) {
+        var html = '<div class="row' + (isNew ? ' new' : '') + '" data-time="' + e.time + '">';
+        html += '<div class="col-time">' + esc(timeAgo(e.time)) + '</div>';
+        html += '<div class="col-country" title="' + esc(countryName(e.country)) + '">' + countryFlag(e.country) + '</div>';
+        html += '<div class="col-method">' + esc(e.method) + '</div>';
+        html += '<div class="col-path" title="' + esc(e.path) + '">' + esc(e.path) + '</div>';
+        html += '<div class="col-status ' + statusClass(e.status) + '">' + esc(e.status) + '</div>';
+        html += '</div>';
+        return html;
     }
 
-    var entries = [];
+    function renderAll() {
+        if (!entries.length) {
+            feedEl.innerHTML = '<div class="empty">Waiting for activity...</div>';
+            keysInDom = new Set();
+            return;
+        }
+        var html = '';
+        for (var i = 0; i < entries.length; i++) html += rowHtml(entries[i], false);
+        feedEl.innerHTML = html;
+        keysInDom = new Set(entries.map(keyOf));
+    }
+
+    // Prepend a single new row instead of rebuilding the whole feed. Keeps
+    // user text selection, avoids screen-reader spam from role="log", and
+    // lets the .new fade-in only apply to the actually-new row.
+    function prependEntry(entry) {
+        var k = keyOf(entry);
+        if (keysInDom.has(k)) return;
+        if (!entries.length) feedEl.innerHTML = '';
+        entries.unshift(entry);
+        keysInDom.add(k);
+        var tmp = document.createElement('div');
+        tmp.innerHTML = rowHtml(entry, true);
+        feedEl.insertBefore(tmp.firstChild, feedEl.firstChild);
+        // Cap list at 50, evicting oldest from both array and DOM in lockstep.
+        while (entries.length > 50) {
+            var dropped = entries.pop();
+            keysInDom.delete(keyOf(dropped));
+            if (feedEl.lastChild) feedEl.removeChild(feedEl.lastChild);
+        }
+    }
+
+    // Refresh "5s ago" / "2m ago" textContent on existing rows so a quiet
+    // feed doesn't show frozen timestamps until the next event arrives.
+    setInterval(function() {
+        var rows = feedEl.querySelectorAll('.row');
+        for (var i = 0; i < rows.length; i++) {
+            var t = parseInt(rows[i].getAttribute('data-time'), 10);
+            if (!isFinite(t)) continue;
+            var cell = rows[i].querySelector('.col-time');
+            if (cell) cell.textContent = timeAgo(t);
+        }
+    }, 30000);
+
+    // SSE is served by the Cloudflare Worker; on LAN (direct IP) /_stream
+    // has no handler and EventSource would retry every 3s forever. Skip SSE
+    // entirely when not on the Worker hostname and poll instead.
+    var onWorkerHost = /helloesp\.com$/i.test(location.hostname);
+    var sse = null;
+    var lastSseEventAt = 0;
+    var safetyNet = null;
+    var poll = null;
+
+    function sseHealthy() { return !!sse && sse.readyState === 1 && lastSseEventAt > 0; }
 
     function fetchFeed() {
         fetch('/console.json', { cache: 'no-store' })
             .then(function(r) { return r.ok ? r.json() : []; })
             .then(function(data) {
-                entries = Array.isArray(data) ? data : [];
-                render(entries);
-                document.getElementById('status-text').textContent = 'Listening';
+                var fresh = Array.isArray(data) ? data : [];
+                if (sseHealthy()) {
+                    // SSE is the source of truth; merge any rows that aren't
+                    // already on screen instead of clobbering live events.
+                    for (var i = fresh.length - 1; i >= 0; i--) {
+                        if (!keysInDom.has(keyOf(fresh[i]))) prependEntry(fresh[i]);
+                    }
+                } else {
+                    entries = fresh;
+                    renderAll();
+                }
+                statusEl.textContent = 'Listening';
             })
-            .catch(function() {
-                document.getElementById('status-text').textContent = 'Reconnecting';
-            });
+            .catch(function() { statusEl.textContent = 'Reconnecting'; });
     }
 
-    // initial populate via XHR; doesn't wait for SSE
-    fetchFeed();
+    function startPolling() { if (!poll) poll = setInterval(fetchFeed, 5000); }
+    function stopPolling() { if (poll) { clearInterval(poll); poll = null; } }
 
-    var poll = null;
-    function startPolling() {
-        if (poll) return;
-        poll = setInterval(fetchFeed, 5000);
-    }
-    function stopPolling() {
-        if (poll) { clearInterval(poll); poll = null; }
-    }
-
-    // drop duplicates if the initial XHR response and an SSE event describe the same hit
-    function entryKey(e) { return e.time + '|' + e.method + '|' + e.path + '|' + e.status; }
-    function alreadyPresent(entry) {
-        var k = entryKey(entry);
-        for (var i = 0; i < entries.length; i++) {
-            if (entryKey(entries[i]) === k) return true;
-        }
-        return false;
+    function armSafetyNet() {
+        if (safetyNet) clearTimeout(safetyNet);
+        safetyNet = setTimeout(function() {
+            safetyNet = null;
+            if (!sseHealthy()) startPolling();
+        }, 8000);
     }
 
-    // try SSE for real-time updates; fall back to polling if it fails
-    var sse = null;
     function openSSE() {
-        if (typeof EventSource === 'undefined') { startPolling(); return; }
+        if (!onWorkerHost || typeof EventSource === 'undefined') { startPolling(); return; }
         try {
             sse = new EventSource('/_stream');
             sse.addEventListener('console', function(e) {
+                lastSseEventAt = Date.now();
+                // First event proves SSE works; cancel pending safety-net.
+                if (safetyNet) { clearTimeout(safetyNet); safetyNet = null; }
                 try {
-                    var entry = JSON.parse(e.data);
-                    if (alreadyPresent(entry)) return;
-                    entries.unshift(entry);
-                    if (entries.length > 50) entries = entries.slice(0, 50);
-                    render(entries);
-                    document.getElementById('status-text').textContent = 'Listening';
+                    prependEntry(JSON.parse(e.data));
+                    statusEl.textContent = 'Listening';
                     stopPolling();
                 } catch(err) {}
             });
             sse.onerror = function() { startPolling(); };
         } catch(e) { startPolling(); }
     }
+
+    fetchFeed();
     openSSE();
+    armSafetyNet();
 
-    // safety net: if SSE hasn't delivered, fall back to polling
-    setTimeout(function() {
-        if (!sse || sse.readyState !== 1) startPolling();
-    }, 8000);
-
-    // pause both paths when tab is hidden; resume on focus
     document.addEventListener('visibilitychange', function() {
         if (document.hidden) {
             stopPolling();
             if (sse) { try { sse.close(); } catch(e) {} sse = null; }
+            if (safetyNet) { clearTimeout(safetyNet); safetyNet = null; }
+            lastSseEventAt = 0;
         } else {
             fetchFeed();
-            if (!sse) openSSE();
+            if (!sse) { openSSE(); armSafetyNet(); }
         }
     });
 

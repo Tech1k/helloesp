@@ -3,7 +3,10 @@
 [![HelloESP status](https://helloesp.com/status.svg)](https://helloesp.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/license/mit/)
 [![Build](https://github.com/Tech1k/helloesp/actions/workflows/build.yml/badge.svg)](https://github.com/Tech1k/helloesp/actions/workflows/build.yml)
+[![CodeQL](https://github.com/Tech1k/helloesp/actions/workflows/codeql.yml/badge.svg)](https://github.com/Tech1k/helloesp/actions/workflows/codeql.yml)
+[![Lighthouse](https://github.com/Tech1k/helloesp/actions/workflows/lighthouse.yml/badge.svg)](https://github.com/Tech1k/helloesp/actions/workflows/lighthouse.yml)
 [![PlatformIO](https://img.shields.io/badge/PlatformIO-Arduino-orange)](https://platformio.org/)
+[![GitHub stars](https://img.shields.io/github/stars/Tech1k/helloesp?style=social)](https://github.com/Tech1k/helloesp/stargazers)
 
 A public website running entirely on a single ESP32 with 520 KB of RAM. Every page, every sensor reading, every guestbook entry is served by the microcontroller itself. There is no backend server.
 
@@ -33,28 +36,37 @@ The ESP32 holds a persistent outbound WebSocket to a Cloudflare Worker. When a b
 
 Responses larger than a single WebSocket frame are chunked and base64-encoded. Admin endpoints return 404 through the relay and are only reachable on the LAN. A second shared secret (HMAC) can be enabled so a leaked Worker secret alone cannot impersonate the device.
 
-The same WebSocket also carries **live push events** the other direction: every 5 seconds the device pushes sensor stats, and every tracked public request triggers a console event. The Worker fans these out to connected browsers via Server-Sent Events (`/_stream`), so the homepage ticks in real time without polling.
+The same WebSocket also carries **live push events** the other direction: every 15 seconds the device pushes sensor stats, and every tracked public request triggers a console event. The Worker fans these out to connected browsers via Server-Sent Events (`/_stream`), so the homepage ticks in real time without polling.
 
 Without the Worker, the site still runs on LAN via mDNS at `http://helloesp.local`.
 
 ## Hardware
 
-| Part | Role |
-|---|---|
-| ESP32 DOIT DevKit V1 | MCU, 520 KB RAM, dual-core Xtensa |
-| BME280 | Temperature, humidity, barometric pressure |
-| CCS811 | CO₂, VOC |
-| SSD1306 128×64 | OLED, rotating info pages with burn-in shift |
-| Micro SD card (FAT32, ≤32 GB) | Filesystem: HTML, images, logs, config |
-| Status LED | Blinks on every public visit |
-| Notification LED | Lights when the guestbook has pending entries |
+| Part | Qty | ~Price | Source | Role |
+|---|---|---|---|---|
+| Inland ESP32-WROOM-32D | 1 | $10 | Microcenter | MCU, 520 KB RAM, dual-core Xtensa. Different silkscreen layout from the DOIT V1, but builds under `esp32doit-devkit-v1` since the firmware addresses pins by GPIO number |
+| BME280 breakout | 1 | $7 | Amazon | Temperature, humidity, barometric pressure |
+| CCS811 breakout | 1 | $14 | Amazon | CO₂, VOC |
+| Adafruit DS3231 + CR1220 cell | 1 | $14 | Adafruit | Battery-backed real-time clock, accurate timekeeping across reboots |
+| SSD1306 128×64 OLED | 1 | $3 | Amazon | Rotating info pages with burn-in shift |
+| Adafruit MicroSD breakout | 1 | $8 | Adafruit | SPI SD card adapter |
+| Good quality Micro SD card (FAT32, ≤32 GB) | 1 | $15 | anywhere | Filesystem: HTML, images, logs, config |
+| 5mm LEDs + 220Ω resistors | 2 each | <$1 | Microcenter | Status LED (visit blink) + notification LED (pending guestbook) |
+| Full-size premium breadboard | 1 | $5 | Adafruit | Build substrate; see "build gotchas" below |
+| Solid-core hookup wire | 1 | $17 | Adafruit | Cut-to-length connections between modules |
+
+**Total parts: ~$95** as actually built (mix of Amazon, Microcenter, Adafruit). Going all-clones with no Adafruit breakouts gets you closer to $35. Clone-shop the DOIT V1 itself with the most care, since some clones ship undersized USB-UART chips or unstable AMS1117 LDOs.
+
+**Power:** runs from any 1 A USB-A phone charger. Total draw averages well under 1 W, with brief spikes during WiFi association and SD writes.
+
+**My setup:** USB-C brick → USB-C-to-micro-USB cable → smart plug → UPS. The smart plug gives remote power-cycling for when something wedges; the UPS makes grid blips invisible. Both are optional, but both are part of why "this stays up" is a real claim and not an aspiration.
 
 ### Wiring
 
 | Signal | ESP32 Pin |
 |---|---|
-| I²C SDA (BME280, CCS811, OLED) | GPIO 21 |
-| I²C SCL (BME280, CCS811, OLED) | GPIO 22 |
+| I²C SDA (BME280, CCS811, DS3231, OLED) | GPIO 21 |
+| I²C SCL (BME280, CCS811, DS3231, OLED) | GPIO 22 |
 | SD CS | GPIO 5 |
 | SD MOSI | GPIO 23 |
 | SD MISO | GPIO 19 |
@@ -63,33 +75,48 @@ Without the Worker, the site still runs on LAN via mDNS at `http://helloesp.loca
 | Notification LED | GPIO 32 |
 | CCS811 WAKE | GND |
 
-I²C addresses: BME280 `0x76`, CCS811 `0x5A`, SSD1306 `0x3C`.
+I²C addresses: BME280 `0x76`, CCS811 `0x5A`, DS3231 `0x68`, SSD1306 `0x3C`.
+
+DS3231 is optional. If absent, the firmware falls back to NTP-only timekeeping with a brief 1970-until-NTP window after each reboot; with it, the system clock is pre-seeded from the RTC at boot and writes back on every NTP sync.
+
+### Breadboard build gotchas
+
+A few things that aren't obvious until you ship one of these and watch it fail:
+
+- **Don't oversize the AMS1117 output caps.** The on-board LDO on the DOIT DevKit V1 is stable across roughly 1µF to 100µF on the output. Adding a bulky 470µF "for safety" pushes it into oscillation at boot. The symptom looks like WiFi flake (brownout reboots, repeating connect attempts). Stick with what the dev board ships, or add a small ceramic if you must.
+- **Desolder R1 and R2 on the DS3231 module.** Most generic DS3231 boards ship with their own 4.7kΩ I²C pull-ups installed. Leaving them in place stacks four sets of pull-ups on one bus (BME280, CCS811, OLED, DS3231), dropping the effective resistance to ~1.95kΩ. SDA/SCL high levels sag and CCS811 reads start corrupting. Lift R1 and R2 with a soldering iron; the bus settles around 2.4kΩ, which is what the rest of the parts expect.
+- **SPI and I²C don't like sharing parallel jumpers.** The SD card's SPI bus runs at ~25 MHz on GPIO 18/19/23. If those wires sit flush against the I²C lines on a breadboard, capacitive coupling shows up as CCS811 readings that look like the sensor is dying. Route the SD lines on a different row, or lift them ~1mm above the I²C wires for vertical air separation.
+- **Use solid-core wire, and don't put any jumper under tension.** Stranded jumpers work fine on the bench. Once the device is framed and mounted, any flex on a stranded contact intermittently fails and the bus wedges. Solid-core, cut to length, with no pull on either end.
+- **Tie 3.3V and GND on both rails, at both ends.** Most full-size breadboards split each power rail in the middle, and even the ones that look continuous can have a single weak contact mid-board. Tying the rails at one end works on the bench, but on the wall a single point of contact is one whisker of flex away from a brown-out. Two jumpers across, one at each end, costs nothing.
+
+These are all "learned from the v1 burnout" notes. A PCB respin fixes most of them at the layout level, which is the eventual plan.
 
 ## Features
 
 **Frontend**
 - Live dashboard: 12 sensor/system metrics, trend arrows, degraded-sensor indicators
-- Real-time SSE updates (push every 5s from the device), with graceful fallback to 30s polling
+- Real-time SSE updates (push every 15s from the device), with graceful fallback to 30s polling
 - Live connection indicator (pulsing green dot) and a "Right now" request ticker on the homepage
 - Historical CSV charts with day/week/month switcher; weekly/monthly/yearly aggregate archives
 - Hall of Fame (lifetime extremes: peak CO₂, temp range, busiest day, longest uptime) and year-over-year monthly visitor deltas on `/history`
 - Visitor country map, request-rate chart, changelog, photo carousel
 - `/console` live feed: last 50 public requests with country flags, updated instantly via SSE
 - Outdoor weather context (via Cloudflare Worker proxy to Open-Meteo)
-- Guestbook with submission, moderation queue, rate limiting
+- Guestbook with two-level reply threading, tombstone deletes, moderation queue, inline AI translation, rate limiting
+- Snake easter egg with global leaderboard on the 404 / offline / timeout pages: replay-verified server-side, 3-letter initials with content blocklist, idle demo mode
 - Dark mode, responsive, SRI-pinned CDN scripts, no tracking
 
 **Firmware**
 - Full async HTTP server over WebSocket-relayed traffic
-- Non-blocking WebSocket client with exponential backoff (5 s → 300 s cap)
+- Non-blocking WebSocket client with linear backoff (500 ms first retry, then 5 s × fails up to 30 s cap), WiFi reassociation on consecutive fails, and a 60 s wall-clock safety-net reboot if recovery stalls
 - Atomic writes for all critical files (`tmp → bak → rename`)
 - Period aggregation: weekly, monthly, yearly checkpoints
 - CSV sensor logging every 5 minutes
-- NTP with three-server failover and bounded boot retry
+- NTP with three-server failover and bounded boot retry; DS3231 pre-seeds the system clock at boot so timestamps are correct before NTP arrives
 - WiFi runtime watchdog: reboots if disconnected >10 min
-- Heap safety net: reboots at <20 KB free rather than hang
-- Event-driven SSE push for sensor stats (5s) and console entries (on each request)
-- Admin panel (LAN-only): OTA updates, file manager, full SD backup/restore, R2 backup health + liveness test, SMTP2GO test email, self-test, sensor + error log viewers, device health sparklines (heap + RSSI), Worker link status, data management (reset counters / export state), maintenance mode toggle
+- Heap safety net: reboots at <30 KB free rather than hang
+- Event-driven SSE push for sensor stats (15s) and console entries (on each request)
+- Admin panel (LAN-only): OTA updates, file manager (with overwrite-confirm + gzip-pair tooltips), full SD backup/restore, R2 backup health + liveness test, SMTP2GO test email, self-test (with I²C bus scanner), sensor + error log viewers, device health sparklines (heap + RSSI), Worker link status, data management (reset counters / export state / clear Snake leaderboard / repair monthly+yearly stats from weekly archives / drop out-of-spec CSV rows / fix truncated record timestamps), maintenance mode toggle
 - OLED boot sequence, rotating runtime pages, burn-in protection
 
 **Edge**
@@ -97,7 +124,11 @@ I²C addresses: BME280 `0x76`, CCS811 `0x5A`, SSD1306 `0x3C`.
 - SSE fanout hub: multiple browser viewers, constant ESP load
 - Maintenance mode with auto-expiring window and dedicated 503 page
 - Auto-retry + pulsing indicator on all error pages (offline / timeout / maintenance)
+- Cloudflare edge caching honors the device's `Cache-Control: max-age` headers so repeat visitors hit the edge instead of the chip
+- Optional `worker_exclusive` mode: LAN visitors to public pages (homepage, guestbook, etc.) get redirected to the public site so they go through the Worker's edge cache rather than hitting the chip directly. `/admin` stays direct on LAN. Eliminates LAN-burst-vs-WS-write collisions
 - Hourly outdoor-weather refresh cached in the Durable Object
+- Inline guestbook translation via Workers AI (`@cf/meta/m2m100-1.2b`), per-(message-id, target-lang) cached in DO storage so each unique pair costs at most one neuron
+- Snake leaderboard storage (Durable Object) with replay-verify anti-cheat, ROT13'd 3-letter initials blocklist, per-IP rate limit on score submissions
 - Embeddable live status badges at `/status.svg` (and `/status-wide.svg`)
 - Optional HMAC challenge-response device auth
 - Optional SMTP2GO integration for guestbook-pending alerts, dead-man's-switch (device silent >N hours), backup failures, and overdue-backup warnings
@@ -107,22 +138,48 @@ I²C addresses: BME280 `0x76`, CCS811 `0x5A`, SSD1306 `0x3C`.
 
 ### Embeddable status badges
 
-Four variants of the compact badge (shields-compatible, edge-cached 60s):
+Live badges you can drop into your own README, blog, or status page. All variants pull from the Worker's cache, so embedding them puts zero load on the ESP no matter how many pages link them. Edge-cached 60 seconds. Keep working (showing "offline") even when the device is unreachable.
 
-```markdown
-![](https://helloesp.com/status.svg)                    # default: uptime
-![](https://helloesp.com/status.svg?metric=visits)      # visit count
-![](https://helloesp.com/status.svg?metric=temp)        # current temperature
-![](https://helloesp.com/status.svg?metric=online)      # online/offline pulse
-```
+**Compact badges** (shields.io-compatible layout, 20px tall):
 
-Plus a wide stat card with multiple live metrics:
+| Variant | Live preview | URL |
+|---|---|---|
+| Uptime *(default)* | ![](https://helloesp.com/status.svg) | `https://helloesp.com/status.svg` |
+| Visit count | ![](https://helloesp.com/status.svg?metric=visits) | `https://helloesp.com/status.svg?metric=visits` |
+| Current temperature | ![](https://helloesp.com/status.svg?metric=temp) | `https://helloesp.com/status.svg?metric=temp` |
+| Online indicator | ![](https://helloesp.com/status.svg?metric=online) | `https://helloesp.com/status.svg?metric=online` |
 
-```markdown
+**Wide stat card** (340×78, multi-line mini-dashboard):
+
 ![](https://helloesp.com/status-wide.svg)
+
+`https://helloesp.com/status-wide.svg`
+
+**Embedding**
+
+Markdown:
+```markdown
+[![HelloESP status](https://helloesp.com/status.svg)](https://helloesp.com)
 ```
 
-Both pull from the Worker's cached sensor state. Zero ESP load regardless of how many pages embed them. State-aware colors (live, stale, offline, maintenance).
+HTML:
+```html
+<a href="https://helloesp.com">
+  <img src="https://helloesp.com/status.svg" alt="HelloESP status">
+</a>
+```
+
+**State colors** (applies to both compact and wide):
+
+| Color | Meaning |
+|---|---|
+| Blue | Live: device online, heard from within 45s |
+| Gray | Offline or stale: no stats received in >2 minutes, or WS socket is gone |
+| Orange | Maintenance: owner-declared downtime window |
+
+**Accessibility**: every badge includes `<title>` text and `role="img"`, so screen readers announce the state rather than saying "image." The `aria-label` reflects the current value ("HelloESP: up 5d 3h" etc.).
+
+**Cache policy**: `Cache-Control: public, max-age=60`. Most embedders don't need sub-minute freshness; plan accordingly if you do.
 
 ## Setup
 
@@ -153,6 +210,8 @@ timezone=MST7MDT,M3.2.0,M11.1.0
 ```
 
 Timezone is a POSIX TZ string. Common US examples are listed in the file. Leave `worker_url`, `worker_key`, and `device_key` blank to run LAN-only.
+
+Optional `worker_exclusive=true` redirects LAN public-page hits (`/`, `/guestbook`, etc.) to the Worker so they go through CF's edge cache. `/admin` always serves direct on LAN. Default off; flip to `true` only if your Worker is set up and you want LAN visitors to share the same cache layer as public visitors.
 
 ### 4. Cloudflare Worker (optional, for public access)
 
@@ -254,19 +313,50 @@ If you're thinking about building your own, here's what to expect:
 - **No HTTPS origin.** TLS terminates at the Worker. LAN access is HTTP only, so don't treat the admin panel as secure without a VPN or physical access.
 - **Single point of failure.** One chip, one WiFi link, one SD card. A power blip takes the site down until reboot (usually under 30 seconds).
 - **SD wear.** CSV logging every 5 min plus guestbook writes is a few hundred writes per day. Consumer SD cards will last years, not decades; swap annually if the site matters.
-- **Memory is tight.** 520 KB total, ~180 KB free at idle. Large responses or many concurrent frames can OOM; a heap watchdog reboots at under 20 KB free rather than hang.
+- **Memory is tight.** 520 KB total, ~180 KB free at idle. Large responses or many concurrent frames can OOM; a heap watchdog reboots at under 30 KB free rather than hang.
+
+## Build your own
+
+The full stack is documented above: firmware, hardware, Worker, optional R2 backups, optional email alerts. Everything you need to run your own is here.
+
+**Got one running?** Open a PR or issue with the link. I'll list notable builds in this section as they come in. Curious to see what people do with it.
 
 ## Repository layout
 
 ```
-src/main.cpp          Firmware (Arduino framework)
-data/                 SD card contents: HTML, CSS, JS, images, favicon SVG
-worker/worker.js      Cloudflare Worker + Durable Object (relay, SSE, weather, badges)
-worker/wrangler.toml  Worker config
-platformio.ini        Build config
-.github/workflows/    CI (PlatformIO build on push + PR)
-.github/assets/       README hero image
+src/main.cpp                 Firmware (Arduino framework)
+data/                        SD card contents: HTML, CSS, JS, images, favicon SVG
+data/*.html.gz               Pre-gzipped HTML (auto-generated, see below)
+worker/worker.js             Cloudflare Worker + Durable Object (relay, SSE, weather, badges)
+worker/wrangler.toml         Worker config
+scripts/gzip_assets.py       PlatformIO pre-build step that gzips data/*.html
+platformio.ini               Build config + cppcheck flags
+.github/workflows/           CI: PlatformIO build, CodeQL, Lighthouse
+.github/dependabot.yml       Dependency update automation (GitHub Actions)
+.github/ISSUE_TEMPLATE/      Issue chooser (security policy + discussions)
+.github/assets/              README hero image
+SECURITY.md                  Security disclosure policy
 ```
+
+### HTML asset gzipping
+
+HTML files under `data/` are pre-gzipped before upload. `scripts/gzip_assets.py`
+runs automatically on every `pio run` (wired via `extra_scripts` in
+`platformio.ini`) and produces `.html.gz` companions next to each source.
+
+The firmware's `beginResponseGzipOrRaw()` helper checks for a `.gz` version on
+SD and serves it with `Content-Encoding: gzip` when the client accepts it.
+Falls back transparently to the uncompressed file if no `.gz` exists.
+
+**Why this matters:** a 90+ KB uncompressed `index.html` served directly
+over LAN can saturate LWIP's pbuf pool mid-stream. Under that pressure,
+colliding writes on the outbound WebSocket to Cloudflare fail with EAGAIN,
+and DNS lookups (which share the same pool) also start failing. Gzipping
+drops wire size ~4× and keeps the pool clear.
+
+When you edit an `.html` file, `pio run` regenerates the `.gz` automatically.
+Upload both versions to the SD card (the file manager in the admin panel
+handles this fine).
 
 ## Credits
 
@@ -275,6 +365,7 @@ platformio.ini        Build config
 - [Adafruit BME280](https://github.com/adafruit/Adafruit_BME280_Library)
 - [Adafruit CCS811](https://github.com/adafruit/Adafruit_CCS811_Library)
 - [Adafruit SSD1306](https://github.com/adafruit/Adafruit_SSD1306) + [GFX](https://github.com/adafruit/Adafruit-GFX-Library)
+- [Adafruit RTClib](https://github.com/adafruit/RTClib)
 - [Uptime Library](https://github.com/YiannisBourkelis/Uptime-Library)
 
 ## License

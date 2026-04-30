@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>About / HelloESP</title>
+    <meta name="description" content="The story behind HelloESP: a public website running on a single ESP32 microcontroller, mounted on a wall in my house.">
+    <meta name="author" content="Tech1k">
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#2686e6">
+    <meta property="og:title" content="About / HelloESP">
+    <meta property="og:site_name" content="HelloESP">
+    <meta property="og:description" content="The story behind HelloESP: a public website running on a single ESP32 microcontroller, mounted on a wall in my house.">
+    <meta property="og:image" content="https://helloesp.com/og-banner.jpg">
+    <meta property="og:image:type" content="image/jpeg">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="HelloESP: a website running on an ESP32">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://helloesp.com/about">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="About / HelloESP">
+    <meta name="twitter:description" content="The story behind HelloESP: a public website running on a single ESP32 microcontroller, mounted on a wall in my house.">
+    <meta name="twitter:image" content="https://helloesp.com/og-banner.jpg">
+    <meta name="twitter:image:alt" content="HelloESP: a website running on an ESP32">
+    <link rel="canonical" href="https://helloesp.com/about">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
+          integrity="sha384-/o6I2CkkWC//PSjvWC/eYN7l3xM3tJm8ZzVkCOfp//W05QcE3mlGskpoHB6XqI+B"
+          crossorigin="anonymous" referrerpolicy="no-referrer">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg: #f8f7f4;
+            --ink: #1a1a1a;
+            --mid: #888;
+            --faint: #ccc;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--ink);
+            font-family: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", monospace;
+            min-height: 100vh;
+            display: grid;
+            grid-template-rows: 1fr auto;
+        }
+
+        a:focus-visible {
+            outline: 2px solid var(--ink);
+            outline-offset: 2px;
+            border-radius: 2px;
+        }
+
+        main {
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 80px 24px 64px;
+            width: 100%;
+        }
+
+        .top-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            row-gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+        }
+        @media (max-width: 480px) {
+            .top-links { gap: 14px; font-size: 10px; }
+        }
+        .site-name {
+            font-size: 13px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--mid);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+        .site-name:hover { color: var(--ink); }
+        .top-links {
+            display: flex;
+            gap: 16px;
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+        .top-links a {
+            color: var(--mid);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+        .top-links a:hover { color: var(--ink); }
+
+        h1 {
+            font-size: 36px;
+            font-weight: 400;
+            letter-spacing: -0.02em;
+            line-height: 1.1;
+            margin-bottom: 24px;
+        }
+
+        .device-photo {
+            margin: 0 0 32px;
+        }
+        .device-photo img {
+            width: 100%;
+            height: auto;
+            display: block;
+            border-radius: 4px;
+        }
+        .device-photo figcaption {
+            font-size: 11px;
+            color: var(--mid);
+            font-style: italic;
+            margin-top: 8px;
+            text-align: center;
+        }
+
+        .prose p {
+            font-size: 14px;
+            line-height: 1.85;
+            color: var(--ink);
+            margin-bottom: 18px;
+        }
+
+        .prose p:last-of-type {
+            margin-bottom: 0;
+        }
+
+        .prose a {
+            color: var(--ink);
+            text-decoration: underline;
+            text-underline-offset: 3px;
+            text-decoration-color: var(--mid);
+            transition: text-decoration-color 0.15s;
+        }
+        .prose a:hover { text-decoration-color: var(--ink); }
+
+        .impact {
+            margin-top: 18px;
+            padding: 16px 18px;
+            background: rgba(38, 134, 230, 0.04);
+            border-left: 2px solid var(--faint);
+            font-size: 13px;
+            line-height: 1.75;
+            color: var(--ink);
+        }
+
+        .closing {
+            margin-top: 32px;
+            font-size: 13px;
+            color: var(--mid);
+            line-height: 1.7;
+        }
+        .closing a {
+            color: var(--ink);
+            text-decoration: underline;
+            text-underline-offset: 3px;
+            text-decoration-color: var(--faint);
+        }
+
+        .signoff {
+            margin-top: 40px;
+            padding-top: 18px;
+            border-top: 1px solid var(--faint);
+            font-size: 14px;
+            color: var(--ink);
+        }
+        .signoff a {
+            color: inherit;
+            text-decoration: underline;
+            text-underline-offset: 3px;
+            text-decoration-color: var(--faint);
+            font-style: normal;
+        }
+
+        footer {
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 24px;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px solid var(--faint);
+            font-size: 11px;
+            color: var(--mid);
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        footer a {
+            color: var(--mid);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+        footer a:hover { color: var(--ink); }
+
+        .footer-links {
+            display: flex;
+            gap: 15px;
+            list-style: none;
+            flex-wrap: wrap;
+        }
+
+        .served {
+            color: var(--mid);
+            opacity: 0.7;
+        }
+        .served:not(:empty)::before {
+            content: ' \2022 ';
+            margin: 0 2px;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #111110;
+                --ink: #e8e6e1;
+                --mid: #8a8a87;
+                --faint: #2a2a28;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<main>
+    <nav class="top-nav" aria-label="Primary">
+        <a class="site-name" href="/"><img src="/favicon.png" alt="" style="height:14px;vertical-align:-1px;margin-right:4px;">HelloESP</a>
+        <ul class="top-links">
+            <li><a href="/guestbook">Guestbook</a></li>
+            <li><a href="/history">History</a></li>
+            <li><a href="/console">Console</a></li>
+        </ul>
+    </nav>
+
+    <h1>About</h1>
+
+    <figure class="device-photo">
+        <img src="/helloesp-framed.jpg" alt="The HelloESP device in its display frame, mounted on a wall" width="1200" height="675" loading="lazy">
+        <figcaption>Framed and mounted, April 19, 2026.</figcaption>
+    </figure>
+
+    <div class="prose">
+        <p>Hi.</p>
+
+        <p>This site lives on a single computer chip. About $10 of silicon, mounted on a wall in my house, behind glass. Not a metaphor. Not a server. Not the cloud. A chip.</p>
+
+        <p>The first version went up in 2022 and ran for about five hundred days before the silicon gave out. The site went dark, the domain expired, and that should have been the end of it. Most things on the internet end that way.</p>
+
+        <p>But the chip was still around. The domain was available again. And the internet I came back to was heavier than the one I'd left: louder, slower, more of everything, most of it wasteful. This whole site weighs less than a single phone wallpaper. I wanted to see what one chip could still do against that.</p>
+
+        <p>So I built it again. I framed it. I put it on the wall. It serves every page you've seen here. It logs the temperature of the room it's in. It remembers everyone who's visited. As you're reading this, it's serving you this page.</p>
+
+        <p>This time it stays up. If it goes down, I fix it. That's the point now.</p>
+    </div>
+
+    <div class="impact" id="impact-block">
+        Since this version went live, <strong id="impact-visitors">a few</strong> visitors from <strong id="impact-countries">a handful of</strong> countries have stopped by. People I'll never meet have left guestbook entries. Strangers have starred the repo. That still surprises me.
+    </div>
+
+    <div class="prose" style="margin-top:32px;">
+        <p>While you're here, the <a href="/guestbook">guestbook</a> is open if you'd like to leave a note. The <a href="/console">live feed</a> shows who else is visiting right now. The <a href="/history">archive</a> shows how the site has grown over time. The <a href="/">homepage</a> has the live sensor readings from the room the device is sitting in.</p>
+    </div>
+
+    <div class="closing">
+        If you want the technical details, source code, or build photos, those are on <a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener">GitHub</a>.
+    </div>
+
+    <div class="signoff">
+        This page came from that chip.
+        <div style="margin-top:18px;font-style:normal;color:var(--mid);">— Kristian (<a href="https://tech1k.com" target="_blank" rel="noopener">Tech1k</a>)</div>
+    </div>
+</main>
+
+<footer>
+    <span>Made by <a href="https://tech1k.com" target="_blank" rel="noopener">Tech1k</a><span class="served" id="served-time"></span></span>
+    <ul class="footer-links">
+        <li><a href="/"><i class="fa-solid fa-house"></i> Home</a></li>
+        <li><a href="/guestbook"><i class="fa-solid fa-pen"></i> Guestbook</a></li>
+        <li><a href="/history"><i class="fa-solid fa-clock-rotate-left"></i> History</a></li>
+        <li><a href="/console"><i class="fa-solid fa-terminal"></i> Console</a></li>
+        <li><a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener"><i class="fa-brands fa-github"></i> GitHub</a></li>
+    </ul>
+</footer>
+
+<script>
+    window.addEventListener('load', function() {
+        try {
+            var nav = performance.getEntriesByType('navigation')[0];
+            if (!nav) return;
+            var ms = Math.round(nav.responseEnd - nav.requestStart);
+            if (ms < 0 || ms > 60000) return;
+            var el = document.getElementById('served-time');
+            if (el) el.textContent = ms + ' ms';
+        } catch (e) {}
+    });
+
+    // Live impact line: pull current visitor + country totals.
+    // Falls back gracefully to the placeholder copy if /stats is unavailable.
+    fetch('/stats').then(function(r) { return r.ok ? r.json() : null; }).then(function(s) {
+        if (!s) return;
+        var v = document.getElementById('impact-visitors');
+        var c = document.getElementById('impact-countries');
+        if (v && Number.isFinite(s.visitors) && s.visitors > 0) {
+            v.textContent = s.visitors.toLocaleString();
+        }
+        if (c && Number.isFinite(s.countries) && s.countries > 0) {
+            c.textContent = s.countries;
+        }
+    }).catch(function() {});
+</script>
+
+</body>
+</html>

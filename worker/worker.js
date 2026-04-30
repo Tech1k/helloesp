@@ -1,19 +1,27 @@
 // HelloESP Cloudflare Worker relay (WebSocket + chunked base64 streaming)
 
-const PAGE_CSS = `*{margin:0;padding:0;box-sizing:border-box}:root{--bg:#f8f7f4;--ink:#1a1a1a;--mid:#888;--faint:#ccc}@media(prefers-color-scheme:dark){:root{--bg:#111110;--ink:#e8e6e1;--mid:#666;--faint:#2a2a28}}body{background:var(--bg);color:var(--ink);font-family:ui-monospace,"SF Mono","Cascadia Mono","Consolas",monospace;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}main{max-width:480px;text-align:center}h1{font-size:clamp(48px,10vw,72px);font-weight:400;letter-spacing:-0.02em;margin-bottom:20px}p{font-size:13px;color:var(--mid);line-height:1.8;margin-bottom:16px}p.lede{color:var(--ink);font-size:14px;margin-bottom:24px}.note{font-size:11px;color:var(--mid);border-top:1px solid var(--faint);padding-top:20px;margin-top:28px;line-height:1.7}a{color:var(--ink);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;text-underline-offset:3px;display:inline-block;margin:0 8px}.site-name{position:fixed;top:24px;left:50%;transform:translateX(-50%);font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:var(--mid);text-decoration:none;margin:0}.site-name:hover{color:var(--ink)}.status{font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--mid);margin-top:28px}.dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--mid);margin-left:6px;vertical-align:middle;animation:pulse 1.4s ease-in-out infinite}@keyframes pulse{0%,100%{opacity:0.25}50%{opacity:1}}a:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:2px}@media(prefers-reduced-motion:reduce){.dot{animation:none}}`;
+const PAGE_CSS = `*{margin:0;padding:0;box-sizing:border-box}:root{--bg:#f8f7f4;--ink:#1a1a1a;--mid:#888;--faint:#ccc}@media(prefers-color-scheme:dark){:root{--bg:#111110;--ink:#e8e6e1;--mid:#8a8a87;--faint:#2a2a28}}body{background:var(--bg);color:var(--ink);font-family:ui-monospace,"SF Mono","Cascadia Mono","Consolas",monospace;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:24px}main{margin:auto 0}main{max-width:480px;text-align:center}h1{font-size:clamp(48px,10vw,72px);font-weight:400;letter-spacing:-0.02em;margin-bottom:20px}p{font-size:13px;color:var(--mid);line-height:1.8;margin-bottom:16px}p.lede{color:var(--ink);font-size:14px;margin-bottom:24px}.note{font-size:11px;color:var(--mid);border-top:1px solid var(--faint);padding-top:20px;margin-top:28px;line-height:1.7}a{color:var(--ink);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;text-underline-offset:3px;display:inline-block;margin:0 8px}.site-name{display:block;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:var(--mid);text-decoration:none;margin:0 0 8px}.site-name:hover{color:var(--ink)}.status{font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--mid);margin-top:28px}.dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--mid);margin-left:6px;vertical-align:middle;animation:pulse 1.4s ease-in-out infinite}@keyframes pulse{0%,100%{opacity:0.25}50%{opacity:1}}a:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:2px}.action{color:var(--ink);font-weight:600}.helper{font-size:10px;color:var(--mid);letter-spacing:0.08em;text-transform:uppercase;margin-top:6px}@media(prefers-reduced-motion:reduce){.dot{animation:none}}`;
 
 const CHIP_ICON_PATHS = `<path fill-rule="evenodd" d="M7 5a2 2 0 00-2 2v18a2 2 0 002 2h18a2 2 0 002-2V7a2 2 0 00-2-2H7zm6 7a1 1 0 00-1 1v6a1 1 0 001 1h6a1 1 0 001-1v-6a1 1 0 00-1-1h-6z"/><rect x="7.5" y="1" width="2" height="3" rx=".5"/><rect x="12.5" y="1" width="2" height="3" rx=".5"/><rect x="17.5" y="1" width="2" height="3" rx=".5"/><rect x="22.5" y="1" width="2" height="3" rx=".5"/><rect x="7.5" y="28" width="2" height="3" rx=".5"/><rect x="12.5" y="28" width="2" height="3" rx=".5"/><rect x="17.5" y="28" width="2" height="3" rx=".5"/><rect x="22.5" y="28" width="2" height="3" rx=".5"/><rect x="1" y="7.5" width="3" height="2" rx=".5"/><rect x="1" y="12.5" width="3" height="2" rx=".5"/><rect x="1" y="17.5" width="3" height="2" rx=".5"/><rect x="1" y="22.5" width="3" height="2" rx=".5"/><rect x="28" y="7.5" width="3" height="2" rx=".5"/><rect x="28" y="12.5" width="3" height="2" rx=".5"/><rect x="28" y="17.5" width="3" height="2" rx=".5"/><rect x="28" y="22.5" width="3" height="2" rx=".5"/>`;
+
+const SNAKE_GAME = `<div class="snk" role="group" aria-label="Snake"><div class="snk-h"><span class="snk-h-l">Snake</span><div class="snk-h-r"><span class="snk-stat"><span class="snk-stat-k">Score</span><b id="snk-s">0</b></span><span class="snk-stat snk-stat-pb" id="snk-pb-wrap" hidden><span class="snk-stat-k">Best</span><b id="snk-pb">0</b></span></div></div><div class="snk-board"><canvas id="snk-c" width="280" height="280" aria-hidden="true"></canvas><div class="snk-o" id="snk-o"><div class="snk-o-inner" id="snk-m"><div class="snk-go">Snake</div><div class="snk-cta">tap to play</div><div class="snk-hint"><span class="snk-hint-desk">Arrow keys or WASD</span><span class="snk-hint-touch">Swipe or tap arrows below</span></div></div></div></div><div class="snk-p" aria-hidden="true"><button type="button" data-snk="up">&uarr;</button><button type="button" data-snk="left">&larr;</button><button type="button" data-snk="down">&darr;</button><button type="button" data-snk="right">&rarr;</button></div><div class="snk-lb" id="snk-lb" hidden><div class="snk-lb-h"><span class="snk-lb-h-t">Leaderboard</span></div><ol class="snk-lb-l" id="snk-lb-l"></ol></div></div><style>.snk{max-width:280px;margin:32px auto 0;text-align:left}.snk-board{position:relative}.snk-h{display:flex;justify-content:space-between;align-items:baseline;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--mid);margin-bottom:8px}.snk-h-l{font-weight:500;color:var(--ink)}.snk-h-r{display:flex;gap:14px;align-items:baseline}.snk-stat{display:inline-flex;gap:6px;align-items:baseline}.snk-stat-k{font-size:9px;letter-spacing:0.12em;color:var(--mid)}.snk-stat b{color:var(--ink);font-weight:500;font-size:14px;letter-spacing:0.02em;font-variant-numeric:tabular-nums}.snk-stat-pb b{color:var(--mid)}#snk-c{display:block;width:100%;max-width:280px;aspect-ratio:1;background:var(--faint);border:1px solid var(--faint);border-radius:3px;image-rendering:pixelated;touch-action:none;cursor:crosshair;box-shadow:inset 0 0 0 1px rgba(0,0,0,0.06)}.snk-o{position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.62);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;padding:16px;text-align:center;border-radius:3px}.snk-o.hide{display:none}.snk-o-inner{max-width:240px}.snk-o .snk-go{font-size:22px;letter-spacing:-0.01em;text-transform:none;font-weight:400;color:#fff;margin-bottom:6px;line-height:1}.snk-o .snk-go-sc{font-size:36px;font-weight:300;letter-spacing:0;color:#fff;font-variant-numeric:tabular-nums;line-height:1;margin:8px 0 6px}.snk-o .snk-go-pb{font-size:9px;color:#bbb;letter-spacing:0.1em;margin-top:4px}.snk-o .snk-go-sub{font-size:9px;opacity:0.55;letter-spacing:0.12em;margin-top:14px}.snk-o .snk-cta{font-size:11px;color:#fff;opacity:0.85;letter-spacing:0.18em;text-transform:uppercase;margin-top:14px;animation:snk-pulse 2.4s ease-in-out infinite}.snk-o .snk-hint{font-size:9px;color:#fff;opacity:0.45;letter-spacing:0.1em;margin-top:10px;text-transform:uppercase}.snk-hint-touch{display:none}@media(hover:none) and (pointer:coarse){.snk-hint-desk{display:none}.snk-hint-touch{display:inline}}.snk-add-lb{font:inherit;font-size:9px;letter-spacing:0.18em;text-transform:uppercase;padding:7px 14px;background:transparent;color:#fff;border:1px solid #aaa;border-radius:3px;cursor:pointer;margin-top:12px;transition:border-color 0.1s,background 0.1s}.snk-add-lb:hover{border-color:#fff;background:rgba(255,255,255,0.08)}.snk-p{display:none;grid-template-columns:repeat(3,52px);grid-template-rows:repeat(2,52px);gap:4px;justify-content:center;margin:12px auto 0}.snk-p button{background:none;border:1px solid var(--faint);color:var(--mid);font:inherit;font-size:20px;border-radius:4px;touch-action:manipulation;cursor:pointer;transition:color 0.1s,border-color 0.1s}.snk-p button:hover,.snk-p button:active{color:var(--ink);border-color:var(--mid)}.snk-p [data-snk=up]{grid-column:2;grid-row:1}.snk-p [data-snk=left]{grid-column:1;grid-row:2}.snk-p [data-snk=down]{grid-column:2;grid-row:2}.snk-p [data-snk=right]{grid-column:3;grid-row:2}@media(hover:none)and(pointer:coarse){.snk-p{display:grid}}.snk-lb{margin-top:18px;font-size:11px;color:var(--mid)}.snk-lb-h{display:flex;align-items:center;gap:8px;margin-bottom:8px}.snk-lb-h-t{text-transform:uppercase;letter-spacing:0.15em;font-size:9px;color:var(--mid);white-space:nowrap}.snk-lb-h::after{content:'';flex:1;height:1px;background:var(--faint)}.snk-lb-l{list-style:none;padding:0;margin:0;font-variant-numeric:tabular-nums}.snk-lb-l li{display:grid;grid-template-columns:20px 42px 1fr auto;gap:8px;padding:3px 4px;align-items:baseline;border-radius:2px;margin-left:-4px;margin-right:-4px}.snk-lb-l .ri{color:var(--mid);text-align:right;font-size:10px;font-weight:500}.snk-lb-l .ii{color:var(--ink);letter-spacing:0.1em;font-size:11px}.snk-lb-l .sc{color:var(--ink);font-weight:500}.snk-lb-l .dt{color:var(--mid);font-size:9px;letter-spacing:0.05em}.snk-lb-l li.r1 .ri{color:#c89b1a}.snk-lb-l li.r2 .ri{color:#9da3ac}.snk-lb-l li.r3 .ri{color:#b87333}.snk-lb-l li.r1{background:rgba(200,155,26,0.07)}.snk-lb-l li.you{outline:1px solid var(--mid)}.snk-lb-l li.you .ii::before{content:'> ';color:var(--mid);letter-spacing:0}.snk-lb-empty{font-size:10px;color:var(--mid);font-style:italic;list-style:none;padding:6px 0;text-align:center}.snk-init-form{display:flex;flex-direction:column;gap:10px;align-items:center;font-family:inherit;text-transform:none;letter-spacing:0;margin-top:12px}.snk-init-headline{font-size:11px;letter-spacing:0.25em;color:#ffd24a;text-transform:uppercase;animation:snk-pulse 1.4s ease-in-out infinite}@keyframes snk-pulse{0%,100%{opacity:0.6}50%{opacity:1}}.snk-init-form input{font:inherit;font-size:24px;letter-spacing:0.5em;text-align:center;text-transform:uppercase;width:120px;padding:8px 6px 8px 12px;background:transparent;border:1px solid #888;color:#fff;border-radius:3px;outline:none}.snk-init-form input:focus{border-color:#fff}.snk-init-form button{font:inherit;font-size:9px;letter-spacing:0.18em;text-transform:uppercase;padding:8px 18px;background:#fff;color:#000;border:none;border-radius:3px;cursor:pointer;transition:background 0.1s}.snk-init-form button:hover{background:#e8e6e1}.snk-init-form button[disabled]{opacity:0.5;cursor:default}.snk-init-err{font-size:10px;color:#ff7a7a;letter-spacing:0.05em;text-transform:none;min-height:14px;text-align:center;font-family:inherit;margin-top:-2px}.snk-init-form.snk-err input{border-color:#ff7a7a}.snk-init-form.snk-shake{animation:snk-shake 0.32s ease-in-out}@keyframes snk-shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}.snk-init-skip{font-size:9px;opacity:0.55;letter-spacing:0.12em;margin-top:2px}@media(prefers-reduced-motion:reduce){.snk-init-headline{animation:none;opacity:0.9}.snk-o .snk-cta{animation:none}.snk-init-form.snk-shake{animation:none}}</style><script>(function(){var c=document.getElementById('snk-c'),ov=document.getElementById('snk-o'),mg=document.getElementById('snk-m'),sc=document.getElementById('snk-s');if(!c)return;var pbWrap=document.getElementById('snk-pb-wrap'),pbEl=document.getElementById('snk-pb');var cx=c.getContext('2d'),CELL=14,COLS=20,ROWS=20,state='idle',sn,dr,nd,fd,score,ls,ms,stepN,moves,gameId,seed,rngState,showingInit=false,lastSubmittedRank=null,personalBest=0,pendingSubmit=null,demoTimer=null;var lbEl=document.getElementById('snk-lb'),lbList=document.getElementById('snk-lb-l'),board=[];var API=(location.host&&location.host.indexOf('helloesp.com')>=0)?'':'https://helloesp.com';try{var pb=parseInt(localStorage.getItem('snk-pb')||'0',10);if(pb>0){personalBest=pb;pbEl.textContent=pb;pbWrap.hidden=false;}}catch(e){}function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}function fmtDate(t){if(!t)return '';try{return new Date(t*1000).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});}catch(e){return '';}}function fmtIso(t){if(!t)return '';try{return new Date(t*1000).toISOString();}catch(e){return '';}}function renderLb(){if(!lbEl)return;if(!board||!board.length){lbList.innerHTML='<li class="snk-lb-empty">No scores yet. Be first.</li>';lbEl.hidden=false;return;}var html='';for(var i=0;i<board.length;i++){var e=board[i];var rankCls=i<3?' r'+(i+1):'';var youCls=(lastSubmittedRank===i+1)?' you':'';html+='<li class="'+(rankCls+youCls).trim()+'"><span class="ri">'+(i+1)+'</span><span class="ii">'+esc(e.i)+'</span><span class="sc">'+e.s+'</span><span class="dt" title="'+esc(fmtIso(e.t))+'">'+esc(fmtDate(e.t))+'</span></li>';}lbList.innerHTML=html;lbEl.hidden=false;}function fetchLb(){fetch(API+'/snake/leaderboard',{cache:'no-cache'}).then(function(r){return r.ok?r.json():null;}).then(function(b){if(Array.isArray(b)){board=b;renderLb();}}).catch(function(){if(lbEl)lbEl.hidden=true;});}function requestSeed(cb){fetch(API+'/snake/seed',{cache:'no-store'}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d&&typeof d.seed==='number'&&typeof d.gameId==='string'){seed=d.seed;gameId=d.gameId;}cb();}).catch(function(){cb();});}function rng32(s){s=(s+0x6D2B79F5)|0;var t=s;t=Math.imul(t^(t>>>15),t|1);t^=t+Math.imul(t^(t>>>7),t|61);return [(((t^(t>>>14))>>>0)/4294967296),s];}function sf(){if(seed!=null){for(var i=0;i<200;i++){var r1=rng32(rngState);rngState=r1[1];var r2=rng32(rngState);rngState=r2[1];var x=Math.floor(r1[0]*COLS),y=Math.floor(r2[0]*ROWS);if(!sn.some(function(s){return s.x===x&&s.y===y})){fd={x:x,y:y};return;}}}else{for(var k=0;k<400;k++){var x=Math.floor(Math.random()*COLS),y=Math.floor(Math.random()*ROWS);if(!sn.some(function(s){return s.x===x&&s.y===y})){fd={x:x,y:y};return;}}}}function reset(){sn=[{x:10,y:10},{x:9,y:10},{x:8,y:10}];dr={x:1,y:0};nd=dr;score=0;ms=140;stepN=0;moves=[];rngState=(seed!=null?seed:0)|0;sf();sc.textContent=0;draw();}function step(){if(nd.x!==-dr.x||nd.y!==-dr.y)dr=nd;var h={x:sn[0].x+dr.x,y:sn[0].y+dr.y};stepN++;if(h.x<0||h.x>=COLS||h.y<0||h.y>=ROWS)return over();if(sn.some(function(s){return s.x===h.x&&s.y===h.y}))return over();sn.unshift(h);if(h.x===fd.x&&h.y===fd.y){score+=10;sc.textContent=score;sf();if(ms>65)ms-=3;}else sn.pop();draw();}function draw(){cx.clearRect(0,0,c.width,c.height);cx.fillStyle=(state==='demo')?'#c97326':'#e67e22';cx.fillRect(fd.x*CELL+2,fd.y*CELL+2,CELL-4,CELL-4);cx.fillStyle=(state==='demo')?'#5a8db9':'#2686e6';for(var i=0;i<sn.length;i++){var s=sn[i];cx.fillRect(s.x*CELL+1,s.y*CELL+1,CELL-2,CELL-2);}}function loop(t){if(state!=='playing')return;if(!ls)ls=t;if(t-ls>=ms){ls=t;step();}if(state==='playing')requestAnimationFrame(loop);}function startGame(){if(state==='playing')return;stopDemo();reset();state='playing';ls=0;ov.classList.add('hide');requestAnimationFrame(loop);}function play(){pendingSubmit=null;if(state==='paused'){state='playing';ls=0;ov.classList.add('hide');requestAnimationFrame(loop);return;}if(state==='over'){seed=null;gameId=null;}if(seed==null){requestSeed(startGame);return;}startGame();}function pause(){if(state!=='playing')return;state='paused';mg.innerHTML='<div class="snk-go">Paused</div><div class="snk-go-sub">tap to resume</div>';ov.classList.remove('hide');}function updatePB(){if(score>personalBest){personalBest=score;try{localStorage.setItem('snk-pb',String(score));}catch(e){}pbEl.textContent=score;pbWrap.hidden=false;}}function over(){state='over';updatePB();var qualifies=score>=10&&gameId!=null&&(board.length<10||score>(board[board.length-1].s||0));if(qualifies){pendingSubmit={score:score,gameId:gameId,moves:moves.slice(),seed:seed};showInitials(false);}else{pendingSubmit=null;showOver();}}function showOver(){showingInit=false;var pbLine=personalBest>0?'<div class="snk-go-pb">Your best &middot; '+personalBest+'</div>':'';var addBtn=pendingSubmit?'<button type="button" class="snk-add-lb" id="snk-add-lb">Add to leaderboard</button>':'';mg.innerHTML='<div class="snk-go">Game over</div><div class="snk-go-sc">'+score+'</div>'+pbLine+addBtn+'<div class="snk-go-sub">tap canvas to play again</div>';ov.classList.remove('hide');if(pendingSubmit){var addB=document.getElementById('snk-add-lb');if(addB)addB.addEventListener('click',function(e){e.stopPropagation();showInitials(true);});}}function showInitials(isReopen){showingInit=true;var head=isReopen?'Add your initials':'New high score';var displayScore=pendingSubmit?pendingSubmit.score:score;mg.innerHTML='<div class="snk-init-headline">'+head+'</div><div class="snk-go-sc">'+displayScore+'</div><form class="snk-init-form" id="snk-init-f"><input id="snk-init-i" maxlength="3" pattern="[A-Za-z0-9]{3}" placeholder="AAA" autocomplete="off" autocapitalize="characters" inputmode="latin" required><button type="submit">Submit</button><div class="snk-init-err" id="snk-init-err"></div><span class="snk-init-skip">tap outside to skip</span></form>';ov.classList.remove('hide');var f=document.getElementById('snk-init-f'),inp=document.getElementById('snk-init-i');setTimeout(function(){if(inp)inp.focus();},20);f.addEventListener('submit',function(e){e.preventDefault();var v=(inp.value||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,3);if(v.length!==3){inp.focus();return;}submit(v);});}function submit(initials){if(!pendingSubmit)return;var btn=document.querySelector('#snk-init-f button'),inp=document.getElementById('snk-init-i'),err=document.getElementById('snk-init-err'),f=document.getElementById('snk-init-f');if(btn){btn.disabled=true;btn.textContent='...';}if(inp)inp.disabled=true;if(err)err.textContent='';if(f)f.classList.remove('snk-err','snk-shake');var payload={gameId:pendingSubmit.gameId,initials:initials,score:pendingSubmit.score,moves:pendingSubmit.moves};fetch(API+'/snake/score',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(function(r){return r.json().catch(function(){return null;}).then(function(j){return {ok:r.ok,body:j};});}).then(function(res){if(res.ok&&res.body&&res.body.ok){if(Array.isArray(res.body.leaderboard)){board=res.body.leaderboard;lastSubmittedRank=res.body.rank||null;renderLb();}pendingSubmit=null;gameId=null;seed=null;showOver();}else{if(btn){btn.disabled=false;btn.textContent='Submit';}if(inp){inp.disabled=false;inp.value='';inp.focus();}var msg=(res.body&&res.body.error)||'submission failed';if(err)err.textContent=msg;if(f){f.classList.add('snk-err','snk-shake');setTimeout(function(){if(f)f.classList.remove('snk-shake');},340);}var fatalRe=/expired|not found|score does not match/i;if(res.body&&res.body.error&&fatalRe.test(res.body.error)){pendingSubmit=null;if(btn)btn.disabled=true;if(inp)inp.disabled=true;}}}).catch(function(){if(btn){btn.disabled=false;btn.textContent='Submit';}if(inp)inp.disabled=false;if(err)err.textContent='connection failed, try again';if(f){f.classList.add('snk-shake');setTimeout(function(){if(f)f.classList.remove('snk-shake');},340);}});}function setDir(x,y){if(state!=='playing')return;if(x===-dr.x&&y===-dr.y)return;if(nd.x===x&&nd.y===y)return;nd={x:x,y:y};var ch=x===0?(y<0?'U':'D'):(x<0?'L':'R');moves.push(stepN+ch);}function aiPick(){var head=sn[0],dx=fd.x-head.x,dy=fd.y-head.y,prefs=[];if(Math.abs(dx)>=Math.abs(dy)){if(dx>0)prefs.push([1,0]);else if(dx<0)prefs.push([-1,0]);if(dy>0)prefs.push([0,1]);else if(dy<0)prefs.push([0,-1]);}else{if(dy>0)prefs.push([0,1]);else if(dy<0)prefs.push([0,-1]);if(dx>0)prefs.push([1,0]);else if(dx<0)prefs.push([-1,0]);}var all=[[1,0],[-1,0],[0,1],[0,-1]];for(var i=0;i<all.length;i++){var found=false;for(var j=0;j<prefs.length;j++)if(prefs[j][0]===all[i][0]&&prefs[j][1]===all[i][1]){found=true;break;}if(!found)prefs.push(all[i]);}for(var k=0;k<prefs.length;k++){var mv=prefs[k];if(mv[0]===-dr.x&&mv[1]===-dr.y)continue;var nx=head.x+mv[0],ny=head.y+mv[1];if(nx<0||nx>=COLS||ny<0||ny>=ROWS)continue;var willGrow=(nx===fd.x&&ny===fd.y),hit=false;for(var l=0;l<sn.length-(willGrow?0:1);l++)if(sn[l].x===nx&&sn[l].y===ny){hit=true;break;}if(!hit)return mv;}return null;}function demoSpawnFood(){for(var k=0;k<400;k++){var x=Math.floor(Math.random()*COLS),y=Math.floor(Math.random()*ROWS);if(!sn.some(function(s){return s.x===x&&s.y===y})){fd={x:x,y:y};return;}}}function demoStart(){if(state==='playing'||state==='paused'||state==='over')return;state='demo';sn=[{x:10,y:10},{x:9,y:10},{x:8,y:10}];dr={x:1,y:0};demoSpawnFood();draw();demoTick();}function demoTick(){if(state!=='demo'){demoTimer=null;return;}var pick=aiPick();if(!pick){demoTimer=setTimeout(function(){demoTimer=null;if(state==='demo')demoStart();},800);return;}dr={x:pick[0],y:pick[1]};var h={x:sn[0].x+dr.x,y:sn[0].y+dr.y};if(h.x<0||h.x>=COLS||h.y<0||h.y>=ROWS||sn.some(function(s){return s.x===h.x&&s.y===h.y})){demoTimer=setTimeout(function(){demoTimer=null;if(state==='demo')demoStart();},800);return;}sn.unshift(h);if(h.x===fd.x&&h.y===fd.y){demoSpawnFood();if(sn.length>=COLS*ROWS-3){demoTimer=setTimeout(function(){demoTimer=null;if(state==='demo')demoStart();},1200);draw();return;}}else sn.pop();draw();demoTimer=setTimeout(demoTick,170);}function stopDemo(){if(demoTimer){clearTimeout(demoTimer);demoTimer=null;}}var K={ArrowUp:[0,-1],ArrowDown:[0,1],ArrowLeft:[-1,0],ArrowRight:[1,0],w:[0,-1],s:[0,1],a:[-1,0],d:[1,0],W:[0,-1],S:[0,1],A:[-1,0],D:[1,0]};document.addEventListener('keydown',function(e){if(showingInit)return;if(!K[e.key])return;e.preventDefault();if(state!=='playing')play();else setDir(K[e.key][0],K[e.key][1]);});var ts=null;c.addEventListener('touchstart',function(e){ts={x:e.touches[0].clientX,y:e.touches[0].clientY};},{passive:true});c.addEventListener('touchmove',function(e){if(ts&&state==='playing')e.preventDefault();},{passive:false});c.addEventListener('touchend',function(e){if(!ts)return;var t=e.changedTouches[0],dx=t.clientX-ts.x,dy=t.clientY-ts.y;if(Math.abs(dx)<20&&Math.abs(dy)<20){ts=null;return;}if(state==='playing'){if(Math.abs(dx)>Math.abs(dy))setDir(dx>0?1:-1,0);else setDir(0,dy>0?1:-1);}else if(!showingInit){play();}ts=null;});document.querySelectorAll('.snk-p button').forEach(function(b){b.addEventListener('click',function(){if(showingInit)return;if(state!=='playing'){play();return;}var d=b.getAttribute('data-snk');if(d==='up')setDir(0,-1);else if(d==='down')setDir(0,1);else if(d==='left')setDir(-1,0);else if(d==='right')setDir(1,0);});});ov.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('#snk-init-f'))return;if(e.target.closest&&e.target.closest('#snk-add-lb'))return;if(showingInit){showOver();return;}if(state!=='playing')play();});var prefersReducedMotion=function(){try{return window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;}catch(e){return false;}};document.addEventListener('visibilitychange',function(){if(document.hidden){if(state==='playing')pause();if(state==='demo')stopDemo();}else{if((state==='idle'||state==='demo')&&!prefersReducedMotion())demoStart();}});fetchLb();setTimeout(function(){if(state==='idle'&&!prefersReducedMotion())demoStart();},400);})();</script>`;
 
 const FAVICON = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="#2686e6">${CHIP_ICON_PATHS}</svg>`).replace(/'/g, '%27').replace(/"/g, '%22')}">`;
 
 // The header "HelloESP" breadcrumb used on every Worker-served page
 const SITE_NAME_LINK = `<a href="/" class="site-name"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="12" height="12" fill="#2686e6" style="vertical-align:-2px;margin-right:5px;">${CHIP_ICON_PATHS}</svg>HelloESP</a>`;
 
-const RETRY_JS = `<script>(function(){setInterval(function(){if(document.visibilityState!=='visible')return;fetch('/ping?_='+Date.now(),{cache:'no-store'}).then(function(r){if(r.ok)location.reload()}).catch(function(){})},3000)})();</script>`;
+// Maintenance pages set body[data-until=<unix-ms>] so we can schedule a
+// single reload at the end of the window instead of polling every 3s.
+// Offline/timeout pages don't know when the ESP recovers, so they fall
+// back to polling /ping. busy() pauses the polling path while snake is
+// being played; the scheduled-reload path doesn't need it because it
+// only fires once at a known time.
+const RETRY_JS = `<script>(function(){var u=document.body.getAttribute('data-until');if(u){var d=parseInt(u,10)-Date.now()+2000;if(d>0)setTimeout(function(){location.reload()},d);return;}function busy(){var ov=document.getElementById('snk-o');if(!ov)return false;if(ov.classList.contains('hide'))return true;if(document.getElementById('snk-init-f'))return true;return false;}setInterval(function(){if(document.visibilityState!=='visible')return;if(busy())return;fetch('/ping?_='+Date.now(),{cache:'no-store'}).then(function(r){if(r.ok)location.reload()}).catch(function(){})},3000)})();</script>`;
 
-const OFFLINE_HTML = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="robots" content="noindex">${FAVICON}<title>Offline / HelloESP</title><style>${PAGE_CSS}</style></head><body>${SITE_NAME_LINK}<main><h1>Offline</h1><p class="lede">The ESP32 serving this site isn't connected right now.</p><p>It might be rebooting, out of WiFi range, or unplugged. It'll come back on its own.</p><p><a href="/">Retry</a><a href="https://github.com/Tech1k/helloesp">GitHub</a></p><p class="status">Reconnecting<span class="dot" aria-hidden="true"></span></p><p class="note">HelloESP runs entirely on an ESP32. When the chip is unreachable, Cloudflare serves this page instead.</p></main>${RETRY_JS}</body></html>`;
+const OFFLINE_HTML = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="robots" content="noindex">${FAVICON}<title>Offline / HelloESP</title><style>${PAGE_CSS}</style></head><body>${SITE_NAME_LINK}<main><h1>Offline</h1><p class="lede">The ESP32 serving this site isn't connected right now.</p><p>It might be rebooting, out of WiFi range, or unplugged. It'll come back on its own.</p><p><a href="/" class="action">Retry</a><a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener">GitHub</a></p><p class="status" role="status" aria-live="polite">Reconnecting<span class="dot" aria-hidden="true"></span></p><p class="helper">Auto-retrying every 3 seconds</p>${SNAKE_GAME}<p class="note">HelloESP runs entirely on an ESP32. When the chip is unreachable, Cloudflare serves this page instead.</p></main>${RETRY_JS}</body></html>`;
 
-const TIMEOUT_HTML = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="robots" content="noindex">${FAVICON}<title>Timeout / HelloESP</title><style>${PAGE_CSS}</style></head><body>${SITE_NAME_LINK}<main><h1>Timeout</h1><p class="lede">The ESP32 got your request but didn't answer in time.</p><p>Probably busy handling something else. Try again in a moment.</p><p><a href="/">Retry</a><a href="https://github.com/Tech1k/helloesp">GitHub</a></p><p class="status">Retrying<span class="dot" aria-hidden="true"></span></p><p class="note">HelloESP runs entirely on an ESP32. If a request takes over 30 seconds, Cloudflare shows this page.</p></main>${RETRY_JS}</body></html>`;
+const TIMEOUT_HTML = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="robots" content="noindex">${FAVICON}<title>Timeout / HelloESP</title><style>${PAGE_CSS}</style></head><body>${SITE_NAME_LINK}<main><h1>Timeout</h1><p class="lede">The ESP32 got your request but didn't answer in time.</p><p>Probably busy handling something else. Try again in a moment.</p><p><a href="/" class="action">Retry</a><a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener">GitHub</a></p><p class="status" role="status" aria-live="polite">Retrying<span class="dot" aria-hidden="true"></span></p><p class="helper">Auto-retrying every 3 seconds</p>${SNAKE_GAME}<p class="note">HelloESP runs entirely on an ESP32. If a request takes over 30 seconds, Cloudflare shows this page.</p></main>${RETRY_JS}</body></html>`;
 
 const SEC_HEADERS = {
   'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
@@ -36,7 +44,9 @@ function timeoutResponse() {
 }
 
 function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  // `/` is also escaped so this remains safe even inside a `<script>` block,
+  // where `</script>` would otherwise terminate the script context.
+  return String(s).replace(/[&<>"'\/]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','/':'&#47;'}[c]));
 }
 
 // Parse "14 days, 3 hours, 22 minutes, 45 seconds" into a compact "14d 3h" / "3h 22m" / "22m 45s" string
@@ -54,7 +64,7 @@ function formatUptime(str) {
 function maintenanceResponse(until, message) {
   const remainingMs = Math.max(0, until - Date.now());
   const safeMsg = message ? escapeHtml(String(message).slice(0, 200)) : '';
-  const lede = safeMsg || "The site is down for planned maintenance.";
+  const lede = safeMsg || "The ESP is down for maintenance.";
   let etaLine;
   let retryAfter;
   if (remainingMs < 60000) {
@@ -65,14 +75,7 @@ function maintenanceResponse(until, message) {
     etaLine = `Back in about ${mins} ${mins === 1 ? 'minute' : 'minutes'}.`;
     retryAfter = Math.min(3600, mins * 60);
   }
-  // Include the absolute unix ms in a data attribute so client JS can render
-  // the "back at" time in the visitor's local timezone, regardless of where
-  // they are. Falls back to the relative phrase if JS is disabled.
-  const localTimeJs = `<script>(function(){var el=document.getElementById('back-at');if(!el)return;var t=parseInt(el.getAttribute('data-until'),10);if(!t)return;try{el.textContent=' (around '+new Date(t).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})+' your time)';}catch(e){}})();</script>`;
-  const backAtSpan = remainingMs >= 60000
-    ? `<span id="back-at" data-until="${until}"></span>`
-    : '';
-  const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="robots" content="noindex">${FAVICON}<title>Maintenance / HelloESP</title><style>${PAGE_CSS}</style></head><body>${SITE_NAME_LINK}<main><h1>Maintenance</h1><p class="lede">${lede}</p><p>${etaLine}${backAtSpan}</p><p><a href="/">Retry</a><a href="https://github.com/Tech1k/helloesp">GitHub</a></p><p class="status">Checking<span class="dot" aria-hidden="true"></span></p><p class="note">HelloESP runs entirely on an ESP32. Planned work is in progress. The page will refresh automatically when the site is back.</p></main>${localTimeJs}${RETRY_JS}</body></html>`;
+  const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="robots" content="noindex">${FAVICON}<title>Maintenance / HelloESP</title><style>${PAGE_CSS}</style></head><body data-until="${until}">${SITE_NAME_LINK}<main><h1>Maintenance</h1><p class="lede">${lede}</p><p>${etaLine}</p><p><a href="/" class="action">Retry</a><a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener">GitHub</a></p><p class="status" role="status" aria-live="polite">Checking<span class="dot" aria-hidden="true"></span></p>${SNAKE_GAME}<p class="note">HelloESP runs entirely on an ESP32. Planned work is in progress. The page will refresh automatically when the site is back.</p></main>${RETRY_JS}</body></html>`;
   return new Response(html, {
     status: 503,
     headers: {
@@ -110,7 +113,31 @@ function timingSafeEqualStr(a, b) {
 const MAX_BODY = 8192;
 const RATE_LIMIT_WINDOW = 60000; // 1 min
 const RATE_LIMIT_MAX = 60;       // per IP per window
-const SSE_MAX_CLIENTS = 5000;    // up to ~25 MB of 128 MB DO memory
+const SSE_MAX_CLIENTS = 500;     // cap concurrent SSE connections so a flood can't exhaust DO memory
+const SSE_MAX_PAYLOAD = 64 * 1024; // per-event byte cap so one fat event * 500 clients can't OOM the DO
+// Cap per-game move count for Snake replay verification. Used as both a
+// step-index ceiling and an array-length cap. Mirrors `moves.length` checks
+// in the inline client (SNAKE_GAME above and data/404.html). Keep these in
+// sync; a tighter server cap would silently reject honest games.
+const SNAKE_MAX_STEPS = 5000;
+
+// Snake leaderboard 3-letter initials blocklist. ROT13'd in source so this
+// file reads clean for casual visitors (educational context). NOT security:
+// the input space is only 46k combos so anyone determined can rebuild this
+// from hashes or enumeration. The point is just that the source doesn't
+// display slurs verbatim. Decoded once at module load.
+const BLOCKED_INITIALS = new Set(
+  // profanity (rot13)
+  ['NEF','NFF','OWF','PPX','PBX','PHP','PHZ','QVP','QVX','QVK','SPX',
+   'SHP','SHX','SHK','UBR','WVM','WMZ','XBX','CBB','FRK','FYG','GVG',
+   'GJN','GJG','JGS',
+   // slurs (rot13)
+   'PUX','QLX','SNT','STF','STG','TBX','WNC','WRJ','XXX','XLX','ATN',
+   'ATE','AVT','AVD','CNX','FCP','JBC',
+   // self-harm / harassment shorthand (rot13)
+   'QVR','XZF','XLF']
+    .map(s => s.replace(/[A-Z]/g, c => String.fromCharCode((c.charCodeAt(0) - 65 + 13) % 26 + 65)))
+);
 
 // Weather proxy; Denver, CO is broad enough to be non-identifying (~3M metro pop)
 const WEATHER_LAT = 39.74;
@@ -146,33 +173,44 @@ export class EspRelay {
     this.sseClients = new Set();
     this.lastStats = null;  // JSON string of the most recent ESP stats push
     this.lastStatsAt = 0;   // epoch ms when lastStats was set; used to detect staleness for badges
-    this.lastCountries = null;  // JSON string of last /countries relay response
-    this.lastCountriesAt = 0;
-    this.lastRecords = null;    // JSON string of last /records.json relay response
-    this.lastRecordsAt = 0;
     this.lastWeather = null; // cached outdoor weather object
     this.deadmanAlertSent = false; // so we don't spam when offline persists past 24h
     this.backupSessions = new Map(); // seq -> { startedAt, meta, files[], currentFile, totalB64, aborted }
     this.lastBackupAt = 0;
-    this.lastBackupSize = 0;
     this.lastBackupDate = '';
     this.lastBackupFailureEmailAt = 0;
     this.lastBackupMissedEmailAt = 0;
+    this.firstSeenAt = 0;  // DO construction time, used as fallback floor for missed-backup alert
     this.state.blockConcurrencyWhile(async () => {
       const u = await state.storage.get('maintenanceUntil');
       const m = await state.storage.get('maintenanceMessage');
       const w = await state.storage.get('lastWeather');
       const dm = await state.storage.get('deadmanAlertSent');
       const lba = await state.storage.get('lastBackupAt');
-      const lbs = await state.storage.get('lastBackupSize');
       const lbd = await state.storage.get('lastBackupDate');
+      const lact = await state.storage.get('lastActivity');
+      const fseen = await state.storage.get('firstSeenAt');
       if (typeof u === 'number') this.maintenanceUntil = u;
       if (typeof m === 'string') this.maintenanceMessage = m;
       if (w && typeof w === 'object') this.lastWeather = w;
       if (typeof dm === 'boolean') this.deadmanAlertSent = dm;
       if (typeof lba === 'number') this.lastBackupAt = lba;
-      if (typeof lbs === 'number') this.lastBackupSize = lbs;
       if (typeof lbd === 'string') this.lastBackupDate = lbd;
+      // Restoring lastActivity after isolate eviction: without this, a truly-
+      // dead device's deadman alert can't fire because the `lastActivity > 0`
+      // guard rejects the default-zero value, AND a recovery email could fire
+      // spuriously when the ESP reconnects to a fresh isolate.
+      if (typeof lact === 'number') this.lastActivity = lact;
+      // First-seen tracking: stamped once on initial DO creation, used as a
+      // fallback timestamp for the missed-backup alert when no successful
+      // backup has ever happened. Without this, a fresh deploy that never
+      // gets a successful backup would never alert.
+      if (typeof fseen === 'number') {
+        this.firstSeenAt = fseen;
+      } else {
+        this.firstSeenAt = Date.now();
+        await state.storage.put('firstSeenAt', this.firstSeenAt);
+      }
     });
     this._ensureAlarm(30000);
   }
@@ -186,6 +224,51 @@ export class EspRelay {
     if (existing == null || existing > target) {
       await this.state.storage.setAlarm(target);
     }
+  }
+
+  // SMTP2GO send wrapper. Returns the Response when SMTP2GO is configured
+  // (so callers can check .ok), or null when keys are missing.
+  async _sendEmail({ subject, text_body, attachments }) {
+    const env = this.env;
+    if (!env.SMTP2GO_KEY || !env.NOTIFY_EMAIL) return null;
+    const payload = {
+      sender: env.NOTIFY_FROM || 'HelloESP <noreply@helloesp.com>',
+      to: [env.NOTIFY_EMAIL],
+      subject,
+      text_body
+    };
+    if (attachments) payload.attachments = attachments;
+    return fetch('https://api.smtp2go.com/v3/email/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Smtp2go-Api-Key': env.SMTP2GO_KEY },
+      body: JSON.stringify(payload)
+    });
+  }
+
+  // Per-IP rate limit check. Returns null when allowed, or a 429 Response
+  // when exceeded. Non-relay endpoints (/snake/seed, /snake/score, etc.)
+  // call this directly so they aren't a back door around the relay-path
+  // limit at the bottom of fetch().
+  _enforceRateLimit(clientIP) {
+    const now = Date.now();
+    let rl = this.rateLimits.get(clientIP);
+    if (!rl || now > rl.resetAt) {
+      rl = { count: 0, resetAt: now + RATE_LIMIT_WINDOW };
+      this.rateLimits.set(clientIP, rl);
+    }
+    rl.count++;
+    if (rl.count > RATE_LIMIT_MAX) {
+      return new Response('Rate limit exceeded', {
+        status: 429,
+        headers: { 'Content-Type': 'text/plain', 'Retry-After': '60', ...SEC_HEADERS }
+      });
+    }
+    if (this.rateLimits.size > 500) {
+      for (const [k, v] of this.rateLimits) {
+        if (v.resetAt < now) this.rateLimits.delete(k);
+      }
+    }
+    return null;
   }
 
   async maybeSendDeadmanAlert() {
@@ -207,15 +290,9 @@ export class EspRelay {
       const lastSeen = new Date(this.lastActivity).toISOString();
       const body = `HelloESP has been unreachable for ${hours} hours.\n\nLast heartbeat: ${lastSeen}\n\nThe device may be offline, rebooting into a loop, or has lost WiFi.\nThis is an automated dead-man's-switch alert; you won't get another until it recovers and goes silent again.`;
       try {
-        await fetch('https://api.smtp2go.com/v3/email/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Smtp2go-Api-Key': env.SMTP2GO_KEY },
-          body: JSON.stringify({
-            sender: env.NOTIFY_FROM || 'HelloESP <noreply@helloesp.com>',
-            to: [env.NOTIFY_EMAIL],
-            subject: `HelloESP unreachable (${hours}h)`,
-            text_body: body
-          })
+        await this._sendEmail({
+          subject: `HelloESP unreachable (${hours}h)`,
+          text_body: body
         });
       } catch (e) { console.error('deadman email failed:', e && e.message); }
       return;
@@ -227,16 +304,7 @@ export class EspRelay {
       await this.state.storage.put('deadmanAlertSent', false);
       const body = `HelloESP is back online.\n\nFirst fresh heartbeat: ${new Date(this.lastActivity).toISOString()}\n\nThis is a dead-man's-switch recovery notification.`;
       try {
-        await fetch('https://api.smtp2go.com/v3/email/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Smtp2go-Api-Key': env.SMTP2GO_KEY },
-          body: JSON.stringify({
-            sender: env.NOTIFY_FROM || 'HelloESP <noreply@helloesp.com>',
-            to: [env.NOTIFY_EMAIL],
-            subject: 'HelloESP recovered',
-            text_body: body
-          })
-        });
+        await this._sendEmail({ subject: 'HelloESP recovered', text_body: body });
       } catch (e) { console.error('deadman-recovered email failed:', e && e.message); }
     }
   }
@@ -291,39 +359,182 @@ export class EspRelay {
     return { state: 'live', color: '#2686e6' };
   }
 
+  // ---- Snake leaderboard ----
+  // Stored at DO storage key 'snake/leaderboard' as an array of up to 10
+  // entries: { i: 'AAA' (3 chars), s: <score>, t: <unix-seconds> }.
+  // Active games at 'snake/active:<gameId>' = { seed, t }, single-use,
+  // 10-min TTL enforced on read. Replay verification keeps clients from
+  // submitting scores they didn't earn: server replays the move log
+  // against the seed and accepts only if the resulting score matches.
+
+  _snakeRng(s) {
+    s = (s + 0x6D2B79F5) | 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return [(((t ^ (t >>> 14)) >>> 0) / 4294967296), s];
+  }
+
+  _snakeSpawnFood(snake, state) {
+    for (let i = 0; i < 200; i++) {
+      const r1 = this._snakeRng(state); state = r1[1];
+      const r2 = this._snakeRng(state); state = r2[1];
+      const fx = Math.floor(r1[0] * 20);
+      const fy = Math.floor(r2[0] * 20);
+      if (!snake.some(p => p.x === fx && p.y === fy)) {
+        return [{ x: fx, y: fy }, state];
+      }
+    }
+    return [null, state];
+  }
+
+  _snakeReplay(seed, moves, claimedScore) {
+    let state = seed | 0;
+    let snake = [{ x: 10, y: 10 }, { x: 9, y: 10 }, { x: 8, y: 10 }];
+    let dir = { x: 1, y: 0 };
+    let score = 0;
+    const sp = this._snakeSpawnFood(snake, state);
+    let food = sp[0]; state = sp[1];
+    if (!food) return false;
+
+    // Move log entries: "<step><dir>" e.g. "12U", "47L".
+    const parsed = [];
+    for (const m of (Array.isArray(moves) ? moves : [])) {
+      if (typeof m !== 'string') continue;
+      const mm = /^(\d+)([UDLR])$/.exec(m);
+      if (!mm) continue;
+      const sn = parseInt(mm[1], 10);
+      if (!Number.isInteger(sn) || sn < 0 || sn > SNAKE_MAX_STEPS) continue;
+      parsed.push([sn, mm[2]]);
+    }
+    parsed.sort((a, b) => a[0] - b[0]);
+
+    const D = { U: { x: 0, y: -1 }, D: { x: 0, y: 1 }, L: { x: -1, y: 0 }, R: { x: 1, y: 0 } };
+
+    let mi = 0;
+    for (let step = 0; step < SNAKE_MAX_STEPS; step++) {
+      while (mi < parsed.length && parsed[mi][0] === step) {
+        const nd = D[parsed[mi][1]];
+        if (nd && (nd.x !== -dir.x || nd.y !== -dir.y)) dir = nd;
+        mi++;
+      }
+      const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+      if (head.x < 0 || head.x >= 20 || head.y < 0 || head.y >= 20) {
+        return score === claimedScore;
+      }
+      if (snake.some(p => p.x === head.x && p.y === head.y)) {
+        return score === claimedScore;
+      }
+      snake.unshift(head);
+      if (food && head.x === food.x && head.y === food.y) {
+        score += 10;
+        const sp2 = this._snakeSpawnFood(snake, state);
+        food = sp2[0]; state = sp2[1];
+        if (!food) return score === claimedScore; // board full
+      } else {
+        snake.pop();
+      }
+    }
+    // ran past max-steps without dying → suspicious
+    return false;
+  }
+
+  async _getSnakeLeaderboard() {
+    const board = await this.state.storage.get('snake/leaderboard');
+    return Array.isArray(board) ? board : [];
+  }
+
+  async _putSnakeLeaderboard(board) {
+    await this.state.storage.put('snake/leaderboard', board);
+  }
+
+  // ASCII-art stats card served when curl/wget/httpie/libwww/PowerShell hit "/".
+  // Built from the in-memory lastStats snapshot so there's zero ESP load on
+  // each hit, and it still works when the device is down.
   buildCurlCard() {
     let s = null;
     try { if (this.lastStats) s = JSON.parse(this.lastStats); } catch (e) {}
-    const fmtNum = (v) => (Number.isFinite(v) ? Math.round(v).toLocaleString() : '—');
-    const uptime = s && s.uptime ? String(s.uptime) : '—';
-    const tempF  = s && s.temperature && Number.isFinite(s.temperature.fahrenheit)
-        ? s.temperature.fahrenheit.toFixed(1) + '°F' : '—';
-    const visitors  = s ? fmtNum(s.visitors) : '—';
-    const countries = s ? fmtNum(s.countries) : '—';
-    const co2  = s ? fmtNum(s.co2_ppm) + ' ppm (eCO₂)' : '—';
+
+    const num   = (v) => (Number.isFinite(v) ? Math.round(v).toLocaleString() : '-');
+    const one   = (v, unit) => (Number.isFinite(v) ? v.toFixed(1) + (unit || '') : '-');
+    const dash  = '-';
+
+    const uptime   = s && s.uptime ? String(s.uptime) : dash;
+    const tempF    = s && s.temperature && Number.isFinite(s.temperature.fahrenheit)
+        ? one(s.temperature.fahrenheit, '°F') + ' · ' + one(s.temperature.celsius, '°C') : dash;
+    const humidity = s && Number.isFinite(s.humidity_percent)
+        ? one(s.humidity_percent, '%') : dash;
+    const pressure = s && Number.isFinite(s.pressure_hpa)
+        ? one(s.pressure_hpa, ' hPa') : dash;
+    const co2      = s && Number.isFinite(s.co2_ppm)
+        ? num(s.co2_ppm) + ' ppm (eCO₂)' : dash;
+    const rssi     = s && Number.isFinite(s.rssi) ? s.rssi + ' dBm' : dash;
+    const visitors = s ? num(s.visitors) + ' all-time · ' + num(s.daily_visitors) + ' today' : dash;
+    const countries = s ? num(s.countries) : dash;
+    const heapFree = s && s.memory && Number.isFinite(s.memory.used_percent)
+        ? (100 - s.memory.used_percent).toFixed(0) + '% free' : dash;
+    let sd = dash;
+    if (s && Number.isFinite(s.sd_used_mb) && Number.isFinite(s.sd_free_mb)) {
+        const totalMb = s.sd_used_mb + s.sd_free_mb;
+        if (totalMb > 0) {
+            sd = Math.round(s.sd_used_mb) + ' MB used / ' + Math.round(totalMb) + ' MB';
+        }
+    }
+
     const lines = [
       '',
-      '   _   _      _ _        _____ ____  ____',
-      '  | | | | ___| | |  ___  | ____/ ___|| _ \\',
-      '  | |_| |/ _ \\ | |/ _ \\|  _| \\_\\| |_) |',
-      '  |  _  |  __/ | | (_) | |___ ___)  |  __/',
-      '  |_| |_|\\___|_|_|\\___/|_____|____/|_|',
+      '   _    _      _ _       ______  _____ _____',
+      '  | |  | |    | | |     |  ____|/ ____|  __ \\',
+      '  | |__| | ___| | | ___ | |__  | (___ | |__) |',
+      '  |  __  |/ _ \\ | |/ _ \\|  __|  \\___ \\|  ___/',
+      '  | |  | |  __/ | | (_) | |____ ____) | |',
+      '  |_|  |_|\\___|_|_|\\___/|______|_____/|_|',
       '',
-      '  A website running on an ESP32 on a wall in Colorado.',
+      '  A website running on an ESP32 on a wall in Denver.',
       '',
-      '  Uptime:     ' + uptime,
-      '  Indoor:     ' + tempF,
-      '  Air:        ' + co2,
-      '  Visitors:   ' + visitors + ' all-time',
-      '  Countries:  ' + countries,
+      '  STATUS',
+      '    Uptime       ' + uptime,
+      '    Visitors     ' + visitors,
+      '    Countries    ' + countries,
       '',
-      '  Web:     https://helloesp.com',
-      '  Source:  https://github.com/Tech1k/helloesp',
-      '  RSS:     https://helloesp.com/guestbook.rss',
+      '  INDOOR (sealed frame)',
+      '    Temp         ' + tempF,
+      '    Humidity     ' + humidity,
+      '    Air          ' + co2,
+      '    Pressure     ' + pressure,
+    ];
+
+    if (s && s.outdoor && Number.isFinite(s.outdoor.temp_f)) {
+      const o = s.outdoor;
+      const loc = (o.location && typeof o.location === 'string') ? o.location : 'Denver, CO';
+      lines.push(
+        '',
+        '  OUTDOOR (' + loc + ')',
+        '    Temp         ' + one(o.temp_f, '°F'),
+        '    Humidity     ' + (Number.isFinite(o.humidity) ? one(o.humidity, '%') : dash),
+        '    Wind         ' + (Number.isFinite(o.wind_mph) ? one(o.wind_mph, ' mph') : dash)
+      );
+    }
+
+    lines.push(
+      '',
+      '  DEVICE',
+      '    Heap         ' + heapFree,
+      '    SD card      ' + sd,
+      '    WiFi         ' + rssi,
+      '',
+      '  LINKS',
+      '    Web          https://helloesp.com',
+      '    Guestbook    https://helloesp.com/guestbook',
+      '    Console      https://helloesp.com/console',
+      '    History      https://helloesp.com/history',
+      '    Source       https://github.com/Tech1k/helloesp',
+      '    RSS          https://helloesp.com/guestbook.rss',
+      '    Badge        https://helloesp.com/status.svg',
       '',
       '  (You asked for it with curl. Nice.)',
       ''
-    ];
+    );
     return lines.join('\n');
   }
 
@@ -406,12 +617,24 @@ export class EspRelay {
   }
 
   broadcastEvent(eventName, jsonStr) {
+    // Cap per-event payload size: with SSE_MAX_CLIENTS=500 viewers, a 1 MB
+    // payload would be a 500 MB instantaneous fanout against a DO with a
+    // ~128 MB memory ceiling. Drop oversized events instead of crashing the
+    // DO; SSE delivery to all currently-connected clients is preserved for
+    // every event that fits under the cap.
     const payload = new TextEncoder().encode(`event: ${eventName}\ndata: ${jsonStr}\n\n`);
+    if (payload.byteLength > SSE_MAX_PAYLOAD) return;
     const dead = [];
     for (const w of this.sseClients) {
       w.write(payload).catch(() => dead.push(w));
     }
-    for (const w of dead) this.sseClients.delete(w);
+    for (const w of dead) {
+      this.sseClients.delete(w);
+      // Release the writer's transform-stream state. Without abort(), the
+      // writable side stays held even after we forget the reference, which
+      // leaks per-flapped-client over the DO's lifetime.
+      w.abort().catch(() => {});
+    }
   }
 
   async setMaintenance(minutes, message) {
@@ -451,12 +674,12 @@ export class EspRelay {
       if (msg.event === 'stats_update') {
         if (msg.data) {
           const enriched = this.enrichStats(msg.data);
-          // lastStats is served to new SSE joins, /stats HTTP, and the status
-          // badge; we don't want a stale `clients` count baked into any of those.
           this.lastStats = JSON.stringify(enriched);
           this.lastStatsAt = Date.now();
-          const live = { ...enriched, clients: this.sseClients.size };
-          this.broadcastEvent('stats', JSON.stringify(live));
+          // `clients` is per-broadcast (not cached in lastStats) so the
+          // homepage presence indicator reflects current connections.
+          const broadcastBody = JSON.stringify({ ...enriched, clients: this.sseClients.size });
+          this.broadcastEvent('stats', broadcastBody);
         }
         return;
       }
@@ -474,6 +697,27 @@ export class EspRelay {
       }
       if (msg.event === 'test_email') {
         await this._sendTestEmail();
+        return;
+      }
+      if (msg.event === 'snake_clear') {
+        // Admin reset of the snake leaderboard. Triggered from the device's
+        // admin panel via the existing WS event channel; same trust model
+        // as the other admin events above (must come over the HMAC-
+        // authenticated WS).
+        let ok = false;
+        try {
+          await this.state.storage.delete('snake/leaderboard');
+          ok = true;
+        } catch (e) {
+          console.error('snake_clear storage delete failed:', e && e.message);
+        }
+        if (this.espSocket && this.espSocket.readyState === 1) {
+          try {
+            this.espSocket.send(JSON.stringify({
+              type: 'event', event: 'snake_clear_result', ok
+            }));
+          } catch (e) {}
+        }
         return;
       }
       if (msg.event !== 'pending_guestbook') return;
@@ -499,20 +743,11 @@ export class EspRelay {
       }
       body += `To review, open /admin from your LAN.`;
 
-      const res = await fetch('https://api.smtp2go.com/v3/email/send', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Smtp2go-Api-Key': env.SMTP2GO_KEY
-        },
-        body: JSON.stringify({
-          sender: env.NOTIFY_FROM || 'HelloESP <noreply@helloesp.com>',
-          to: [env.NOTIFY_EMAIL],
-          subject: `HelloESP: ${count} pending guestbook ${noun}`,
-          text_body: body
-        })
+      const res = await this._sendEmail({
+        subject: `HelloESP: ${count} pending guestbook ${noun}`,
+        text_body: body
       });
-      if (!res.ok) console.error('SMTP2GO non-2xx:', res.status);
+      if (res && !res.ok) console.error('SMTP2GO non-2xx:', res.status);
     } catch (e) {
       console.error('SMTP2GO send failed:', e && e.message);
     }
@@ -669,12 +904,20 @@ export class EspRelay {
 
     let bytesWritten = 0;
     try {
+      // Filenames from the device must match a strict allowlist: alphanumeric,
+      // dot/underscore/dash/slash only. This rejects path traversal (`..`),
+      // leading separators, backslashes (Windows-style traversal), all control
+      // chars including `\r\n` (which would corrupt manifest.json line keys),
+      // and Unicode line separators (U+2028/U+2029). Any survivor is safe to
+      // concat into both R2 keys and JSON manifest entries. The segment-must-
+      // contain-an-alphanum check rejects degenerate names like `.` and `..`
+      // which the regex alone would otherwise allow through.
+      const SAFE_NAME_RE = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
+      const SEGMENT_HAS_ALNUM = /(^|\/)[A-Za-z0-9]/;
       for (const f of included) {
-        // Filename came from the device; reject anything that could escape the snapshot prefix
-        // or exceed sane limits. `..` and leading `/` would survive as literals in R2 keys but
-        // make the bucket messy and could collide with sibling prefixes on restore.
         if (typeof f.name !== 'string' || f.name.length === 0 || f.name.length > 256
-            || f.name.startsWith('/') || f.name.includes('..') || f.name.includes('\x00')) {
+            || f.name.startsWith('/') || f.name.includes('..')
+            || !SAFE_NAME_RE.test(f.name) || !SEGMENT_HAS_ALNUM.test(f.name)) {
           console.warn(`backup ${date}: rejecting suspicious filename:`, JSON.stringify(f.name));
           manifest.files.push({ path: String(f.name).slice(0, 64), size: f.size, skipped: 'rejected_name' });
           continue;
@@ -715,14 +958,11 @@ export class EspRelay {
     }
 
     this.lastBackupAt = Date.now();
-    this.lastBackupSize = bytesWritten;
     this.lastBackupDate = date;
     await this.state.storage.put('lastBackupAt', this.lastBackupAt);
-    await this.state.storage.put('lastBackupSize', this.lastBackupSize);
     await this.state.storage.put('lastBackupDate', date);
 
-    // Close the loop back to the device so it can surface "R2 commit confirmed" in the admin UI.
-    // Without this the ESP only knows "I sent the bundle", not "the bundle was actually stored".
+    // Tell the device the bundle was actually stored (not just sent).
     if (this.espSocket && this.espSocket.readyState === 1) {
       try {
         this.espSocket.send(JSON.stringify({
@@ -785,15 +1025,9 @@ export class EspRelay {
     if (now - this.lastBackupFailureEmailAt < 3600000) return; // one per hour at most
     this.lastBackupFailureEmailAt = now;
     try {
-      await fetch('https://api.smtp2go.com/v3/email/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Smtp2go-Api-Key': env.SMTP2GO_KEY },
-        body: JSON.stringify({
-          sender: env.NOTIFY_FROM || 'HelloESP <noreply@helloesp.com>',
-          to: [env.NOTIFY_EMAIL],
-          subject: `HelloESP backup FAILED - ${date}`,
-          text_body: `Backup for ${date} could not be written to R2.\n\nReason: ${reason}\n\nCheck the R2 bucket and Worker logs.`
-        })
+      await this._sendEmail({
+        subject: `HelloESP backup FAILED - ${date}`,
+        text_body: `Backup for ${date} could not be written to R2.\n\nReason: ${reason}\n\nCheck the R2 bucket and Worker logs.`
       });
     } catch (e) {
       console.error('backup failure email send failed:', e && e.message);
@@ -827,20 +1061,14 @@ export class EspRelay {
     if (!env.NOTIFY_EMAIL) { sendResult(false, 'NOTIFY_EMAIL not set'); return; }
 
     try {
-      const res = await fetch('https://api.smtp2go.com/v3/email/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Smtp2go-Api-Key': env.SMTP2GO_KEY },
-        body: JSON.stringify({
-          sender: env.NOTIFY_FROM || 'HelloESP <noreply@helloesp.com>',
-          to: [env.NOTIFY_EMAIL],
-          subject: 'HelloESP test email',
-          text_body: `This is a manual test sent from the admin panel at ${new Date().toISOString()}.\n\nIf you received this, SMTP2GO is working. Dead-man, backup, and guestbook alerts will use the same path.`
-        })
+      const res = await this._sendEmail({
+        subject: 'HelloESP test email',
+        text_body: `This is a manual test sent from the admin panel at ${new Date().toISOString()}.\n\nIf you received this, SMTP2GO is working. Dead-man, backup, and guestbook alerts will use the same path.`
       });
-      if (!res.ok) {
+      if (!res || !res.ok) {
         let bodyText = '';
-        try { bodyText = (await res.text()).slice(0, 100); } catch (e) {}
-        sendResult(false, `SMTP2GO HTTP ${res.status}${bodyText ? ': ' + bodyText : ''}`);
+        try { if (res) bodyText = (await res.text()).slice(0, 100); } catch (e) {}
+        sendResult(false, `SMTP2GO HTTP ${res ? res.status : 'no-response'}${bodyText ? ': ' + bodyText : ''}`);
         return;
       }
       sendResult(true, `sent to ${env.NOTIFY_EMAIL}`);
@@ -905,23 +1133,26 @@ export class EspRelay {
   async _maybeSendMissedBackupAlert() {
     const env = this.env;
     if (!env.SMTP2GO_KEY || !env.NOTIFY_EMAIL) return;
-    if (!this.lastBackupAt) return; // never backed up -> don't alert until first success
+    // Use lastBackupAt if any successful backup has happened; otherwise use
+    // the DO's first-seen time as the reference. Without this, a fresh
+    // deploy that never gets a successful backup would never alert.
+    const referenceTime = this.lastBackupAt || this.firstSeenAt;
+    if (!referenceTime) return;
     const now = Date.now();
-    const ageMs = now - this.lastBackupAt;
+    const ageMs = now - referenceTime;
     if (ageMs < 48 * 3600000) return;                              // fresh
     if (now - this.lastBackupMissedEmailAt < 24 * 3600000) return; // one per day
     this.lastBackupMissedEmailAt = now;
     const ageHours = Math.floor(ageMs / 3600000);
+    const neverHadOne = !this.lastBackupAt;
     try {
-      await fetch('https://api.smtp2go.com/v3/email/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Smtp2go-Api-Key': env.SMTP2GO_KEY },
-        body: JSON.stringify({
-          sender: env.NOTIFY_FROM || 'HelloESP <noreply@helloesp.com>',
-          to: [env.NOTIFY_EMAIL],
-          subject: `HelloESP backup overdue (${ageHours}h)`,
-          text_body: `No successful backup since ${new Date(this.lastBackupAt).toISOString()}.\n\nLast snapshot date: ${this.lastBackupDate || 'unknown'}.\n\nCheck that the device is online and the R2 binding is healthy.`
-        })
+      await this._sendEmail({
+        subject: neverHadOne
+          ? `HelloESP backup never succeeded (${ageHours}h since deploy)`
+          : `HelloESP backup overdue (${ageHours}h)`,
+        text_body: neverHadOne
+          ? `Worker has been running for ${ageHours} hours and no R2 backup has ever succeeded.\n\nCheck that the R2 binding is configured (wrangler.toml) and the device is uploading bundles.`
+          : `No successful backup since ${new Date(this.lastBackupAt).toISOString()}.\n\nLast snapshot date: ${this.lastBackupDate || 'unknown'}.\n\nCheck that the device is online and the R2 binding is healthy.`
       });
     } catch (e) {
       console.error('missed-backup email send failed:', e && e.message);
@@ -1010,23 +1241,17 @@ export class EspRelay {
       body += footer;
 
       try {
-        const res = await fetch('https://api.smtp2go.com/v3/email/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Smtp2go-Api-Key': env.SMTP2GO_KEY },
-          body: JSON.stringify({
-            sender: env.NOTIFY_FROM || 'HelloESP <noreply@helloesp.com>',
-            to: [env.NOTIFY_EMAIL],
-            subject,
-            text_body: body,
-            attachments: [{
-              filename,
-              fileblob: attachmentB64,
-              mimetype: 'application/json'
-            }]
-          })
+        const res = await this._sendEmail({
+          subject,
+          text_body: body,
+          attachments: [{
+            filename,
+            fileblob: attachmentB64,
+            mimetype: 'application/json'
+          }]
         });
-        if (!res.ok) {
-          console.error(`backup part ${i + 1}/${totalParts} SMTP2GO non-2xx:`, res.status);
+        if (!res || !res.ok) {
+          console.error(`backup part ${i + 1}/${totalParts} SMTP2GO non-2xx:`, res ? res.status : 'no-response');
           continue;
         }
         sentParts++;
@@ -1039,9 +1264,9 @@ export class EspRelay {
 
     if (sentParts === totalParts) {
       this.lastBackupAt = Date.now();
-      this.lastBackupSize = bundleBytes.length;
+      this.lastBackupDate = date;
       await this.state.storage.put('lastBackupAt', this.lastBackupAt);
-      await this.state.storage.put('lastBackupSize', this.lastBackupSize);
+      await this.state.storage.put('lastBackupDate', date);
     } else {
       console.error(`backup partial: ${sentParts}/${totalParts} parts emailed`);
     }
@@ -1067,13 +1292,56 @@ export class EspRelay {
       for (const w of this.sseClients) {
         w.write(ping).catch(() => dead.push(w));
       }
-      for (const w of dead) this.sseClients.delete(w);
+      for (const w of dead) {
+        this.sseClients.delete(w);
+        w.abort().catch(() => {});
+      }
     }
 
     if (this.espSocket && Date.now() - this.lastActivity > 75000) {
       try { this.espSocket.close(); } catch (e) {}
       this.espSocket = null;
     }
+
+    // Sweep orphan backup sessions whose device dropped mid-stream. Without
+    // this, a half-finished session sits in memory until the next backup_start
+    // (up to 24h on the daily cadence). Bounded but wasteful.
+    this.pruneBackupSessions();
+
+    // Time-based eviction of expired rate-limit and ws-auth-fail entries.
+    // The opportunistic size-gated sweep inside _enforceRateLimit only fires
+    // past 500 entries; on long stretches of low traffic, expired buckets
+    // would otherwise linger indefinitely below that threshold.
+    {
+      const t = Date.now();
+      for (const [k, v] of this.rateLimits) {
+        if (v.resetAt < t) this.rateLimits.delete(k);
+      }
+      for (const [k, v] of this.wsAuthFails) {
+        if (v.blockedUntil < t && t - v.firstAt > 600000) this.wsAuthFails.delete(k);
+      }
+    }
+
+    // Persist lastActivity so isolate eviction doesn't blank the deadman state.
+    // Throttled to ~30s (alarm cadence). One write per tick; storage cost is
+    // negligible vs the cost of a missed deadman alert.
+    if (this.lastActivity > 0) {
+      this.state.storage.put('lastActivity', this.lastActivity).catch(() => {});
+    }
+
+    // Sweep stale snake game seeds (>10 min old, never submitted). Keeps
+    // storage tidy without affecting the leaderboard, which lives at a
+    // different key prefix and is permanent. Cheap: list+filter+delete a
+    // handful of small keys, runs every 30s alongside the SSE ping.
+    try {
+      const stale = await this.state.storage.list({ prefix: 'snake/active:' });
+      const cutoff = Date.now() - 10 * 60 * 1000;
+      const toDelete = [];
+      for (const [key, val] of stale) {
+        if (val && typeof val.t === 'number' && val.t < cutoff) toDelete.push(key);
+      }
+      if (toDelete.length) await this.state.storage.delete(toDelete);
+    } catch (e) {}
 
     // Always rearm. Without this, an offline-ESP + no-SSE-clients state would stop the alarm
     // loop, and dead-man / overdue-backup alerts would be delayed until the next visitor woke
@@ -1085,6 +1353,23 @@ export class EspRelay {
 
   async fetch(request) {
     const url = new URL(request.url);
+
+    // curl/wget/httpie/PowerShell hitting "/" get a text/plain ASCII stats
+    // card built from the cached lastStats. Zero ESP load, works when the
+    // device is down, no-store so it doesn't poison "/" for browser visits.
+    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '')) {
+      const ua = (request.headers.get('User-Agent') || '').toLowerCase();
+      if (/\b(curl|wget|httpie|libwww-perl|powershell)\b/.test(ua)) {
+        return new Response(this.buildCurlCard(), {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Cache-Control': 'no-store',
+            ...SEC_HEADERS
+          }
+        });
+      }
+    }
 
     // Worker-side load-shedding endpoints.
     if (url.pathname === '/ping' && request.method === 'GET') {
@@ -1103,7 +1388,16 @@ export class EspRelay {
     if (url.pathname === '/stats' && request.method === 'GET') {
       if (this.lastStats) {
         const age = Date.now() - this.lastStatsAt;
-        return new Response(this.lastStats, {
+        // Inject fresh sseClients.size for the live-presence indicator.
+        // Stays out of lastStats itself so cache hits / cold-relay paths
+        // also pick up the current count rather than a stale snapshot.
+        let body = this.lastStats;
+        try {
+          const parsed = JSON.parse(this.lastStats);
+          parsed.clients = this.sseClients.size;
+          body = JSON.stringify(parsed);
+        } catch (e) { /* fall through to raw */ }
+        return new Response(body, {
           status: 200,
           headers: {
             'Content-Type': 'application/json',
@@ -1114,47 +1408,6 @@ export class EspRelay {
         });
       }
       // No cached stats yet; fall through to the ESP relay below.
-    }
-
-    // /countries: serve from Worker-local cache
-    if (url.pathname === '/countries' && request.method === 'GET') {
-      if (this.lastCountries) {
-        const age = Date.now() - this.lastCountriesAt;
-        const espUp = !!(this.espSocket && this.espSocket.readyState === 1);
-        // Serve from cache if (a) fresh, or (b) ESP is down (stale is better than 503).
-        if (age < 60000 || !espUp) {
-          return new Response(this.lastCountries, {
-            status: 200,
-            headers: {
-              'Content-Type': 'application/json',
-              'Cache-Control': 'public, max-age=30, stale-while-revalidate=120',
-              'X-Worker-Cache-Age': String(Math.floor(age / 1000)),
-              ...SEC_HEADERS
-            }
-          });
-        }
-      }
-      // Otherwise fall through to ESP relay.
-    }
-
-    // /records.json: records change only when a new high/low lands, so a
-    // longer cache window is safe. Same ESP-down stale rule as /countries.
-    if (url.pathname === '/records.json' && request.method === 'GET') {
-      if (this.lastRecords) {
-        const age = Date.now() - this.lastRecordsAt;
-        const espUp = !!(this.espSocket && this.espSocket.readyState === 1);
-        if (age < 300000 || !espUp) {
-          return new Response(this.lastRecords, {
-            status: 200,
-            headers: {
-              'Content-Type': 'application/json',
-              'Cache-Control': 'public, max-age=60, stale-while-revalidate=600',
-              'X-Worker-Cache-Age': String(Math.floor(age / 1000)),
-              ...SEC_HEADERS
-            }
-          });
-        }
-      }
     }
 
     // Embeddable live status badges. Uses cached lastStats; zero ESP load.
@@ -1169,6 +1422,242 @@ export class EspRelay {
           ...SEC_HEADERS
         }
       });
+    }
+
+    // ---- Snake leaderboard endpoints ----
+    // CORS: read endpoints allow cross-origin GETs (so the snake game on
+    // 404.html served direct via LAN can still fetch the leaderboard from
+    // helloesp.com), submission is same-origin enforced by replay verification
+    // not by Origin header (a forged Origin doesn't help if the moves don't
+    // replay to the claimed score).
+    if (url.pathname === '/snake/leaderboard' && request.method === 'GET') {
+      const board = await this._getSnakeLeaderboard();
+      return new Response(JSON.stringify(board), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'public, max-age=30',
+          'Access-Control-Allow-Origin': '*',
+          ...SEC_HEADERS
+        }
+      });
+    }
+
+    if (url.pathname === '/snake/seed' && request.method === 'GET') {
+      const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+      const limited = this._enforceRateLimit(clientIP);
+      if (limited) return limited;
+      const seed = (Math.random() * 0xFFFFFFFF) | 0;
+      const gameId = (Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+      // Persist only the seed and timestamp; no IP. The active entry is just
+      // a single-use replay credential paired with /snake/score, so the IP
+      // would be dead data and an unnecessary durable storage of a PII-ish
+      // identifier. Rate-limit/abuse handling is in-memory upstream of this.
+      await this.state.storage.put('snake/active:' + gameId, {
+        seed, t: Date.now()
+      });
+      return new Response(JSON.stringify({ seed, gameId }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-store',
+          'Access-Control-Allow-Origin': '*',
+          ...SEC_HEADERS
+        }
+      });
+    }
+
+    if (url.pathname === '/snake/score' && request.method === 'POST') {
+      const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+      const limited = this._enforceRateLimit(clientIP);
+      if (limited) return limited;
+      const corsHdrs = {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-store',
+        'Access-Control-Allow-Origin': '*',
+        ...SEC_HEADERS
+      };
+      const fail = (msg, status) => new Response(JSON.stringify({ ok: false, error: msg }), {
+        status: status || 400, headers: corsHdrs
+      });
+
+      let body;
+      try { body = await request.json(); } catch (e) { return fail('bad json'); }
+      const { gameId, initials, score, moves } = body || {};
+      if (typeof gameId !== 'string' || gameId.length === 0 || gameId.length > 64) return fail('bad gameId');
+      if (typeof initials !== 'string') return fail('bad initials');
+      if (typeof score !== 'number' || !Number.isFinite(score) || score < 10 || score > 100000) return fail('bad score');
+      if (!Array.isArray(moves) || moves.length > SNAKE_MAX_STEPS) return fail('bad moves');
+
+      // Strict-validate initials. Earlier code silently truncated ("AAAB" -> "AAA")
+      // which let bypass-via-fetch submit different initials than the user typed.
+      // The client form's maxlength=3 + filter already pre-cleans, so a strict
+      // worker check just rejects bypass attempts and surfaces them as a form
+      // error rather than corrupting the leaderboard.
+      const upper = initials.toUpperCase();
+      if (!/^[A-Z0-9]{3}$/.test(upper)) return fail('initials must be exactly 3 alphanumeric chars');
+      const cleanInitials = upper;
+      if (BLOCKED_INITIALS.has(cleanInitials)) return fail('try different initials');
+
+      // Serialize the critical section (active-game check, single-use delete,
+      // replay verify, leaderboard read-modify-write). Without this:
+      //  (a) Two parallel POSTs with the same gameId both pass the active check
+      //      and double-write to the leaderboard.
+      //  (b) Two simultaneous valid submissions race the board RMW and the
+      //      last-writer-wins drops one entry.
+      let respPayload;
+      let respStatus = 200;
+      await this.state.blockConcurrencyWhile(async () => {
+        const active = await this.state.storage.get('snake/active:' + gameId);
+        if (!active) { respPayload = { ok: false, error: 'game not found or expired' }; respStatus = 400; return; }
+        if (Date.now() - active.t > 10 * 60 * 1000) {
+          await this.state.storage.delete('snake/active:' + gameId);
+          respPayload = { ok: false, error: 'game expired' }; respStatus = 400; return;
+        }
+        // Replay verify: server applies moves to the seeded game, accepts
+        // only if the resulting score matches the claim. This is what stops
+        // trivial "POST /snake/score {score: 9999}" cheats.
+        const ok = this._snakeReplay(active.seed, moves, score);
+        // Single-use: delete the active game whether replay passed or not.
+        await this.state.storage.delete('snake/active:' + gameId);
+        if (!ok) { respPayload = { ok: false, error: 'score does not match game' }; respStatus = 400; return; }
+
+        let board = await this._getSnakeLeaderboard();
+        const entry = { i: cleanInitials, s: score, t: Math.floor(Date.now() / 1000) };
+        board.push(entry);
+        // Sort score desc; ties broken by earlier timestamp (older score keeps rank).
+        board.sort((a, b) => (b.s - a.s) || (a.t - b.t));
+        board = board.slice(0, 10);
+        await this._putSnakeLeaderboard(board);
+
+        const rank = board.findIndex(e => e === entry);
+        respPayload = { ok: true, leaderboard: board, rank: rank >= 0 ? rank + 1 : null };
+      });
+      return new Response(JSON.stringify(respPayload), { status: respStatus, headers: corsHdrs });
+    }
+
+    // CORS preflight for /snake/score (POST + JSON triggers preflight when cross-origin).
+    if (url.pathname === '/snake/score' && request.method === 'OPTIONS') {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type',
+          'Access-Control-Max-Age': '600'
+        }
+      });
+    }
+
+    // Guestbook inline translation. Powered by Workers AI @cf/meta/m2m100-1.2b
+    // when env.AI is bound (see wrangler.toml [ai] block). Cached per
+    // (id, target) in DO storage so each unique pair costs at most one neuron.
+    // CORS-permissive so the LAN-served guestbook page can hit the Worker
+    // cross-origin (visitors loaded via direct LAN IP).
+    if (url.pathname === '/guestbook/translate') {
+      const corsHdrs = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '600'
+      };
+      if (request.method === 'OPTIONS') {
+        return new Response(null, { status: 204, headers: corsHdrs });
+      }
+      if (request.method !== 'POST') {
+        return new Response('Method not allowed', { status: 405, headers: corsHdrs });
+      }
+      if (!this.env.AI) {
+        return new Response('Translation unavailable (AI binding not configured)',
+          { status: 503, headers: { 'Content-Type': 'text/plain', ...corsHdrs } });
+      }
+
+      // Per-IP rate limit so a single client can't drain the daily neuron
+      // budget. Reuses the existing rateLimits map. Translation is heavier
+      // than a normal relay, so use a tighter cap (10 / minute / IP).
+      const tIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+      const tNow = Date.now();
+      let trl = this.rateLimits.get('xlate:' + tIP);
+      if (!trl || tNow > trl.resetAt) {
+        trl = { count: 0, resetAt: tNow + 60000 };
+        this.rateLimits.set('xlate:' + tIP, trl);
+      }
+      trl.count++;
+      if (trl.count > 10) {
+        return new Response('Translation rate limit exceeded; try again in a minute',
+          { status: 429, headers: { 'Content-Type': 'text/plain', ...corsHdrs } });
+      }
+
+      let body;
+      try { body = await request.json(); } catch (e) {
+        return new Response('Invalid JSON', { status: 400, headers: { 'Content-Type': 'text/plain', ...corsHdrs } });
+      }
+      const id = body && typeof body.id === 'string' ? body.id.slice(0, 32) : '';
+      const text = body && typeof body.text === 'string' ? body.text : '';
+      const target = body && typeof body.target === 'string' ? body.target.toLowerCase().slice(0, 5) : '';
+      const source = body && typeof body.source === 'string' ? body.source.toLowerCase().slice(0, 5) : '';
+      if (!text || text.length > 1000) {
+        return new Response('Text empty or too long (max 1000 chars)',
+          { status: 400, headers: { 'Content-Type': 'text/plain', ...corsHdrs } });
+      }
+      if (!/^[a-z]{2,3}(-[a-z]{2,3})?$/.test(target)) {
+        return new Response('Invalid target language code',
+          { status: 400, headers: { 'Content-Type': 'text/plain', ...corsHdrs } });
+      }
+      // Cache by (id, target, text-hash) when an id is supplied so re-clicks
+      // and other visitors on the same entry don't re-spend neurons.
+      // Including a hash of the text in the key prevents cache poisoning:
+      // an attacker submitting different `text` under a real entry's `id`
+      // can't overwrite what other visitors see, because the lookup hash
+      // won't match what they're translating.
+      let cacheKey = null;
+      if (id) {
+        // 128-bit prefix of SHA-256(text). 64 bits is collision-feasible for
+        // an attacker who can submit translations (~2^32 work to land on
+        // another entry's cache slot under the same id+target); 128 bits
+        // raises that to ~2^64 which is firmly impractical.
+        const hashBuf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+        const hashHex = Array.from(new Uint8Array(hashBuf, 0, 16))
+          .map(b => b.toString(16).padStart(2, '0')).join('');
+        cacheKey = 'translate:' + id + ':' + target + ':' + hashHex;
+      }
+      if (cacheKey) {
+        const cached = await this.state.storage.get(cacheKey);
+        if (typeof cached === 'string' && cached.length > 0) {
+          return new Response(JSON.stringify({ translated: cached, cached: true }),
+            { status: 200, headers: { 'Content-Type': 'application/json', ...corsHdrs } });
+        }
+      }
+
+      let aiResp;
+      try {
+        aiResp = await this.env.AI.run('@cf/meta/m2m100-1.2b', {
+          text,
+          source_lang: source || 'en',
+          target_lang: target.split('-')[0]   // m2m100 takes 2-letter codes
+        });
+      } catch (e) {
+        console.error('translate AI.run failed:', e && e.message);
+        return new Response('Translation backend error',
+          { status: 502, headers: { 'Content-Type': 'text/plain', ...corsHdrs } });
+      }
+      const rawTranslated = aiResp && typeof aiResp.translated_text === 'string'
+        ? aiResp.translated_text : '';
+      // Defensive strip of HTML-significant characters before storing/serving.
+      // Frontends use textContent so this isn't a primary defense, but a
+      // model that echoes injected `<script>` markers shouldn't get a chance
+      // to be rendered as HTML by any future consumer.
+      const translated = rawTranslated.replace(/[<>]/g, '');
+      if (!translated) {
+        return new Response('Translation returned empty result',
+          { status: 502, headers: { 'Content-Type': 'text/plain', ...corsHdrs } });
+      }
+      // Cache fire-and-forget; missing cache write isn't user-visible.
+      if (cacheKey) {
+        this.state.storage.put(cacheKey, translated).catch(() => {});
+      }
+      return new Response(JSON.stringify({ translated, cached: false }),
+        { status: 200, headers: { 'Content-Type': 'application/json', ...corsHdrs } });
     }
 
     if (url.pathname === '/status-wide.svg') {
@@ -1199,19 +1688,28 @@ export class EspRelay {
       // make sure the alarm is ticking so dead-client sweeps run
       this._ensureAlarm(30000);
       // immediately send the most recent cached stats so new clients don't wait 5s.
-      // Inject a fresh `clients` count since lastStats doesn't carry it.
+      // Inject fresh clients count (same pattern as the broadcast/cache paths)
+      // so the very first stats event a new viewer receives populates the
+      // live-presence indicator. Without this, the indicator stayed hidden
+      // until the next 15s ESP push.
       if (this.lastStats) {
-        let snapshot = this.lastStats;
+        let body = this.lastStats;
         try {
-          const obj = JSON.parse(this.lastStats);
-          obj.clients = this.sseClients.size;
-          snapshot = JSON.stringify(obj);
-        } catch (e) {}
-        const payload = new TextEncoder().encode(`event: stats\ndata: ${snapshot}\n\n`);
-        writer.write(payload).catch(() => this.sseClients.delete(writer));
+          const parsed = JSON.parse(this.lastStats);
+          parsed.clients = this.sseClients.size;
+          body = JSON.stringify(parsed);
+        } catch (e) { /* fall through to raw */ }
+        const payload = new TextEncoder().encode(`event: stats\ndata: ${body}\n\n`);
+        writer.write(payload).catch(() => {
+          this.sseClients.delete(writer);
+          writer.abort().catch(() => {});
+        });
       } else {
         // send a zero-length comment so the connection is established promptly
-        writer.write(new TextEncoder().encode(': connected\n\n')).catch(() => this.sseClients.delete(writer));
+        writer.write(new TextEncoder().encode(': connected\n\n')).catch(() => {
+          this.sseClients.delete(writer);
+          writer.abort().catch(() => {});
+        });
       }
       return new Response(readable, {
         status: 200,
@@ -1250,8 +1748,19 @@ export class EspRelay {
         }
       }
 
-      // valid auth; take over any existing socket (covers stale sockets from unclean reboots)
+      // Valid auth; take over any existing socket (covers stale sockets from
+      // unclean reboots). We must explicitly fail any in-flight requests
+      // here: the old socket's close-listener (line ~1925) short-circuits
+      // when `this.espSocket !== oldServer`, which becomes true the moment
+      // we null/replace this.espSocket below. So the listener won't drain
+      // pendingRequests on its own and they'd hang for the 30s timeout.
       if (this.espSocket) {
+        if (this.pendingRequests && this.pendingRequests.size) {
+          for (const p of this.pendingRequests.values()) {
+            try { p.resolve(offlineResponse()); } catch (e) {}
+          }
+          this.pendingRequests.clear();
+        }
         try { this.espSocket.close(); } catch (e) {}
         this.espSocket = null;
       }
@@ -1289,7 +1798,10 @@ export class EspRelay {
       }
 
       server.addEventListener('message', (event) => {
-        this.lastActivity = Date.now();
+        // Only count activity once HMAC is verified. Pre-auth, an attacker
+        // hammering the WS upgrade could indefinitely refresh this timestamp
+        // and silently mask the deadman alert on a truly-dead device.
+        if (this.hmacAuthenticated) this.lastActivity = Date.now();
         const data = event.data;
         if (typeof data !== 'string') return;
 
@@ -1354,25 +1866,19 @@ export class EspRelay {
 
           const headers = { 'Content-Type': ar.ct };
           if (ar.cc) headers['Cache-Control'] = ar.cc;
+          if (ar.ce) headers['Content-Encoding'] = ar.ce;
 
           const pending = this.pendingRequests.get(ar.id);
           if (pending) {
-            // Cache-fill hook: stash selected endpoint responses in Worker memory.
-            if (pending.path === '/countries' && ar.status === 200) {
-              try {
-                this.lastCountries = new TextDecoder().decode(assembled);
-                this.lastCountriesAt = Date.now();
-              } catch (e) {}
-            } else if (pending.path === '/records.json' && ar.status === 200) {
-              try {
-                this.lastRecords = new TextDecoder().decode(assembled);
-                this.lastRecordsAt = Date.now();
-              } catch (e) {}
-            }
-            pending.resolve(new Response(assembled.buffer, {
-              status: ar.status,
-              headers
-            }));
+            // encodeBody: 'manual' is required when ar.ce is set (gzipped
+            // body) so the Workers runtime ships the bytes as-is without
+            // re-encoding/decompressing on outer-worker arrayBuffer() reads.
+            // For plain bodies the default ('auto') is fine and stays in
+            // the streaming code path.
+            const respInit = ar.ce
+              ? { status: ar.status, headers, encodeBody: 'manual' }
+              : { status: ar.status, headers };
+            pending.resolve(new Response(assembled.buffer, respInit));
             this.pendingRequests.delete(ar.id);
           }
           this.activeResponses.delete(this.currentStreamId);
@@ -1387,11 +1893,19 @@ export class EspRelay {
               this.handleEvent(msg).catch((e) => console.error('handleEvent error:', e && e.message));
               return;
             }
+            // Drop metadata for IDs we never asked for. Without this guard, a
+            // buggy or replayed frame could accumulate orphan entries in
+            // activeResponses that only get cleared on full WS close.
+            if (typeof msg.id !== 'number' || !this.pendingRequests.has(msg.id)) {
+              console.warn('dropping stream metadata for unknown id:', msg.id);
+              return;
+            }
             this.activeResponses.set(msg.id, {
               id: msg.id,
               status: msg.status || 200,
               ct: msg.ct || 'text/html',
               cc: msg.cc || '',
+              ce: msg.ce || '',
               chunks: []
             });
             this.currentStreamId = msg.id;
@@ -1439,61 +1953,11 @@ export class EspRelay {
       return maintenanceResponse(this.maintenanceUntil, this.maintenanceMessage);
     }
 
-    // curl / wget / httpie landing on / get a text/plain ASCII card pulled
-    // from the cached stats. Zero ESP load, works when the device is down.
-    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '')) {
-      const ua = (request.headers.get('User-Agent') || '').toLowerCase();
-      const wantsText = /\b(curl|wget|httpie|libwww-perl|powershell)\b/.test(ua);
-      if (wantsText) {
-        return new Response(this.buildCurlCard(), {
-          status: 200,
-          headers: {
-            'Content-Type': 'text/plain; charset=utf-8',
-            'Cache-Control': 'public, max-age=30',
-            ...SEC_HEADERS
-          }
-        });
-      }
-    }
-
-    // Short-circuit /stats from the Worker-side cache. lastStats is refreshed every 5s by the
-    // ESP's SSE push, so it's always ≤5s stale in practice. Staleness guard falls back to the
-    // relay path (which returns offline if the ESP is down) so a dead device doesn't silently
-    // serve minute-old cached data.
-    if (request.method === 'GET' && url.pathname === '/stats' && this.lastStats
-        && Date.now() - this.lastStatsAt < 60000) {
-      return new Response(this.lastStats, {
-        status: 200,
-        headers: {
-          'Content-Type': 'application/json; charset=utf-8',
-          'Cache-Control': 'no-store',
-          ...SEC_HEADERS
-        }
-      });
-    }
-
     if (!this.espSocket || !this.hmacAuthenticated) return offlineResponse();
 
     const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
-
-    const now = Date.now();
-    let rl = this.rateLimits.get(clientIP);
-    if (!rl || now > rl.resetAt) {
-      rl = { count: 0, resetAt: now + RATE_LIMIT_WINDOW };
-      this.rateLimits.set(clientIP, rl);
-    }
-    rl.count++;
-    if (rl.count > RATE_LIMIT_MAX) {
-      return new Response('Rate limit exceeded', {
-        status: 429,
-        headers: { 'Content-Type': 'text/plain', 'Retry-After': '60', ...SEC_HEADERS }
-      });
-    }
-    if (this.rateLimits.size > 500) {
-      for (const [k, v] of this.rateLimits) {
-        if (v.resetAt < now) this.rateLimits.delete(k);
-      }
-    }
+    const limited = this._enforceRateLimit(clientIP);
+    if (limited) return limited;
 
     const id = ++this.requestId;
 
@@ -1502,7 +1966,8 @@ export class EspRelay {
     // every relayed request showed up as ?? in the console.
     const headers = {
       'CF-Connecting-IP': clientIP,
-      'CF-IPCountry': (request.cf && request.cf.country) || request.headers.get('CF-IPCountry') || ''
+      'CF-IPCountry': (request.cf && request.cf.country) || request.headers.get('CF-IPCountry') || '',
+      'Accept-Encoding': request.headers.get('Accept-Encoding') || ''
     };
 
     let body = '';
@@ -1513,27 +1978,39 @@ export class EspRelay {
       }
       // Stream the body so a missing or lying Content-Length can't slip a huge
       // payload through and then get fully buffered by request.text(). Cancel
-      // the stream the moment we exceed MAX_BODY.
+      // the stream the moment we exceed MAX_BODY. fatal:true on the decoder
+      // throws on non-UTF-8 input rather than silently substituting U+FFFD,
+      // since the WS relay frame embeds body as a JSON string and any binary
+      // POST would arrive at the ESP corrupted.
       if (request.body) {
         const reader = request.body.getReader();
-        const decoder = new TextDecoder();
+        const decoder = new TextDecoder('utf-8', { fatal: true });
         let received = 0;
         let parts = '';
         let tooLarge = false;
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          received += value.byteLength;
-          if (received > MAX_BODY) {
-            tooLarge = true;
-            try { await reader.cancel(); } catch (e) {}
-            break;
+        let decodeFailed = false;
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            received += value.byteLength;
+            if (received > MAX_BODY) {
+              tooLarge = true;
+              try { await reader.cancel(); } catch (e) {}
+              break;
+            }
+            parts += decoder.decode(value, { stream: true });
           }
-          parts += decoder.decode(value, { stream: true });
+          if (!tooLarge) parts += decoder.decode();
+        } catch (e) {
+          decodeFailed = true;
+          try { await reader.cancel(); } catch (err) {}
         }
-        if (!tooLarge) parts += decoder.decode();
         if (tooLarge) {
           return new Response('Payload too large', { status: 413, headers: { 'Content-Type': 'text/plain', ...SEC_HEADERS } });
+        }
+        if (decodeFailed) {
+          return new Response('Binary payloads not supported via Worker relay', { status: 415, headers: { 'Content-Type': 'text/plain', ...SEC_HEADERS } });
         }
         body = parts;
       }
@@ -1552,6 +2029,14 @@ export class EspRelay {
       return offlineResponse();
     }
 
+    // Tag /stats relay responses so we can enrich + cache them on the way
+    // back. Without this, a cold-worker /stats falls through to the raw ESP
+    // body (no `outdoor` weather block), and the homepage flickers the
+    // outdoor section on/off until lastStats warms back up. Catching the
+    // first relayed /stats here populates lastStats so all subsequent polls
+    // are consistent.
+    const isStatsPath = (url.pathname === '/stats' && request.method === 'GET');
+
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
         this.pendingRequests.delete(id);
@@ -1561,9 +2046,31 @@ export class EspRelay {
       }, 30000);
 
       this.pendingRequests.set(id, {
-        path: url.pathname,
-        resolve: (resp) => {
+        resolve: async (resp) => {
           clearTimeout(timeout);
+          if (isStatsPath && resp && resp.status === 200) {
+            try {
+              const cloned = resp.clone();
+              const raw = await cloned.json();
+              const enriched = this.enrichStats(raw);
+              this.lastStats = JSON.stringify(enriched);
+              this.lastStatsAt = Date.now();
+              // Inject live presence count for this response (kept out of
+              // lastStats itself so subsequent serves get the current count).
+              const responseBody = JSON.stringify({ ...enriched, clients: this.sseClients.size });
+              resolve(new Response(responseBody, {
+                status: 200,
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Cache-Control': 'public, max-age=5, stale-while-revalidate=30',
+                  ...SEC_HEADERS
+                }
+              }));
+              return;
+            } catch (e) {
+              // Fall through to raw response on parse error
+            }
+          }
           resolve(resp);
         }
       });
@@ -1571,23 +2078,37 @@ export class EspRelay {
   }
 }
 
-// /guestbook/entries is cacheable on purpose: firmware sends Cache-Control:
-// max-age=30 on the unfiltered list (search skips the header). Letting the
-// edge cache honor that header means one ESP round-trip per 30s regardless
-// of visitor count.
-const NO_CACHE = ['/logs', '/admin', '/_ws', '/_stream', '/console.json',
-  '/guestbook/submit', '/guestbook/pending', '/guestbook/moderate'];
+// Prefix matches: covers path families like /admin, /admin/files, etc.
+const NO_CACHE_PREFIX = ['/logs', '/admin', '/_ws', '/_stream',
+  '/guestbook/entries', '/guestbook/submit', '/guestbook/pending', '/guestbook/moderate',
+  '/guestbook/replies', '/guestbook/locate'];
+// Exact matches: prefix would over-match (e.g. /snake/seed vs /snake/seedling).
+// /snake/leaderboard intentionally cacheable via its own Cache-Control.
+const NO_CACHE_EXACT = new Set(['/console.json', '/snake/seed', '/snake/score',
+  '/guestbook/translate']);
 
 function shouldCache(pathname) {
   if (pathname === '/stats') return false;
-  return !NO_CACHE.some(p => pathname.startsWith(p));
+  if (NO_CACHE_EXACT.has(pathname)) return false;
+  return !NO_CACHE_PREFIX.some(p => pathname.startsWith(p));
+}
+
+// CLI clients on "/" bypass the edge cache so browsers don't get the ASCII
+// card and CLIs don't get the cached HTML. The DO sends Cache-Control:
+// no-store on the card response so the inverse poison can't happen either.
+function isCliRoot(request, url) {
+  if (request.method !== 'GET') return false;
+  if (url.pathname !== '/' && url.pathname !== '') return false;
+  const ua = (request.headers.get('User-Agent') || '').toLowerCase();
+  return /\b(curl|wget|httpie|libwww-perl|powershell)\b/.test(ua);
 }
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    const cacheable = request.method === 'GET' && shouldCache(url.pathname);
+    const cliRoot = isCliRoot(request, url);
+    const cacheable = !cliRoot && request.method === 'GET' && shouldCache(url.pathname);
 
     if (cacheable) {
       const cached = await caches.default.match(request);
@@ -1604,17 +2125,29 @@ export default {
     if (cacheable && (response.status === 200 || response.status === 404)) {
       const cc = response.headers.get('Cache-Control');
       if (cc && cc.includes('max-age')) {
+        // encodeBody: 'manual' when Content-Encoding is set (gzip) so the
+        // runtime doesn't auto-decompress on arrayBuffer(). The cached body
+        // stays in its original gzip form and the Content-Encoding header
+        // on the cached Response correctly describes those bytes.
+        const ce = response.headers.get('Content-Encoding');
         const body = await response.arrayBuffer();
         const headers = applySecHeaders(new Headers(response.headers));
         headers.set('Cache-Control', cc);
 
-        const cacheResp = new Response(body, { status: response.status, headers });
+        const cacheInit = ce
+          ? { status: response.status, headers, encodeBody: 'manual' }
+          : { status: response.status, headers };
+        const cacheResp = new Response(body, cacheInit);
         await caches.default.put(request, cacheResp.clone());
         return cacheResp;
       }
     }
 
     const passHeaders = applySecHeaders(new Headers(response.headers));
-    return new Response(response.body, { status: response.status, headers: passHeaders });
+    const passCe = response.headers.get('Content-Encoding');
+    const passInit = passCe
+      ? { status: response.status, headers: passHeaders, encodeBody: 'manual' }
+      : { status: response.status, headers: passHeaders };
+    return new Response(response.body, passInit);
   }
 };
