@@ -89,7 +89,7 @@ A few things that aren't obvious until you ship one of these and watch it fail:
 - **Use solid-core wire, and don't put any jumper under tension.** Stranded jumpers work fine on the bench. Once the device is framed and mounted, any flex on a stranded contact intermittently fails and the bus wedges. Solid-core, cut to length, with no pull on either end.
 - **Tie 3.3V and GND on both rails, at both ends.** Most full-size breadboards split each power rail in the middle, and even the ones that look continuous can have a single weak contact mid-board. Tying the rails at one end works on the bench, but on the wall a single point of contact is one whisker of flex away from a brown-out. Two jumpers across, one at each end, costs nothing.
 
-These are all "learned from the v1 burnout" notes. A PCB respin fixes most of them at the layout level, which is the eventual plan.
+These are all lessons from this build. A PCB respin would fix most of them at the layout level, but with the gotchas above applied the breadboard build is solid.
 
 ## Features
 

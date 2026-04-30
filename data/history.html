@@ -435,7 +435,7 @@
         html += esc(pretty);
         html += '</div>';
         html += '<div class="period-meta">';
-        if (data && Number.isFinite(data.visitors) && data.visitors > 0) {
+        if (data && Number.isFinite(data.visitors) && data.visitors > 0 && !isCurrent) {
             html += '<span class="period-headline">' + fmtInt(data.visitors) +
                     ' visitor' + (data.visitors === 1 ? '' : 's') + '</span>';
         }
