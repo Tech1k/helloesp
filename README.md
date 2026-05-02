@@ -46,7 +46,7 @@ Without the Worker, the site still runs on LAN via mDNS at `http://helloesp.loca
 |---|---|---|---|---|
 | Inland ESP32-WROOM-32D | 1 | $10 | Microcenter | MCU, 520 KB RAM, dual-core Xtensa. Different silkscreen layout from the DOIT V1, but builds under `esp32doit-devkit-v1` since the firmware addresses pins by GPIO number |
 | BME280 breakout | 1 | $7 | Amazon | Temperature, humidity, barometric pressure |
-| CCS811 breakout | 1 | $14 | Amazon | CO₂, VOC |
+| CCS811 breakout | 1 | $14 | Amazon | eCO₂, VOC |
 | Adafruit DS3231 + CR1220 cell | 1 | $14 | Adafruit | Battery-backed real-time clock, accurate timekeeping across reboots |
 | SSD1306 128×64 OLED | 1 | $3 | Amazon | Rotating info pages with burn-in shift |
 | Adafruit MicroSD breakout | 1 | $8 | Adafruit | SPI SD card adapter |
@@ -59,7 +59,7 @@ Without the Worker, the site still runs on LAN via mDNS at `http://helloesp.loca
 
 **Power:** runs from any 1 A USB-A phone charger. Total draw averages well under 1 W, with brief spikes during WiFi association and SD writes.
 
-**My setup:** USB-C brick → USB-C-to-micro-USB cable → smart plug → UPS. The smart plug gives remote power-cycling for when something wedges; the UPS makes grid blips invisible. Both are optional, but both are part of why "this stays up" is a real claim and not an aspiration.
+**My setup:** USB-C brick → USB-C-to-micro-USB cable → smart plug → UPS. The smart plug gives remote power-cycling for when something wedges, and (with a Shelly Gen 2+ plug) feeds live wattage to the homepage. The UPS makes grid blips invisible. Both are optional, but both are part of why "this stays up" is a real claim and not an aspiration.
 
 ### Wiring
 
@@ -89,7 +89,7 @@ A few things that aren't obvious until you ship one of these and watch it fail:
 - **Use solid-core wire, and don't put any jumper under tension.** Stranded jumpers work fine on the bench. Once the device is framed and mounted, any flex on a stranded contact intermittently fails and the bus wedges. Solid-core, cut to length, with no pull on either end.
 - **Tie 3.3V and GND on both rails, at both ends.** Most full-size breadboards split each power rail in the middle, and even the ones that look continuous can have a single weak contact mid-board. Tying the rails at one end works on the bench, but on the wall a single point of contact is one whisker of flex away from a brown-out. Two jumpers across, one at each end, costs nothing.
 
-These are all lessons from this build. A PCB respin would fix most of them at the layout level, but with the gotchas above applied the breadboard build is solid.
+These are all lessons from this build. A PCB respin would fix most of them at the layout level, but with the gotchas above applied the breadboard build is solid; whether to ever PCB this is an open question.
 
 ## Features
 
@@ -101,7 +101,7 @@ These are all lessons from this build. A PCB respin would fix most of them at th
 - Hall of Fame (lifetime extremes: peak CO₂, temp range, busiest day, longest uptime) and year-over-year monthly visitor deltas on `/history`
 - Visitor country map, request-rate chart, changelog, photo carousel
 - `/console` live feed: last 50 public requests with country flags, updated instantly via SSE
-- Outdoor weather context (via Cloudflare Worker proxy to Open-Meteo)
+- Outdoor weather + air quality context (via Cloudflare Worker proxy to Open-Meteo): conditions with day/night-aware icons, feels-like, dewpoint, wind direction, pressure trend, AQI + PM2.5, atmospheric CO₂, UV index
 - Guestbook with two-level reply threading, tombstone deletes, moderation queue, inline AI translation, rate limiting
 - Snake easter egg with global leaderboard on the 404 / offline / timeout pages: replay-verified server-side, 3-letter initials with content blocklist, idle demo mode
 - Dark mode, responsive, SRI-pinned CDN scripts, no tracking
@@ -133,6 +133,7 @@ These are all lessons from this build. A PCB respin would fix most of them at th
 - Optional HMAC challenge-response device auth
 - Optional SMTP2GO integration for guestbook-pending alerts, dead-man's-switch (device silent >N hours), backup failures, and overdue-backup warnings
 - Optional daily off-site backups to Cloudflare R2 with GFS rotation (7 daily + 4 weekly + 12 monthly + yearly) and sha256 integrity manifests
+- Optional Shelly Gen 2+ smart plug integration for live power monitoring: live-wattage banner on homepage, power chart, energy column in CSV logs, per-period energy on `/history` cards, lifetime cost + CO₂ totals on homepage and `/about` (when grid rates are configured), admin observability panel + self-test entry
 - Security headers, no-cache list for dynamic endpoints
 - RSS feeds (`/changelog.rss`, `/guestbook.rss`), `sitemap.xml`, `robots.txt`, `.well-known/security.txt`
 
@@ -147,6 +148,7 @@ Live badges you can drop into your own README, blog, or status page. All variant
 | Uptime *(default)* | ![](https://helloesp.com/status.svg) | `https://helloesp.com/status.svg` |
 | Visit count | ![](https://helloesp.com/status.svg?metric=visits) | `https://helloesp.com/status.svg?metric=visits` |
 | Current temperature | ![](https://helloesp.com/status.svg?metric=temp) | `https://helloesp.com/status.svg?metric=temp` |
+| Live power draw | ![](https://helloesp.com/status.svg?metric=power) | `https://helloesp.com/status.svg?metric=power` |
 | Online indicator | ![](https://helloesp.com/status.svg?metric=online) | `https://helloesp.com/status.svg?metric=online` |
 
 **Wide stat card** (340×78, multi-line mini-dashboard):

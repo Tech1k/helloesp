@@ -443,6 +443,7 @@
         <a href="#sec-info">Info</a>
         <a href="#sec-health">Health</a>
         <a href="#sec-worker" id="toc-worker">Worker</a>
+        <a href="#sec-shelly" id="toc-shelly">Shelly</a>
         <a href="#sec-moderation">Moderation</a>
         <a href="#sec-selftest">Self-Test</a>
         <a href="#sec-sensorlog">Sensor Log</a>
@@ -488,6 +489,12 @@
     <div class="section" id="sec-worker">
         <div class="section-title">Worker Link</div>
         <div class="card" id="worker-status"><div class="status">Loading...</div></div>
+    </div>
+
+    <!-- shelly smart plug -->
+    <div class="section" id="sec-shelly">
+        <div class="section-title">Shelly Power</div>
+        <div class="card" id="shelly-status"><div class="status">Loading...</div></div>
     </div>
 
     <!-- guestbook -->
@@ -1387,6 +1394,10 @@
             if (tocMaint) tocMaint.style.display = d.worker_configured ? '' : 'none';
             var tocWorker = document.getElementById('toc-worker');
             if (tocWorker) tocWorker.style.display = d.worker_configured ? '' : 'none';
+            var secShelly = document.getElementById('sec-shelly');
+            if (secShelly) secShelly.style.display = d.shelly_configured ? '' : 'none';
+            var tocShelly = document.getElementById('toc-shelly');
+            if (tocShelly) tocShelly.style.display = d.shelly_configured ? '' : 'none';
             var mStatus = document.getElementById('maintenance-status');
             if (mStatus && d.worker_configured && !d.worker_connected) {
                 mStatus.textContent = 'Worker link is down right now. Try again in a few seconds.';
@@ -1443,6 +1454,7 @@
             }
             rssiEl.textContent = rssiLine;
             renderWorkerStatus(d);
+            renderShellyStatus(d);
         };
         xhr.open('GET', '/admin/info', true);
         xhr.send();
@@ -1497,6 +1509,77 @@
                 (ok ? Math.max(0, Math.round(d.worker_last_activity_ms / 1000)) + 's ago' : '\u2014') + '</div></div>';
         html += '<div class="info-item"><div class="info-label">Reconnects since boot</div><div class="info-value">' +
                 esc(d.worker_reconnects) + '</div></div>';
+        html += '</div>';
+        el.innerHTML = html;
+    }
+
+    function shellyStatusLabel(code) {
+        if (code === 0)    return 'never polled';
+        if (code === 200)  return 'OK';
+        if (code === -100) return 'parse error (no apower field)';
+        if (code === -101) return 'value out of sanity range';
+        if (code === -1)   return 'connection refused';
+        if (code === -11)  return 'read timeout';
+        if (code < 0)      return 'transport error ' + code;
+        return 'HTTP ' + code;
+    }
+
+    function fmtAgo(s) {
+        if (s == null || s < 0) return '\u2014';
+        if (s < 60)    return s + 's ago';
+        if (s < 3600)  return Math.round(s / 60) + 'm ago';
+        if (s < 86400) return Math.round(s / 3600) + 'h ago';
+        return Math.round(s / 86400) + 'd ago';
+    }
+
+    function fmtWh(wh) {
+        if (wh == null) return '\u2014';
+        if (wh < 1000) return wh.toFixed(1) + ' Wh';
+        return (wh / 1000).toFixed(2) + ' kWh';
+    }
+
+    function renderShellyStatus(d) {
+        var el = document.getElementById('shelly-status');
+        if (!el) return;
+        if (!d.shelly_configured) {
+            el.innerHTML = '<div style="font-size:12px;color:var(--mid);">Not configured.</div>';
+            return;
+        }
+        // "Healthy" = a successful poll within the staleness window (3 min,
+        // matches firmware SHELLY_STALE_MS) AND no failures stacking up.
+        var okAgo = d.shelly_last_ok_seconds_ago;
+        var fresh = (okAgo != null && okAgo >= 0 && okAgo < 180);
+        var ok = fresh && d.shelly_consecutive_failures === 0;
+        var dot = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px;vertical-align:1px;background:' + (ok ? '#0a8b4a' : '#c06b00') + ';"></span>';
+        var label = ok ? 'Healthy' : (fresh ? 'Recovering' : 'Unreachable');
+        var powW  = (d.shelly_current_power_w != null) ? (d.shelly_current_power_w.toFixed(2) + ' W') : '\u2014';
+
+        var html = '';
+        html += '<div style="font-size:13px;">' + dot + esc(label) + ' \u00b7 ' + esc(powW) + '</div>';
+        html += '<div class="info-grid" style="margin-top:14px;">';
+        html += '<div class="info-item"><div class="info-label">Last successful poll</div><div class="info-value">' +
+                esc(fmtAgo(d.shelly_last_ok_seconds_ago)) + '</div></div>';
+        html += '<div class="info-item"><div class="info-label">Last attempt</div><div class="info-value">' +
+                esc(fmtAgo(d.shelly_last_attempt_seconds_ago)) + '</div></div>';
+        html += '<div class="info-item"><div class="info-label">Last poll status</div><div class="info-value">' +
+                esc(shellyStatusLabel(d.shelly_last_http_status)) + '</div></div>';
+        html += '<div class="info-item"><div class="info-label">Consecutive failures</div><div class="info-value">' +
+                esc(d.shelly_consecutive_failures) + '</div></div>';
+        html += '<div class="info-item"><div class="info-label">Energy today</div><div class="info-value">' +
+                esc(fmtWh(d.shelly_today_wh)) + '</div></div>';
+        html += '<div class="info-item"><div class="info-label">Energy this week</div><div class="info-value">' +
+                esc(fmtWh(d.shelly_week_wh)) + '</div></div>';
+        html += '<div class="info-item"><div class="info-label">Energy this month</div><div class="info-value">' +
+                esc(fmtWh(d.shelly_month_wh)) + '</div></div>';
+        html += '<div class="info-item"><div class="info-label">Energy this year</div><div class="info-value">' +
+                esc(fmtWh(d.shelly_year_wh)) + '</div></div>';
+        html += '<div class="info-item"><div class="info-label">Lifetime energy</div><div class="info-value">' +
+                esc(fmtWh(d.shelly_lifetime_wh)) + '</div></div>';
+        if (d.shelly_cost_per_kwh > 0 && d.shelly_lifetime_wh > 0) {
+            var cost = (d.shelly_lifetime_wh / 1000) * d.shelly_cost_per_kwh;
+            html += '<div class="info-item"><div class="info-label">Lifetime cost</div><div class="info-value">$' +
+                    cost.toFixed(2) + '</div></div>';
+        }
         html += '</div>';
         el.innerHTML = html;
     }

@@ -1,6 +1,7 @@
 # HelloESP Configuration
 # Field max lengths (characters): wifi_ssid=63, wifi_pass=63, admin_user=31,
-# admin_pass=63, worker_url=127, worker_key=127, device_key=127, timezone=47
+# admin_pass=63, worker_url=127, worker_key=127, device_key=127, timezone=47,
+# shelly_url=95
 wifi_ssid=YOUR_SSID
 wifi_pass=YOUR_PASSWORD
 admin_user=admin
@@ -33,3 +34,34 @@ timezone=UTC0
 # that can crash the device under load. /admin is always served direct
 # on LAN regardless. Requires reboot to take effect.
 worker_exclusive=false
+
+# Optional: Shelly Gen 2+ smart plug for power monitoring (the device's
+# wall-side power draw + accumulated energy). The ESP polls the Shelly
+# every 30s for instantaneous wattage and integrates over time to derive
+# Wh totals. Homepage shows a banner with "X W now · Y Wh today · Z Wh
+# total" when configured. Leave blank to disable; the banner just hides.
+#
+# Setup notes:
+#   - Disable LAN RPC auth on the Shelly (Settings -> Security ->
+#     Authentication off) for the integration to work without HTTP
+#     Digest auth, which we don't implement to save firmware flash.
+#   - Reserve the Shelly's IP in your router so it doesn't drift.
+#   - Disable reverse power measurement. The firmware rejects negative
+#     wattage as a sanity-bound failure, so leaving it on makes every
+#     poll register as a Shelly outage.
+#   - Format: full URL with protocol, no trailing slash.
+#   - Example: http://<SHELLY_LAN_IP>/rpc/Switch.GetStatus?id=0
+shelly_url=
+
+# Optional: grid energy cost in $/kWh for cost displays. Decimal value
+# (e.g. 0.13 for 13 cents/kWh). 0 = don't display cost anywhere. Sub-
+# penny daily costs are skipped regardless; cost shows up only in
+# monthly/yearly/lifetime contexts where the number is meaningful.
+cost_per_kwh=0
+
+# Optional: grid carbon intensity in kg CO2/kWh for lifetime carbon
+# displays on the homepage banner and /history records. 0 = don't
+# display CO2 anywhere. Reference values (vary by year + region):
+#   0.485  US Colorado mix (coal/gas/wind blend)
+#   0.386  US national average
+co2_per_kwh=0

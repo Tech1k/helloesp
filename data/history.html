@@ -69,7 +69,7 @@
             gap: 16px;
             row-gap: 10px;
             flex-wrap: wrap;
-            margin-bottom: 14px;
+            margin-bottom: 24px;
         }
         @media (max-width: 480px) {
             .top-links { gap: 14px; font-size: 10px; }
@@ -282,10 +282,12 @@
             padding: 20px 0;
         }
 
+        main > *:last-child { margin-bottom: 0; }
+
         footer {
             max-width: 640px;
             margin: 0 auto;
-            padding: 24px;
+            padding: 32px 24px 32px;
             width: 100%;
             display: flex;
             justify-content: space-between;
@@ -316,9 +318,10 @@
             color: var(--mid);
             opacity: 0.7;
         }
-        .served:not(:empty)::before {
-            content: ' \2022 ';
-            margin: 0 2px;
+        .footer-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
         }
         @media (prefers-color-scheme: dark) {
             :root {
@@ -372,7 +375,10 @@
 </main>
 
 <footer>
-    <span>Made by <a href="https://tech1k.com" target="_blank" rel="noopener">Tech1k</a><span class="served" id="served-time"></span></span>
+    <div class="footer-meta">
+        <span>Made by <a href="https://tech1k.com" target="_blank" rel="noopener">Tech1k</a></span>
+        <span class="served" id="served-time"></span>
+    </div>
     <ul class="footer-links">
         <li><a href="/"><i class="fa-solid fa-house"></i> Home</a></li>
         <li><a href="/guestbook"><i class="fa-solid fa-pen"></i> Guestbook</a></li>
@@ -391,6 +397,31 @@
 
     function fmtInt(n) {
         return (n == null ? 0 : n).toLocaleString();
+    }
+
+    // Formats a Wh value for the period card's Energy cell. Tiered so
+    // tiny values (sub-10 Wh, e.g. early in a freshly-started period)
+    // don't round to a misleading "0 Wh"; mid-range stays clean as
+    // whole-Wh; >=1000 switches to kWh with 2 decimals so the cell
+    // stays readable across the project's full range (~510 Wh/month ->
+    // ~6.1 kWh/year -> however many kWh lifetime).
+    function fmtEnergyCell(wh) {
+        if (!Number.isFinite(wh)) return '—';
+        if (wh < 10)   return wh.toFixed(1) + ' Wh';
+        if (wh < 1000) return wh.toFixed(0) + ' Wh';
+        return (wh / 1000).toFixed(2) + ' kWh';
+    }
+
+    // Returns the period's cost as a "$X.YZ" string when cost_per_kwh
+    // is known AND the cost rounds to at least a penny. Returns null
+    // when either is missing or the cost is sub-penny (avoids "$0.00"
+    // which looks broken on small period totals).
+    var costPerKwh = 0;  // populated from /stats payload on first load
+    function energyCostString(wh) {
+        if (!(costPerKwh > 0) || !Number.isFinite(wh) || wh <= 0) return null;
+        var dollars = (wh / 1000.0) * costPerKwh;
+        if (dollars < 0.005) return null;  // would round to $0.00
+        return '$' + dollars.toFixed(2);
     }
 
     function prettyMonth(label) {
@@ -491,6 +522,20 @@
             html += '<div><div class="cell-label">VOC</div>';
             html += '<div class="cell-value">' + data.voc_ppb.min + '\u2013' + data.voc_ppb.max + ' ppb</div>';
             html += '<div class="cell-sub">avg ' + data.voc_ppb.avg + ' ppb</div></div>';
+        }
+        // Energy used (Phase 2 Shelly integration). Field is omitted from
+        // the period JSON when no Shelly is configured, so this cell
+        // simply doesn't render on installs without power monitoring.
+        // Cost sub-line renders only when the page knows the rate (from
+        // /stats payload's cost_per_kwh field, captured at first stats
+        // load). Sub-penny daily costs are filtered out \u2014 we show cost
+        // only when the period total is at least a penny.
+        if (Number.isFinite(data.energy_wh) && data.energy_wh > 0) {
+            html += '<div><div class="cell-label">Energy</div>';
+            html += '<div class="cell-value">' + fmtEnergyCell(data.energy_wh) + '</div>';
+            var costStr = energyCostString(data.energy_wh);
+            if (costStr) html += '<div class="cell-sub">' + costStr + '</div>';
+            html += '</div>';
         }
         html += '<div><div class="cell-label">Samples</div><div class="cell-value">' + fmtInt(data.samples) + '</div><div class="cell-sub">5-min sensor reads</div></div>';
         html += '</div></div>';
@@ -719,6 +764,15 @@
             row('Coldest recorded',      data.lowest_temp_f,     '\u00b0F',   false);
             row('Busiest day',           data.most_visitors_day, ' visitors', true);
             uptimeRow('Longest uptime',  data.longest_uptime_d);
+            // Capture cost rate from records.json so per-period cards can
+            // render their cost sub-line.
+            if (Number.isFinite(data.cost_per_kwh) && data.cost_per_kwh > 0) {
+                costPerKwh = data.cost_per_kwh;
+            }
+            // Lifetime energy + cost + CO2 lives on the homepage banner
+            // and the /about placard. Not shown here because the records
+            // section is for moment-in-time lifetime EXTREMES, and
+            // accumulators don't fit that semantic.
             if (rows.length === 0) return;
             var html = '<div style="border-top:1px solid var(--faint);">';
             rows.forEach(function(r) {
@@ -843,9 +897,18 @@
             var nav = performance.getEntriesByType('navigation')[0];
             if (!nav) return;
             var ms = Math.round(nav.responseEnd - nav.requestStart);
-            if (ms < 0 || ms > 60000) return;
+            var msValid = (ms >= 0 && ms <= 60000);
+            var totalBytes = nav.transferSize || nav.encodedBodySize || 0;
+            performance.getEntriesByType('resource').forEach(function(r) {
+                totalBytes += r.transferSize || r.encodedBodySize || 0;
+            });
+            var kb = totalBytes > 0 ? Math.round(totalBytes / 1024) + ' KB' : '';
+            var label = '';
+            if (kb && msValid)      label = kb + ' in ' + ms + ' ms';
+            else if (kb)            label = kb;
+            else if (msValid)       label = 'served in ' + ms + ' ms';
             var el = document.getElementById('served-time');
-            if (el) el.textContent = ms + ' ms';
+            if (el && label) el.textContent = label;
         } catch (e) {}
     });
 </script>

@@ -25,8 +25,37 @@ def gzip_html_assets():
     if not os.path.isdir(data_dir):
         return
 
-    entries = sorted(os.listdir(data_dir))
-    html_files = {f for f in entries if f.endswith(".html")}
+    entries = os.listdir(data_dir)
+    html_files = {
+        f for f in entries
+        if f.endswith(".html") and os.path.isfile(os.path.join(data_dir, f))
+    }
+
+    # Sweep before regen so an interrupted prior run is cleaned up even if
+    # THIS run aborts mid-loop. Handles orphan .gz (source HTML deleted) and
+    # stale .tmp (hard-killed run; the atomic-write path normally clears
+    # these via the except handler below).
+    orphans = 0
+    for filename in entries:
+        path = os.path.join(data_dir, filename)
+        if filename.endswith(".html.gz.tmp"):
+            try:
+                os.remove(path)
+                print("gzip: removed stale %s" % filename)
+                orphans += 1
+            except OSError:
+                pass
+            continue
+        if not filename.endswith(".html.gz"):
+            continue
+        if filename[:-3] in html_files:
+            continue
+        try:
+            os.remove(path)
+            print("gzip: removed orphan %s" % filename)
+            orphans += 1
+        except OSError:
+            pass
 
     count = 0
     for filename in sorted(html_files):
@@ -36,9 +65,12 @@ def gzip_html_assets():
             continue
         # Write to .tmp then rename so a Ctrl+C mid-compress doesn't leave a
         # half-written .gz that looks newer than source on the next run.
+        # mtime=0 in the gzip header makes output a deterministic function of input
+        # bytes so anyone rebuilding from the same source gets identical checksums.
         tmp_path = gz_path + ".tmp"
         try:
-            with open(src_path, "rb") as src, gzip.open(tmp_path, "wb", compresslevel=9) as dst:
+            with open(src_path, "rb") as src, open(tmp_path, "wb") as raw, \
+                 gzip.GzipFile(fileobj=raw, mode="wb", compresslevel=9, mtime=0) as dst:
                 shutil.copyfileobj(src, dst)
             os.replace(tmp_path, gz_path)
         except BaseException:
@@ -54,20 +86,6 @@ def gzip_html_assets():
         print("gzip %s -> %s.gz (%d -> %d bytes, %.0f%%)" %
               (filename, filename, src_size, gz_size, pct))
         count += 1
-
-    # Remove orphan .gz files whose source HTML has been deleted.
-    orphans = 0
-    for filename in entries:
-        if not filename.endswith(".html.gz"):
-            continue
-        if filename[:-3] in html_files:
-            continue
-        try:
-            os.remove(os.path.join(data_dir, filename))
-            print("gzip: removed orphan %s" % filename)
-            orphans += 1
-        except OSError:
-            pass
 
     if count == 0 and orphans == 0:
         print("gzip: all .html.gz up to date")

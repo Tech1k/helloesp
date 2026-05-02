@@ -68,7 +68,7 @@
             gap: 16px;
             row-gap: 10px;
             flex-wrap: wrap;
-            margin-bottom: 14px;
+            margin-bottom: 24px;
         }
         @media (max-width: 480px) {
             .top-links { gap: 14px; font-size: 10px; }
@@ -153,6 +153,11 @@
             line-height: 1.75;
             color: var(--ink);
         }
+        .impact p { margin: 0 0 14px 0; }
+        .impact p:last-child { margin-bottom: 0; }
+        /* Power placard reveals only when populated; the gap-collapsing
+           rule above keeps spacing tidy whether the middle paragraph is
+           shown (forker installs hide it) or not. */
 
         .closing {
             margin-top: 32px;
@@ -182,10 +187,12 @@
             font-style: normal;
         }
 
+        main > *:last-child { margin-bottom: 0; }
+
         footer {
             max-width: 640px;
             margin: 0 auto;
-            padding: 24px;
+            padding: 32px 24px 32px;
             width: 100%;
             display: flex;
             justify-content: space-between;
@@ -215,9 +222,10 @@
             color: var(--mid);
             opacity: 0.7;
         }
-        .served:not(:empty)::before {
-            content: ' \2022 ';
-            margin: 0 2px;
+        .footer-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
         }
 
         @media (prefers-color-scheme: dark) {
@@ -264,7 +272,9 @@
     </div>
 
     <div class="impact" id="impact-block">
-        Since this version went live, <strong id="impact-visitors">a few</strong> visitors from <strong id="impact-countries">a handful of</strong> countries have stopped by. People I'll never meet have left guestbook entries. Strangers have starred the repo. That still surprises me.
+        <p>Since this version went live, <strong id="impact-visitors">a few</strong> visitors from <strong id="impact-countries">a handful of</strong> countries have stopped by.</p>
+        <p id="impact-power" style="display:none;"></p>
+        <p>People I'll never meet have left <span id="impact-guestbook">guestbook entries</span>. Strangers have starred the repo. That still surprises me.</p>
     </div>
 
     <div class="prose" style="margin-top:32px;">
@@ -282,7 +292,10 @@
 </main>
 
 <footer>
-    <span>Made by <a href="https://tech1k.com" target="_blank" rel="noopener">Tech1k</a><span class="served" id="served-time"></span></span>
+    <div class="footer-meta">
+        <span>Made by <a href="https://tech1k.com" target="_blank" rel="noopener">Tech1k</a></span>
+        <span class="served" id="served-time"></span>
+    </div>
     <ul class="footer-links">
         <li><a href="/"><i class="fa-solid fa-house"></i> Home</a></li>
         <li><a href="/guestbook"><i class="fa-solid fa-pen"></i> Guestbook</a></li>
@@ -298,25 +311,150 @@
             var nav = performance.getEntriesByType('navigation')[0];
             if (!nav) return;
             var ms = Math.round(nav.responseEnd - nav.requestStart);
-            if (ms < 0 || ms > 60000) return;
+            var msValid = (ms >= 0 && ms <= 60000);
+            var totalBytes = nav.transferSize || nav.encodedBodySize || 0;
+            performance.getEntriesByType('resource').forEach(function(r) {
+                totalBytes += r.transferSize || r.encodedBodySize || 0;
+            });
+            var kb = totalBytes > 0 ? Math.round(totalBytes / 1024) + ' KB' : '';
+            var label = '';
+            if (kb && msValid)      label = kb + ' in ' + ms + ' ms';
+            else if (kb)            label = kb;
+            else if (msValid)       label = 'served in ' + ms + ' ms';
             var el = document.getElementById('served-time');
-            if (el) el.textContent = ms + ' ms';
+            if (el && label) el.textContent = label;
         } catch (e) {}
     });
 
-    // Live impact line: pull current visitor + country totals.
-    // Falls back gracefully to the placeholder copy if /stats is unavailable.
-    fetch('/stats').then(function(r) { return r.ok ? r.json() : null; }).then(function(s) {
+    // Live impact data. Both fetches start in parallel and are shared
+    // across the visitor + power renderers below.
+    var statsPromise = fetch('/stats')
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .catch(function() { return null; });
+    var recordsPromise = fetch('/records.json')
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .catch(function() { return null; });
+
+    // Visitor + country + guestbook counts. Placeholder copy stays visible
+    // when /stats is unreachable so the page never reads as broken. The
+    // guestbook span replaces "guestbook entries" with "N guestbook entries"
+    // (or "1 guestbook entry") when the count is known and > 0.
+    statsPromise.then(function(s) {
         if (!s) return;
         var v = document.getElementById('impact-visitors');
         var c = document.getElementById('impact-countries');
+        var g = document.getElementById('impact-guestbook');
         if (v && Number.isFinite(s.visitors) && s.visitors > 0) {
             v.textContent = s.visitors.toLocaleString();
         }
         if (c && Number.isFinite(s.countries) && s.countries > 0) {
             c.textContent = s.countries;
         }
-    }).catch(function() {});
+        if (g && Number.isFinite(s.guestbook_approved) && s.guestbook_approved > 0) {
+            var n = s.guestbook_approved;
+            // Only the number is bold (matches P1's "<strong>1,247</strong>
+            // visitors" pattern). Singular/plural handled inline.
+            g.innerHTML = '<strong>' + n.toLocaleString() + '</strong> guestbook '
+                          + (n === 1 ? 'entry' : 'entries');
+        }
+    });
+
+    // Power placard. Energy from /stats (live, no records.json staleness
+    // dependency); rates and tracking date from records.json (config that
+    // doesn't belong on every SSE push).
+    Promise.all([statsPromise, recordsPromise]).then(function(results) {
+        var s = results[0];
+        var rec = results[1];
+        var block = document.getElementById('impact-power');
+        if (!block) return;
+
+        // Lifetime energy: prefer /stats (live), fall back to records.json.
+        var wh = null;
+        if (s && Number.isFinite(s.energy_total_wh) && s.energy_total_wh >= 1) {
+            wh = s.energy_total_wh;
+        } else if (rec && Number.isFinite(rec.lifetime_energy_wh) && rec.lifetime_energy_wh >= 1) {
+            wh = rec.lifetime_energy_wh;
+        }
+        if (wh === null) return;
+        var kwh = wh / 1000;
+
+        var costRate = (rec && Number.isFinite(rec.cost_per_kwh)) ? rec.cost_per_kwh : 0;
+        var co2Rate  = (rec && Number.isFinite(rec.co2_per_kwh))  ? rec.co2_per_kwh  : 0;
+        var trackingUnix = (rec && Number.isFinite(rec.tracking_started_unix)) ? rec.tracking_started_unix : 0;
+
+        // "Since DATE, " framing matches paragraph 1's "Since this version
+        // went live, ..." structure. Without it, the power facts inherit
+        // the visitor paragraph's launch-date timeframe, which is wrong
+        // when Shelly was added later than launch.
+        var sincePrefix = '';
+        if (trackingUnix > 0) {
+            var startDate = new Date(trackingUnix * 1000);
+            if (!isNaN(startDate.getTime())) {
+                var dateStr = startDate.toLocaleDateString(undefined, {
+                    year: 'numeric', month: 'long', day: 'numeric'
+                });
+                sincePrefix = 'Since ' + dateStr + ', ';
+            }
+        }
+
+        // Tier energy units: sub-1 kWh shows in Wh, 1+ kWh shows in kWh.
+        var energyText = (wh < 1000)
+            ? '<strong>' + wh.toFixed(0) + ' Wh</strong>'
+            : '<strong>' + kwh.toFixed(0) + ' kWh</strong>';
+
+        // Cumulative cost + CO2 are woven into the lead sentence as
+        // comma-list clauses so the prose flows ("...drawn 20 Wh,
+        // costing $0.003 and emitting 10 g of CO₂"). Each clause is
+        // independently gated; absent ones drop without leaving a
+        // dangling comma. Cost tiered: sub-penny mils, cents 2-dec,
+        // dollars int. CO2 tiered: sub-1 kg grams, 1+ kg integer.
+        var clauses = [];
+        if (costRate > 0) {
+            var dollars = kwh * costRate;
+            if (dollars > 0) {
+                var costStr;
+                if (dollars >= 1)         costStr = '$' + Math.round(dollars);
+                else if (dollars >= 0.01) costStr = '$' + dollars.toFixed(2);
+                else                       costStr = '$' + dollars.toFixed(3);
+                clauses.push('costing <strong>' + costStr + '</strong>');
+            }
+        }
+        if (co2Rate > 0) {
+            var co2_kg = kwh * co2Rate;
+            var co2_g  = co2_kg * 1000;
+            if (co2_g >= 1) {
+                var co2Str = (co2_g < 1000)
+                    ? Math.round(co2_g) + ' g'
+                    : Math.round(co2_kg) + ' kg';
+                clauses.push('emitting <strong>' + co2Str + '</strong> of CO₂');
+            }
+        }
+
+        // Build the cumulative sentence. "this site" matches paragraph 2's
+        // "This site lives on a single computer chip" voice; lowercase
+        // when continuing after sincePrefix's trailing comma+space.
+        var lead = sincePrefix
+            ? sincePrefix + 'this site has drawn '
+            : 'This site has drawn ';
+        var sentence = lead + energyText + ' of electricity';
+        if (clauses.length === 1) {
+            sentence += ', ' + clauses[0];
+        } else if (clauses.length === 2) {
+            sentence += ', ' + clauses[0] + ' and ' + clauses[1];
+        }
+        sentence += '.';
+        var html = sentence;
+
+        // Present-tense closer: current draw + comparison. Single sentence
+        // for cumulative facts above flows better as prose; the present-
+        // tense reveal lands better as separate fragments.
+        if (s && typeof s.power_w === 'number' && s.power_w > 0) {
+            html += ' Currently drawing <strong>' + Math.round(s.power_w) + ' W</strong>. About what a hallway nightlight uses.';
+        }
+
+        block.innerHTML = html;
+        block.style.display = '';
+    });
 </script>
 
 </body>

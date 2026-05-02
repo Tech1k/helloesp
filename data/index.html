@@ -60,6 +60,15 @@
             min-height: 100vh;
             display: grid;
             grid-template-rows: 1fr auto;
+            /* minmax(0, 1fr) caps the implicit grid column at viewport width.
+               Without this, the column auto-sizes to its widest descendant's
+               max-content, and Chart.js sets the country-map canvas's HTML
+               width attribute to backing-store pixels (CSS_w × DPR ≈ 840+ on
+               retina mobile) the moment its wrapper becomes visible. That
+               intrinsic width propagates up through main and pushes the
+               page wider than viewport. The minmax floor (0, not auto)
+               allows the column to ignore intrinsic mins entirely. */
+            grid-template-columns: minmax(0, 1fr);
         }
 
         main {
@@ -78,7 +87,7 @@
             gap: 16px;
             row-gap: 10px;
             flex-wrap: wrap;
-            margin-bottom: 14px;
+            margin-bottom: 24px;
         }
         @media (max-width: 480px) {
             .top-links { gap: 14px; font-size: 10px; }
@@ -169,6 +178,24 @@
             border-bottom: none;
             padding: 12px;
             background: var(--bg);
+            /* Same canvas-overflow protection as .chart-wrap below: prevents
+               the canvas's intrinsic 300x150 from briefly pushing the parent
+               wider on mobile when the country-map first reveals.
+               box-sizing + max-width:100% on this block keeps the wrapper
+               from ever exceeding its column even when the canvas inside
+               gets a wider HTML width attribute from Chart.js (backing-
+               store size = CSS px × device pixel ratio). */
+            overflow: hidden;
+            box-sizing: border-box;
+            max-width: 100%;
+        }
+        .map-wrap canvas {
+            /* width:100% (not max-width) forces layout width to match
+               parent regardless of the canvas's HTML width attribute,
+               which Chart.js sets to backing-store pixels on retina. */
+            width: 100%;
+            height: auto;
+            display: block;
         }
 
         .countries-list {
@@ -268,6 +295,31 @@
             50%      { opacity: 1; }
         }
 
+        /* Power banner (Shelly smart-plug integration). Single-line strip
+           between the stats grid and the outdoor section. Hidden by default;
+           the .live class is added when the stats payload includes a
+           power_w field, removed when it goes stale. Styled to read as
+           project meta-info ("here's the cost of running this") rather
+           than another sensor reading. */
+        .power-banner {
+            display: none;
+            border-top: 1px solid var(--faint);
+            border-bottom: 1px solid var(--faint);
+            padding: 14px 18px;
+            margin-bottom: 48px;
+            font-size: 12px;
+            color: var(--mid);
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+            line-height: 1.6;
+        }
+        .power-banner.live { display: flex; }
+        .power-banner strong { color: var(--ink); font-weight: 500; }
+        .power-banner .power-icon { color: #f59e0b; margin-right: 4px; }
+        .power-banner .power-sep { opacity: 0.4; margin: 0 2px; }
+        .power-banner .power-label { color: var(--mid); }
+
         .outdoor { margin-bottom: 48px; }
         .outdoor-head {
             display: flex;
@@ -311,6 +363,21 @@
             font-size: 15px;
             font-weight: 500;
         }
+        .outdoor-cell .cell-sub {
+            font-size: 11px;
+            color: var(--mid);
+            margin-top: 2px;
+        }
+        /* US AQI category colors. EPA breakpoints: 0-50 good, 51-100
+           moderate, 101-150 unhealthy for sensitive groups, 151-200
+           unhealthy, 201-300 very unhealthy, 301+ hazardous. Tones tuned
+           to be readable on the off-white site bg without screaming. */
+        .aqi-good          { color: #2e8540; }
+        .aqi-moderate      { color: #9a7b00; }
+        .aqi-usg           { color: #b85d00; }
+        .aqi-unhealthy     { color: #b32d2e; }
+        .aqi-veryunhealthy { color: #6f3f96; }
+        .aqi-hazardous     { color: #5a1e10; }
         .outdoor-attribution {
             font-size: 10px;
             color: var(--mid);
@@ -507,6 +574,23 @@
             padding: 20px;
             position: relative;
             height: 220px;
+            /* Prevent the canvas's intrinsic 300x150 default from briefly
+               pushing the parent wider on narrow viewports between
+               display:none -> display:block and Chart.js's responsive
+               resize. Without overflow:hidden the page width would jump
+               on mobile when the chart first renders. box-sizing +
+               max-width:100% prevent the wrapper from exceeding its
+               column when canvas backing-store pixels exceed CSS width. */
+            overflow: hidden;
+            box-sizing: border-box;
+            max-width: 100%;
+        }
+        .chart-wrap canvas {
+            /* width:100% (not max-width) forces layout width to match
+               parent; max-height stays since chart-wrap has fixed 220px. */
+            width: 100%;
+            max-height: 100%;
+            display: block;
         }
 
         .chart-empty {
@@ -651,10 +735,12 @@
 
         /* footer */
 
+        main > *:last-child { margin-bottom: 0; }
+
         footer {
             max-width: 640px;
             margin: 0 auto;
-            padding: 24px;
+            padding: 32px 24px 32px;
             width: 100%;
             display: flex;
             justify-content: space-between;
@@ -686,9 +772,15 @@
             color: var(--mid);
             opacity: 0.7;
         }
-        .served:not(:empty)::before {
-            content: ' \2022 ';
-            margin: 0 2px;
+        /* footer-meta stacks "Made by Tech1k" and "23 KB in 47 ms"
+           vertically on the left side of the footer; nav links sit
+           on the right. On mobile, flex-wrap drops nav to its own
+           line below. served-time no longer needs the inline bullet
+           separator since it's a standalone line now. */
+        .footer-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
         }
         /* dark mode */
 
@@ -715,6 +807,15 @@
             .live-dot    { background: #4fc08d; }
             .live-dot.stale { background: var(--faint); }
             .outdoor-card { background: #1a1918; }
+            /* AQI category colors retuned for dark bg: light-mode hues
+               lose contrast on near-black, need brighter saturated tones
+               to remain readable against the outdoor-card background. */
+            .aqi-good          { color: #5cd47e; }
+            .aqi-moderate      { color: #e5c44a; }
+            .aqi-usg           { color: #f08c3e; }
+            .aqi-unhealthy     { color: #ef5b5d; }
+            .aqi-veryunhealthy { color: #b585d8; }
+            .aqi-hazardous     { color: #d97560; }
         }
 
         @media (max-width: 640px) {
@@ -861,6 +962,19 @@
         <i class="fa-solid fa-circle-info" style="margin-right:6px;"></i>Sensors are inside a sealed frame, so readings reflect the enclosure, not the room.
     </p>
 
+    <div class="power-banner" id="power-banner" role="status">
+        <span class="power-icon"><i class="fa-solid fa-bolt"></i></span>
+        <span><strong id="power-now">—</strong> <span class="power-label">from the wall</span></span>
+        <span class="power-sep">·</span>
+        <span><strong id="power-today">—</strong> <span class="power-label">today</span></span>
+        <span class="power-sep">·</span>
+        <span><strong id="power-total">—</strong> <span class="power-label">total</span></span>
+        <span class="power-sep" id="power-cost-sep" style="display:none;">·</span>
+        <span id="power-cost-wrap" style="display:none;"><strong id="power-cost"></strong></span>
+        <span class="power-sep" id="power-co2-sep" style="display:none;">·</span>
+        <span id="power-co2-wrap" style="display:none;"><strong id="power-co2"></strong></span>
+    </div>
+
     <section class="outdoor" id="outdoor-section" style="display:none;">
         <div class="outdoor-head">
             <div class="section-label"><i class="fa-solid fa-cloud-sun"></i> Outdoor</div>
@@ -872,10 +986,14 @@
                 <span class="outdoor-condition-text" id="outdoor-condition-text">-</span>
             </div>
             <div class="outdoor-grid">
-                <div class="outdoor-cell"><div class="cell-label">Temperature</div><div class="cell-value" id="outdoor-temp">-</div></div>
-                <div class="outdoor-cell"><div class="cell-label">Humidity</div><div class="cell-value" id="outdoor-humidity">-</div></div>
-                <div class="outdoor-cell"><div class="cell-label">Wind</div><div class="cell-value" id="outdoor-wind">-</div></div>
-                <div class="outdoor-cell"><div class="cell-label">Pressure</div><div class="cell-value" id="outdoor-pressure">-</div></div>
+                <div class="outdoor-cell"><div class="cell-label">Temperature</div><div class="cell-value" id="outdoor-temp">-</div><div class="cell-sub" id="outdoor-feels-like" style="display:none;"></div></div>
+                <div class="outdoor-cell"><div class="cell-label">Humidity</div><div class="cell-value" id="outdoor-humidity">-</div><div class="cell-sub" id="outdoor-dewpoint" style="display:none;"></div></div>
+                <div class="outdoor-cell"><div class="cell-label">Wind</div><div class="cell-value" id="outdoor-wind">-</div><div class="cell-sub" id="outdoor-wind-dir" style="display:none;"></div></div>
+                <div class="outdoor-cell"><div class="cell-label">Pressure</div><div class="cell-value" id="outdoor-pressure">-</div><div class="cell-sub" id="outdoor-pressure-trend" style="display:none;"></div></div>
+                <div class="outdoor-cell" id="outdoor-aqi-cell" style="display:none;"><div class="cell-label">Air Quality (AQI)</div><div class="cell-value"><span id="outdoor-aqi"></span></div><div class="cell-sub" id="outdoor-aqi-label"></div></div>
+                <div class="outdoor-cell" id="outdoor-pm-cell" style="display:none;"><div class="cell-label">PM2.5</div><div class="cell-value" id="outdoor-pm">-</div></div>
+                <div class="outdoor-cell" id="outdoor-co2-cell" style="display:none;"><div class="cell-label">CO&#x2082;</div><div class="cell-value" id="outdoor-co2">-</div><div class="cell-sub" id="outdoor-co2-label"></div></div>
+                <div class="outdoor-cell" id="outdoor-uv-cell" style="display:none;"><div class="cell-label">UV Index</div><div class="cell-value" id="outdoor-uv">-</div><div class="cell-sub" id="outdoor-uv-label"></div></div>
             </div>
             <div class="outdoor-attribution">Data from <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a> &middot; Refreshed hourly</div>
         </div>
@@ -926,6 +1044,7 @@
             <button class="chart-btn" data-metric="co2_ppm" data-label="eCO₂ (ppm)" style="text-transform: none !important;" title="Equivalent CO₂ estimated from VOC levels (CCS811 MOX sensor, not a true NDIR reading).">eCO&#x2082;</button>
             <button class="chart-btn" data-metric="voc_ppb" data-label="VOC (ppb)">VOC</button>
             <button class="chart-btn" data-metric="requests_interval" data-label="Requests / 5 min">Requests</button>
+            <button class="chart-btn" data-metric="power_w" data-label="Power (W from wall)">Power</button>
             <button class="chart-btn" data-metric="rssi" data-label="Signal (dBm)">Signal</button>
             <button class="chart-btn" data-metric="memory_percent" data-label="Memory (%)">Memory</button>
             <button class="chart-btn" data-metric="cpu_temp_c" data-label="CPU Temp (°C)">CPU Temp</button>
@@ -977,6 +1096,10 @@
     <div class="log">
         <div class="section-label"><i class="fa-solid fa-list"></i> Changelog <a class="section-rss" href="/changelog.rss" aria-label="Subscribe to changelog via RSS" title="Subscribe via RSS"><i class="fa-solid fa-rss"></i></a></div>
         <div class="log-entry">
+            <div class="log-date">May 1, 2026</div>
+            <div class="log-text">The site can now track its own electricity use with an optional smart plug. The homepage shows live wattage and lifetime energy, plus cost and CO&#x2082; if you set your grid rate. Outdoor weather card grew with air quality, UV index, atmospheric CO&#x2082;, dewpoint, and pressure trend, and the icons now match the time of day.</div>
+        </div>
+        <div class="log-entry">
             <div class="log-date">Apr 29, 2026</div>
             <div class="log-text">Added a DS3231 real-time clock module on the breadboard. Boot logs and timestamps are correct right away instead of being wrong for a few seconds until NTP syncs. History page got a year-grouped collapsible layout that stays readable as archives pile up over time. New <a href="/about">/about</a> page with the short version of the project story for casual visitors.</div>
         </div>
@@ -984,7 +1107,7 @@
             <div class="log-date">Apr 27, 2026</div>
             <div class="log-text">Snake now has a global leaderboard. Top 10 with 3-letter initials, shared across the 404, offline, and timeout pages. Anti-cheat is server-side: the worker hands out a seed at game start, you submit your move log on game over, and the worker replays it to confirm the score. Only way onto the board is actually playing.</div>
         </div>
-        <div class="log-entry">
+        <div class="log-entry log-older hidden">
             <div class="log-date">Apr 26, 2026</div>
             <div class="log-text">Snake added to the 404, offline, and timeout fallback pages. WebSocket reconnect path is simpler now and recovers faster from transient drops.</div>
         </div>
@@ -1042,7 +1165,10 @@
 </main>
 
 <footer>
-    <span>Made by <a href="https://tech1k.com" target="_blank" rel="noopener">Tech1k</a><span class="served" id="served-time"></span></span>
+    <div class="footer-meta">
+        <span>Made by <a href="https://tech1k.com" target="_blank" rel="noopener">Tech1k</a></span>
+        <span class="served" id="served-time"></span>
+    </div>
     <ul class="footer-links">
         <li><a href="/guestbook"><i class="fa-solid fa-pen"></i> Guestbook</a></li>
         <li><a href="/history"><i class="fa-solid fa-clock-rotate-left"></i> History</a></li>
@@ -1074,10 +1200,28 @@
         try {
             var nav = performance.getEntriesByType('navigation')[0];
             if (!nav) return;
+            // Combined-phrase form ("23 KB in 47 ms") instead of separate
+            // labeled metrics. Compact enough to fit alongside "Made by
+            // Tech1k" on desktop without forcing a footer wrap, and the
+            // word order ("size in time") self-explains the units. Falls
+            // back gracefully if either metric is unavailable.
             var ms = Math.round(nav.responseEnd - nav.requestStart);
-            if (ms < 0 || ms > 60000) return;
+            var msValid = (ms >= 0 && ms <= 60000);
+            // Sum the page's own bytes plus every sub-resource. Cached
+            // resources show transferSize === 0 (didn't traverse the wire);
+            // fall back to encodedBodySize so the number reflects "what
+            // this page would weigh fresh."
+            var totalBytes = nav.transferSize || nav.encodedBodySize || 0;
+            performance.getEntriesByType('resource').forEach(function(r) {
+                totalBytes += r.transferSize || r.encodedBodySize || 0;
+            });
+            var kb = totalBytes > 0 ? Math.round(totalBytes / 1024) + ' KB' : '';
+            var label = '';
+            if (kb && msValid)      label = kb + ' in ' + ms + ' ms';
+            else if (kb)            label = kb;
+            else if (msValid)       label = 'served in ' + ms + ' ms';
             var el = document.getElementById('served-time');
-            if (el) el.textContent = ms + ' ms';
+            if (el && label) el.textContent = label;
         } catch (e) {}
     });
 
@@ -1203,18 +1347,44 @@
     }
 
     // WMO weather code -> condition text + icon (Open-Meteo reference)
-    function wmoIcon(c) {
-        if (c === 0) return '\u2600';                    // ☀
-        if (c >= 1 && c <= 2) return '\u26C5';           // ⛅
-        if (c === 3) return '\u2601';                    // ☁
-        if (c === 45 || c === 48) return '\uD83C\uDF2B'; // 🌫
-        if (c >= 51 && c <= 57) return '\uD83C\uDF26';   // 🌦
-        if (c >= 61 && c <= 67) return '\uD83C\uDF27';   // 🌧
-        if (c >= 71 && c <= 77) return '\uD83C\uDF28';   // 🌨
-        if (c >= 80 && c <= 82) return '\uD83C\uDF26';   // 🌦
-        if (c >= 85 && c <= 86) return '\uD83C\uDF28';   // 🌨
-        if (c >= 95 && c <= 99) return '\u26C8';         // ⛈
-        return '\uD83C\uDF21';                           // 🌡
+    // isDay defaults to true (undefined treated as day) for back-compat
+    // with payloads predating the is_day field. Only clear and partly-
+    // cloudy codes have meaningful night variants in plain emoji; rain/
+    // snow/fog/thunder look the same regardless of time of day.
+    function wmoIcon(c, isDay) {
+        var __night = (isDay === false);
+        if (c === 0) return __night ? '\uD83C\uDF19\uFE0F' : '\u2600\uFE0F';        // 🌙 / ☀
+        if (c >= 1 && c <= 2) return __night ? '\u2601\uFE0F' : '\u26C5\uFE0F';      // ☁ / ⛅
+        if (c === 3) return '\u2601\uFE0F';                    // ☁
+        if (c === 45 || c === 48) return '\uD83C\uDF2B\uFE0F'; // 🌫
+        if (c >= 51 && c <= 57) return '\uD83C\uDF26\uFE0F';   // 🌦
+        if (c >= 61 && c <= 67) return '\uD83C\uDF27\uFE0F';   // 🌧
+        if (c >= 71 && c <= 77) return '\uD83C\uDF28\uFE0F';   // 🌨
+        if (c >= 80 && c <= 82) return '\uD83C\uDF26\uFE0F';   // 🌦
+        if (c >= 85 && c <= 86) return '\uD83C\uDF28\uFE0F';   // 🌨
+        if (c >= 95 && c <= 99) return '\u26C8\uFE0F';         // ⛈
+        return '\uD83C\uDF21\uFE0F';                           // 🌡
+    }
+    // WHO UV index categories. Pure label text, no urgency colors here
+    // since UV ramps gradually with sun height and a baseline reading
+    // doesn't need attention-grabbing styling like AQI does.
+    function uvBucket(uv) {
+        if (uv < 3)   return 'low';
+        if (uv < 6)   return 'moderate';
+        if (uv < 8)   return 'high';
+        if (uv < 11)  return 'very high';
+        return 'extreme';
+    }
+    // US EPA AQI category breakpoints. Returns label text + CSS class for
+    // color coding the displayed number. Sensitive-groups bucket uses a
+    // shorter "Unhealthy for sensitive" label so the sub-line wraps cleanly.
+    function aqiBucket(aqi) {
+        if (aqi <= 50)  return { label: 'Good',                    cls: 'aqi-good' };
+        if (aqi <= 100) return { label: 'Moderate',                cls: 'aqi-moderate' };
+        if (aqi <= 150) return { label: 'Unhealthy for sensitive', cls: 'aqi-usg' };
+        if (aqi <= 200) return { label: 'Unhealthy',               cls: 'aqi-unhealthy' };
+        if (aqi <= 300) return { label: 'Very unhealthy',          cls: 'aqi-veryunhealthy' };
+        return                 { label: 'Hazardous',               cls: 'aqi-hazardous' };
     }
     function wmoText(c) {
         if (c === 0) return 'Clear';
@@ -1360,20 +1530,206 @@
                     el = document.getElementById('outdoor-updated');
                     if (el) el.textContent = agoStr(o.age_ms);
                     el = document.getElementById('outdoor-icon');
-                    if (el) el.textContent = wmoIcon(o.weather_code);
+                    if (el) el.textContent = wmoIcon(o.weather_code, o.is_day);
                     el = document.getElementById('outdoor-condition-text');
                     if (el) el.textContent = wmoText(o.weather_code);
                     el = document.getElementById('outdoor-temp');
                     if (el) el.textContent = Math.round(o.temp_f * 10) / 10 + '\u00b0F';
+                    // Feels-like sub-line. Hide when missing (older worker
+                    // payloads predate the field) or when it differs from
+                    // the air temp by less than 1\u00b0F (no narrative value).
+                    el = document.getElementById('outdoor-feels-like');
+                    if (el) {
+                        if (typeof o.feels_like_f === 'number'
+                            && Math.abs(o.feels_like_f - o.temp_f) >= 1.0) {
+                            el.textContent = 'feels ' + Math.round(o.feels_like_f) + '\u00b0F';
+                            el.style.display = '';
+                        } else {
+                            el.style.display = 'none';
+                        }
+                    }
                     el = document.getElementById('outdoor-humidity');
                     if (el) el.textContent = Math.round(o.humidity) + '%';
+                    // Dewpoint sub-line: tells the actual moisture story
+                    // since RH is temperature-dependent and misleading.
+                    var dewEl = document.getElementById('outdoor-dewpoint');
+                    if (dewEl) {
+                        if (typeof o.dewpoint_f === 'number') {
+                            dewEl.textContent = 'Dew ' + Math.round(o.dewpoint_f) + '\u00b0F';
+                            dewEl.style.display = '';
+                        } else {
+                            dewEl.style.display = 'none';
+                        }
+                    }
                     el = document.getElementById('outdoor-wind');
                     if (el) el.textContent = Math.round(o.wind_mph) + ' mph';
+                    // Wind direction as sub-line. Uses "from" because
+                    // meteorological wind direction = where it comes
+                    // from (not where it's headed), which trips up
+                    // viewers who aren't aviators/sailors. Hidden when
+                    // wind is calm (0 mph) since direction is meaningless.
+                    var dirEl = document.getElementById('outdoor-wind-dir');
+                    if (dirEl) {
+                        if (typeof o.wind_deg === 'number'
+                            && typeof o.wind_mph === 'number'
+                            && o.wind_mph > 0) {
+                            // 8-point compass; index by rounding to nearest 45\u00b0
+                            var dirs = ['N','NE','E','SE','S','SW','W','NW'];
+                            dirEl.textContent = 'from ' + dirs[Math.round(o.wind_deg / 45) % 8];
+                            dirEl.style.display = '';
+                        } else {
+                            dirEl.style.display = 'none';
+                        }
+                    }
                     el = document.getElementById('outdoor-pressure');
                     // convert hPa to inHg: 1 hPa = 0.02953 inHg
                     if (el) el.textContent = (o.pressure_hpa * 0.02953).toFixed(2) + ' inHg';
+                    // Pressure trend computed worker-side over the hourly
+                    // refresh interval (Rising/Falling/Steady, 1 hPa
+                    // threshold). Older worker payloads pre-this-deploy
+                    // won't have the field, so the sub-line stays hidden.
+                    var pressureTrendEl = document.getElementById('outdoor-pressure-trend');
+                    if (pressureTrendEl) {
+                        if (typeof o.pressure_trend === 'string' && o.pressure_trend.length > 0) {
+                            pressureTrendEl.textContent = o.pressure_trend;
+                            pressureTrendEl.style.display = '';
+                        } else {
+                            pressureTrendEl.style.display = 'none';
+                        }
+                    }
+                    // Air quality cells (Open-Meteo Air Quality API; piggy-
+                    // backs on the same outdoor block but is independently
+                    // gated, so each cell only renders when its field is
+                    // present in the payload).
+                    var aqiCell = document.getElementById('outdoor-aqi-cell');
+                    if (aqiCell) {
+                        if (typeof o.us_aqi === 'number') {
+                            var bucket = aqiBucket(o.us_aqi);
+                            var aqiNum = document.getElementById('outdoor-aqi');
+                            aqiNum.textContent = Math.round(o.us_aqi);
+                            aqiNum.className = bucket.cls;
+                            document.getElementById('outdoor-aqi-label').textContent = bucket.label;
+                            aqiCell.style.display = '';
+                        } else {
+                            aqiCell.style.display = 'none';
+                        }
+                    }
+                    var pmCell = document.getElementById('outdoor-pm-cell');
+                    if (pmCell) {
+                        if (typeof o.pm2_5 === 'number') {
+                            // µg/m³, one decimal: typical urban range is
+                            // single digits to ~30; wildfire days hit 100+.
+                            document.getElementById('outdoor-pm').textContent =
+                                o.pm2_5.toFixed(1) + ' µg/m³';
+                            pmCell.style.display = '';
+                        } else {
+                            pmCell.style.display = 'none';
+                        }
+                    }
+                    var co2Cell = document.getElementById('outdoor-co2-cell');
+                    if (co2Cell) {
+                        if (typeof o.co2_ppm === 'number') {
+                            // Atmospheric CO2, integer ppm. Global background
+                            // is ~420 ppm and rising ~2-3 ppm/year; varies
+                            // ~5 ppm regionally based on local sources/sinks.
+                            // Reuse co2Quality() so the outdoor cell gets the
+                            // same Good/Moderate/Poor label pattern as the
+                            // indoor stats card; outdoor will essentially
+                            // always read "Good" at atmospheric baseline.
+                            document.getElementById('outdoor-co2').textContent =
+                                Math.round(o.co2_ppm) + ' ppm';
+                            document.getElementById('outdoor-co2-label').textContent =
+                                co2Quality(o.co2_ppm);
+                            co2Cell.style.display = '';
+                        } else {
+                            co2Cell.style.display = 'none';
+                        }
+                    }
+                    var uvCell = document.getElementById('outdoor-uv-cell');
+                    if (uvCell) {
+                        if (typeof o.uv_index === 'number') {
+                            // 0-11+ scale; one decimal preserves the
+                            // sub-integer detail Open-Meteo provides
+                            // without overstating precision.
+                            document.getElementById('outdoor-uv').textContent =
+                                o.uv_index.toFixed(1);
+                            document.getElementById('outdoor-uv-label').textContent =
+                                uvBucket(o.uv_index);
+                            uvCell.style.display = '';
+                        } else {
+                            uvCell.style.display = 'none';
+                        }
+                    }
                 } else {
                     if (outdoor) outdoor.style.display = 'none';
+                }
+
+                // Power banner (Shelly smart-plug integration; absent if
+                // shelly_url isn't configured or the poll has gone stale).
+                var pb = document.getElementById('power-banner');
+                if (pb && typeof s.power_w === 'number') {
+                    var fmtW = function(w) {
+                        if (!isFinite(w)) return '—';
+                        return w.toFixed(1) + ' W';
+                    };
+                    var fmtWh = function(wh) {
+                        if (!isFinite(wh)) return '—';
+                        if (wh < 10)   return wh.toFixed(1) + ' Wh';
+                        if (wh < 1000) return wh.toFixed(0) + ' Wh';
+                        return (wh / 1000).toFixed(2) + ' kWh';
+                    };
+                    document.getElementById('power-now').textContent   = fmtW(s.power_w);
+                    document.getElementById('power-today').textContent = fmtWh(s.energy_today_wh);
+                    document.getElementById('power-total').textContent = fmtWh(s.energy_total_wh);
+                    // Lifetime cost segment. Tiered precision so every
+                    // magnitude reads honestly, matching the about page
+                    // placard: sub-penny → mils ("$0.002"), cents range
+                    // → 2 decimals ("$0.04"), dollars → integer ("$32").
+                    var costSep  = document.getElementById('power-cost-sep');
+                    var costWrap = document.getElementById('power-cost-wrap');
+                    if (lifetimeCostPerKwh > 0 && Number.isFinite(s.energy_total_wh)) {
+                        var dollars = (s.energy_total_wh / 1000) * lifetimeCostPerKwh;
+                        if (dollars > 0) {
+                            var costStr;
+                            if (dollars >= 1)         costStr = '$' + Math.round(dollars);
+                            else if (dollars >= 0.01) costStr = '$' + dollars.toFixed(2);
+                            else                       costStr = '$' + dollars.toFixed(3);
+                            document.getElementById('power-cost').textContent = costStr;
+                            costSep.style.display = '';
+                            costWrap.style.display = '';
+                        } else {
+                            costSep.style.display = 'none';
+                            costWrap.style.display = 'none';
+                        }
+                    } else if (costSep) {
+                        costSep.style.display = 'none';
+                        costWrap.style.display = 'none';
+                    }
+                    // Lifetime CO2 segment. Tiered: sub-1 kg shows in
+                    // grams ("141 g CO₂"), 1+ kg shows integer ("4 kg CO₂").
+                    var co2Sep  = document.getElementById('power-co2-sep');
+                    var co2Wrap = document.getElementById('power-co2-wrap');
+                    if (lifetimeCo2PerKwh > 0 && Number.isFinite(s.energy_total_wh)) {
+                        var co2_kg = (s.energy_total_wh / 1000) * lifetimeCo2PerKwh;
+                        var co2_g  = co2_kg * 1000;
+                        if (co2_g >= 1) {
+                            var co2Str = (co2_g < 1000)
+                                ? Math.round(co2_g) + ' g CO₂'
+                                : Math.round(co2_kg) + ' kg CO₂';
+                            document.getElementById('power-co2').textContent = co2Str;
+                            co2Sep.style.display = '';
+                            co2Wrap.style.display = '';
+                        } else {
+                            co2Sep.style.display = 'none';
+                            co2Wrap.style.display = 'none';
+                        }
+                    } else if (co2Sep) {
+                        co2Sep.style.display = 'none';
+                        co2Wrap.style.display = 'none';
+                    }
+                    pb.classList.add('live');
+                } else if (pb) {
+                    pb.classList.remove('live');
                 }
 
             lastStatsAt = Date.now();
@@ -1648,11 +2004,26 @@
     // substat. >=1.0 rounds to whole days. Old records stored as ints
     // ("longest_uptime_d": {"value": 5, ...}) round-trip cleanly through
     // parseFloat.
+    // Lifetime cost + CO2 rates captured from records.json on first load
+    // and reused on every subsequent banner render. Banner segments hide
+    // when the rate is 0 (forker default) so we don't render orphan dots.
+    var lifetimeCostPerKwh = 0;
+    var lifetimeCo2PerKwh  = 0;
+    // loadBestUptime fetches /records.json and populates: (1) the
+    // lifetime cost + CO2 rates used by the homepage banner, (2) the
+    // longest-uptime "Best" substat. Deferred ~1200ms post-load so it
+    // doesn't pile onto the earlier on-load fetches.
     setTimeout(function loadBestUptime() {
         fetch('/records.json').then(function(r) {
             return r.ok ? r.json() : null;
         }).then(function(data) {
             if (!data) return;
+            if (Number.isFinite(data.cost_per_kwh) && data.cost_per_kwh > 0) {
+                lifetimeCostPerKwh = data.cost_per_kwh;
+            }
+            if (Number.isFinite(data.co2_per_kwh) && data.co2_per_kwh > 0) {
+                lifetimeCo2PerKwh = data.co2_per_kwh;
+            }
             var el = document.getElementById('uptime_sub');
             if (!el) return;
             var best = data.longest_uptime_d;
@@ -1833,7 +2204,9 @@
 
     // timestamp,cpu_temp_c,cpu_temp_f,memory_percent,temperature_c,temperature_f,
     // humidity_percent,pressure_hpa,altitude_ft,co2_ppm,voc_ppb,
-    // heat_index_c,heat_index_f,rssi,sd_free_mb,requests_interval
+    // heat_index_c,heat_index_f,rssi,sd_free_mb,requests_interval,power_w
+    // (power_w added in sensor-log v2; v1 daily files have 16 columns and
+    // no power data; chart code tolerates the gap as missing values.)
     var COL = {
         timestamp:          0,
         cpu_temp_c:         1,
@@ -1850,7 +2223,8 @@
         heat_index_f:       12,
         rssi:               13,
         sd_free_mb:         14,
-        requests_interval:  15
+        requests_interval:  15,
+        power_w:            16
     };
 
     function parseCSV(text) {
@@ -1859,6 +2233,9 @@
         var rows = [];
         for (var i = 1; i < lines.length; i++) {
             var cols = lines[i].split(',');
+            // v1 (original) schema = 16 cols; v2 schema = 17 cols (adds
+            // power_w). Accept both; missing power_w is parsed as NaN
+            // later, which Chart.js renders as a gap rather than zero.
             if (cols.length < 16) continue;
             rows.push(cols.map(function(c) { return c.trim(); }));
         }

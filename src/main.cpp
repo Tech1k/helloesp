@@ -23,10 +23,11 @@
 #include "mbedtls/sha256.h"
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
+#include <HTTPClient.h>
 #include <atomic>
 
 // Version
-#define FIRMWARE_VERSION "1.2"
+#define FIRMWARE_VERSION "1.3"
 
 // Pins
 #define SD_CS    5
@@ -45,6 +46,21 @@ char cfgWorkerUrl[128] = "";
 char cfgWorkerKey[128] = "";
 char cfgDeviceKey[128] = "";
 char cfgTimezone[48]   = "UTC0";
+// Optional Shelly Gen 2+ smart plug for power monitoring. Polled every
+// SHELLY_POLL_INTERVAL_MS for `apower` (W); we integrate ourselves over
+// time to derive Wh totals. Leave blank to disable; the homepage's
+// power banner simply hides if unset. Disable LAN auth on the Shelly
+// (Settings → Security) for the integration to work without Digest auth.
+char cfgShellyUrl[96]  = "";
+// Optional grid energy cost in $/kWh (e.g. 0.13 for 13¢/kWh). Used to
+// derive cost displays for monthly/yearly/lifetime energy. 0 = don't
+// display cost anywhere. Sub-penny daily costs are skipped regardless.
+float cfgCostPerKwh    = 0.0f;
+// Optional grid carbon intensity in kg CO₂/kWh (e.g. 0.485 for the
+// Colorado mix; varies ~0.01 in Iceland to ~0.73 in coal-heavy grids).
+// Used to derive lifetime carbon displays on the homepage banner and
+// /history records. 0 = don't display CO₂ anywhere.
+float cfgCo2PerKwh     = 0.0f;
 // When true, all non-admin LAN hits to public pages (/, /guestbook, /console,
 // /history, /stats, etc.) are 302-redirected to https://<cfgWorkerUrl>/<path>
 // regardless of WS connection state. This routes LAN visitors through the
@@ -81,6 +97,9 @@ unsigned long wsDisconnectedSince = 0;  // 120s safety net timer, reset on succe
 #define AUTH_MAX_FAILS     5
 #define AUTH_LOCKOUT_MS    600000UL   // 10 min
 #define AUTH_TRACK_SIZE    8
+
+#define SHELLY_POLL_INTERVAL_MS 30000UL
+#define SHELLY_STALE_MS         180000UL  // hide banner if no Shelly read in 3 min
 
 // minimal WebSocket frame helpers
 void wsSendText(WiFiClientSecure& client, const String& msg) {
@@ -237,6 +256,39 @@ volatile unsigned long lastBmeGoodAt = 0;
 volatile unsigned long lastCcsGoodAt = 0;
 #define SENSOR_STALE_MS  120000UL
 
+// Optional Shelly power-monitoring data. Polled from a Gen 2+ smart plug
+// upstream of the device; we only read `apower` (instantaneous W) and
+// integrate ourselves over time to derive Wh totals. Independent of the
+// Shelly's internal aenergy counter so resets/firmware quirks on the
+// Shelly side don't corrupt our running totals. Phase 1 keeps these in
+// RAM only; reboots zero the period accumulators (acceptable for a
+// "stays up for years" device that rarely reboots).
+volatile float    cached_power_w        = NAN;
+// Per-interval sum + count for averaging the CSV power_w column over each
+// 5-min logStats window rather than snapshotting only the last poll. With
+// 10 polls per interval, snapshotting throws away 9 readings and misses
+// any sub-interval spike that settles by log time. Averaging gives a
+// representative value that reflects every successful sample. Reset by
+// logStats() after each write.
+volatile float    interval_power_sum    = 0.0f;
+volatile uint16_t interval_power_count  = 0;
+volatile float    lifetime_energy_wh    = 0.0f;
+volatile float    today_energy_wh       = 0.0f;
+volatile float    week_energy_wh        = 0.0f;
+volatile float    month_energy_wh       = 0.0f;
+volatile float    year_energy_wh        = 0.0f;
+volatile unsigned long lastShellyOk          = 0;
+volatile unsigned long lastShellyAttemptMs   = 0;
+volatile unsigned long lastShellyIntegrationMs = 0;
+volatile uint32_t shellyConsecutiveFailures  = 0;
+// Last poll outcome for /admin/info diagnostics. 0 = never tried,
+// 200 = OK, other positive = HTTP status (e.g. 401, 404, 500), negative
+// HTTPClient transport codes (-1 connection refused, -11 read timeout,
+// etc.), -100 = JSON parse failure, -101 = value out of sanity bounds.
+volatile int      lastShellyHttpStatus       = 0;
+char shelly_today_date[11] = "";  // YYYY-MM-DD captured at last today rollover
+uint32_t shelly_tracking_started_unix = 0; // when we first saw a Shelly poll succeed
+
 // BME280 datasheet operating ranges. Out-of-spec reads almost always indicate
 // I2C bus glitches (corrupted register reads from bus contention or wire
 // disturbance), not real environmental extremes; the chip can't measure
@@ -375,8 +427,14 @@ static void aggregateSample(PeriodStats& p, float temp_c, float hum, uint16_t co
     if (reqs > p.peak_reqs) p.peak_reqs = reqs;
 }
 
-static String periodToJson(const char* label, const PeriodStats& p) {
-    char buf[720];
+// `energy_wh` is the period's accumulated energy from the Shelly integration
+// (positive values), or a sentinel < 0 when no Shelly data is available
+// (e.g., LAN-only installs, or live current-period queries before the
+// first Shelly poll). Non-positive values are omitted from the JSON so
+// frontends can detect the field's absence to decide whether to render
+// the energy cell.
+static String periodToJson(const char* label, const PeriodStats& p, float energy_wh = -1.0f) {
+    char buf[768];
     int op = 0;
     op += snprintf(buf + op, sizeof(buf) - op,
         "{\"label\":\"%s\",\"visitors\":%u,\"guestbook\":%u,\"peak_reqs\":%u,\"samples\":%u",
@@ -403,17 +461,23 @@ static String periodToJson(const char* label, const PeriodStats& p) {
                 p.voc_min, p.voc_max, (unsigned long)(p.voc_sum / p.samples));
         }
     }
+    if (energy_wh > 0.0f) {
+        op += snprintf(buf + op, sizeof(buf) - op, ",\"energy_wh\":%.1f", energy_wh);
+    }
     snprintf(buf + op, sizeof(buf) - op, ",\"started\":%lu}", (unsigned long)p.started_unix);
     return String(buf);
 }
 
-static bool flushPeriod(const char* dir, const char* label, const PeriodStats& p) {
+// `energy_wh` is forwarded to periodToJson so the archived JSON includes
+// the period's accumulated Shelly energy (when configured). Defaults to
+// -1 (omitted) so legacy callers that don't track energy stay correct.
+static bool flushPeriod(const char* dir, const char* label, const PeriodStats& p, float energy_wh = -1.0f) {
     String path = String(dir) + "/" + label + ".json";
     String tmp  = path + ".tmp";
     String bak  = path + ".bak";
     File f = SD.open(tmp, FILE_WRITE);
     if (!f) { Serial.printf("[stats] flush open failed: %s\n", path.c_str()); return false; }
-    f.print(periodToJson(label, p));
+    f.print(periodToJson(label, p, energy_wh));
     f.close();
     if (SD.exists(bak)) SD.remove(bak);
     if (SD.exists(path)) SD.rename(path, bak);
@@ -567,10 +631,38 @@ static bool parseWeeklyJson(const String& json, PeriodStats& out, time_t& starte
 }
 
 #define CHECKPOINT_MAGIC 0x48455333UL
-// Bump when PeriodStats layout changes. Old checkpoints with a different
-// version are rejected on load (stats reset to zero) rather than read into
-// a struct with shifted fields and silently corrupted.
-#define CHECKPOINT_VERSION 1
+// Bump when on-disk schema changes. V1 = original PeriodStats only.
+// V2 adds Shelly energy state (lifetime/today/week/month/year accumulators
+// + tracking metadata). loadCheckpoint() handles V1 -> V2 upgrade in place
+// (PeriodStats preserved, energy fields default to 0); other version
+// mismatches reject the file rather than read shifted fields.
+#define CHECKPOINT_VERSION 2
+
+// Forward decl: saveRecords is called from updateRecords() when
+// extremes change. Defined further down with the rest of the records
+// system.
+static void saveRecords();
+
+// Persisted energy state. Layout chosen for natural 4-byte alignment so
+// the struct serializes cleanly via direct write(). Padded today_date to
+// 12 bytes (10 chars + null + 1 pad) to keep the struct a multiple of 4.
+struct EnergyCheckpoint {
+    float    lifetime_energy_wh;
+    float    today_energy_wh;
+    float    week_energy_wh;
+    float    month_energy_wh;
+    float    year_energy_wh;
+    uint32_t tracking_started_unix;
+    char     today_date[12];  // YYYY-MM-DD + null + 1 pad
+};
+
+static size_t checkpointBaseSize() {
+    return sizeof(uint32_t) + sizeof(uint16_t) + sizeof(PeriodStats)*3 +
+           sizeof(lastWeekLabel) + sizeof(lastMonthLabel) + sizeof(lastYearLabel);
+}
+static size_t checkpointV2Size() {
+    return checkpointBaseSize() + sizeof(EnergyCheckpoint);
+}
 
 static void saveCheckpoint() {
     const char* path = "/stats/checkpoint.bin";
@@ -588,6 +680,17 @@ static void saveCheckpoint() {
     f.write((const uint8_t*)lastWeekLabel, sizeof(lastWeekLabel));
     f.write((const uint8_t*)lastMonthLabel, sizeof(lastMonthLabel));
     f.write((const uint8_t*)lastYearLabel, sizeof(lastYearLabel));
+    // V2 energy section
+    EnergyCheckpoint ec = {};
+    ec.lifetime_energy_wh     = lifetime_energy_wh;
+    ec.today_energy_wh        = today_energy_wh;
+    ec.week_energy_wh         = week_energy_wh;
+    ec.month_energy_wh        = month_energy_wh;
+    ec.year_energy_wh         = year_energy_wh;
+    ec.tracking_started_unix  = shelly_tracking_started_unix;
+    strncpy(ec.today_date, shelly_today_date, sizeof(ec.today_date) - 1);
+    ec.today_date[sizeof(ec.today_date) - 1] = '\0';
+    f.write((const uint8_t*)&ec, sizeof(ec));
     f.close();
     if (SD.exists(bak)) SD.remove(bak);
     if (SD.exists(path)) SD.rename(path, bak);
@@ -596,12 +699,32 @@ static void saveCheckpoint() {
         return;
     }
     if (SD.exists(bak)) SD.remove(bak);
+
+    // Piggyback a records.json save when Shelly is contributing to the
+    // lifetime accumulator. Without this, records.json only refreshes on
+    // actual record changes (hottest temp, busiest day, etc.), which
+    // freeze after a few weeks; lifetime_energy_wh would silently stop
+    // growing on /history. Tying it to the checkpoint cadence (15 min)
+    // keeps the displayed lifetime within ~15 min of the live value.
+    if (cfgShellyUrl[0] != '\0' && lifetime_energy_wh > 0.0f) {
+        saveRecords();
+    }
 }
 
 static void loadCheckpoint() {
     resetPeriod(currentWeek);
     resetPeriod(currentMonth);
     resetPeriod(currentYear);
+    // Energy state defaults. V1 checkpoints don't have these, so leaving
+    // them zeroed is the right baseline if we promote a V1 file.
+    lifetime_energy_wh = 0;
+    today_energy_wh    = 0;
+    week_energy_wh     = 0;
+    month_energy_wh    = 0;
+    year_energy_wh     = 0;
+    shelly_tracking_started_unix = 0;
+    shelly_today_date[0] = '\0';
+
     bool promotedFromBak = false;
     File f = SD.open("/stats/checkpoint.bin", FILE_READ);
     if (!f) {
@@ -612,38 +735,39 @@ static void loadCheckpoint() {
         }
         if (!f) return;
     }
-    uint32_t magic = 0;
-    uint16_t version = 0;
-    size_t expected = sizeof(magic) + sizeof(version) + sizeof(PeriodStats)*3 +
-                      sizeof(lastWeekLabel) + sizeof(lastMonthLabel) + sizeof(lastYearLabel);
-    if (f.size() != expected) {
+    size_t v1Size = checkpointBaseSize();
+    size_t v2Size = checkpointV2Size();
+    size_t actual = f.size();
+    if (actual != v1Size && actual != v2Size) {
         // Live file has wrong size (truncated mid-write, or struct drift
         // from a downgrade). Try the .bak before giving up so a single
         // bad write doesn't lose period stats.
         f.close();
         if (!promotedFromBak && SD.exists("/stats/checkpoint.bak")) {
             File bf = SD.open("/stats/checkpoint.bak", FILE_READ);
-            if (bf && bf.size() == expected) {
+            if (bf && (bf.size() == v1Size || bf.size() == v2Size)) {
                 bf.close();
                 SD.remove("/stats/checkpoint.bin");
                 SD.rename("/stats/checkpoint.bak", "/stats/checkpoint.bin");
                 f = SD.open("/stats/checkpoint.bin", FILE_READ);
+                actual = f ? f.size() : 0;
                 promotedFromBak = true;
             } else if (bf) {
                 bf.close();
             }
         }
-        if (!f || f.size() != expected) {
+        if (!f || (actual != v1Size && actual != v2Size)) {
             if (f) f.close();
-            return;  // size mismatch = struct drift or no usable backup
+            return;  // unrecognized size = struct drift or no usable backup
         }
     }
+    uint32_t magic = 0;
+    uint16_t version = 0;
     f.read((uint8_t*)&magic, sizeof(magic));
     if (magic != CHECKPOINT_MAGIC) { f.close(); return; }
     f.read((uint8_t*)&version, sizeof(version));
-    if (version != CHECKPOINT_VERSION) {
-        // Future-proofing: reject silently instead of reading into a struct
-        // with shifted fields. Stats reset to zero rather than corrupted.
+    if (version != 1 && version != CHECKPOINT_VERSION) {
+        // Unknown version; reject rather than read into shifted fields.
         Serial.printf("[stats] checkpoint version mismatch (got %u, want %u); resetting\n",
                       (unsigned)version, (unsigned)CHECKPOINT_VERSION);
         f.close();
@@ -655,11 +779,22 @@ static void loadCheckpoint() {
     f.read((uint8_t*)lastWeekLabel, sizeof(lastWeekLabel));
     f.read((uint8_t*)lastMonthLabel, sizeof(lastMonthLabel));
     f.read((uint8_t*)lastYearLabel, sizeof(lastYearLabel));
+    if (version == CHECKPOINT_VERSION && actual >= v2Size) {
+        EnergyCheckpoint ec = {};
+        f.read((uint8_t*)&ec, sizeof(ec));
+        lifetime_energy_wh = ec.lifetime_energy_wh;
+        today_energy_wh    = ec.today_energy_wh;
+        week_energy_wh     = ec.week_energy_wh;
+        month_energy_wh    = ec.month_energy_wh;
+        year_energy_wh     = ec.year_energy_wh;
+        shelly_tracking_started_unix = ec.tracking_started_unix;
+        strncpy(shelly_today_date, ec.today_date, sizeof(shelly_today_date) - 1);
+        shelly_today_date[sizeof(shelly_today_date) - 1] = '\0';
+    }
     f.close();
-    // If we recovered from .bak, immediately re-establish dual copies so a
-    // second crash during the next checkpoint window doesn't leave us with
-    // nothing to fall back to.
-    if (promotedFromBak) saveCheckpoint();
+    // If we recovered from .bak OR upgraded V1->V2 in memory, persist a
+    // fresh dual-copy so the next crash window can fall back cleanly.
+    if (promotedFromBak || version < CHECKPOINT_VERSION) saveCheckpoint();
 }
 
 // forward decl: getTimestamp is defined further down, but updateRecords below needs it
@@ -692,7 +827,6 @@ RecordVal rec_highest_temp_f    = { 0,    "", false };
 RecordVal rec_lowest_temp_f     = { 0,    "", false };
 RecordVal rec_most_visitors_day = { 0,    "", false };
 RecordVal rec_longest_uptime_d  = { 0,    "", false };
-
 static void saveRecords() {
     const char* path = "/stats/records.json";
     const char* tmp  = "/stats/records.tmp";
@@ -715,12 +849,42 @@ static void saveRecords() {
     emit("highest_temp_f",    rec_highest_temp_f,    false, false);
     emit("lowest_temp_f",     rec_lowest_temp_f,     false, false);
     emit("most_visitors_day", rec_most_visitors_day, false, true);
+    // longest_uptime_d is last=true: the two optional blocks below (lifetime
+    // energy, cost_per_kwh) self-lead with a comma when they emit, so a
+    // trailing comma here would produce invalid JSON in the no-Shelly,
+    // no-cost forker case.
     emit("longest_uptime_d",  rec_longest_uptime_d,  true,  false);
+    // Lifetime energy + rates + tracking date piggyback on records.json.
+    // Conditionally emitted so the JSON shape stays valid for forkers
+    // without Shelly. last=true on longest_uptime_d above leaves the
+    // standard records list cleanly terminated; each conditional block
+    // self-leads with a comma when it emits.
+    if (cfgShellyUrl[0] != '\0' && lifetime_energy_wh > 0.0f) {
+        f.print(",\"lifetime_energy_wh\":");
+        f.print((float)lifetime_energy_wh, 1);
+        if (shelly_tracking_started_unix > 0) {
+            f.print(",\"tracking_started_unix\":");
+            f.print(shelly_tracking_started_unix);
+        }
+    }
+    if (cfgCostPerKwh > 0.0f) {
+        f.print(",\"cost_per_kwh\":");
+        f.print(cfgCostPerKwh, 4);
+    }
+    if (cfgCo2PerKwh > 0.0f) {
+        f.print(",\"co2_per_kwh\":");
+        f.print(cfgCo2PerKwh, 4);
+    }
     f.print("}");
     f.close();
     if (SD.exists(bak)) SD.remove(bak);
     if (SD.exists(path)) SD.rename(path, bak);
-    SD.rename(tmp, path);
+    if (!SD.rename(tmp, path)) {
+        // Roll back: restore from .bak so a transient SD glitch doesn't zero
+        // the Hall of Fame. Mirrors the pattern in saveCheckpoint/flushPeriod.
+        if (SD.exists(bak)) SD.rename(bak, path);
+        return;
+    }
     if (SD.exists(bak)) SD.remove(bak);
 }
 
@@ -878,8 +1042,12 @@ static void checkPeriodBoundaries() {
         strncpy(lastWeekLabel, w, sizeof(lastWeekLabel) - 1);
         lastWeekLabel[sizeof(lastWeekLabel) - 1] = '\0';
     } else if (strcmp(lastWeekLabel, w) != 0) {
-        if (flushPeriod("/stats/weekly", lastWeekLabel, currentWeek)) {
+        // Capture the period's accumulated energy at flush time so the
+        // archive JSON records it. -1 sentinel when no Shelly is set.
+        float weekE = (cfgShellyUrl[0] != '\0') ? (float)week_energy_wh : -1.0f;
+        if (flushPeriod("/stats/weekly", lastWeekLabel, currentWeek, weekE)) {
             resetPeriod(currentWeek);
+            week_energy_wh = 0.0f;  // reset accumulator for the new period
             strncpy(lastWeekLabel, w, sizeof(lastWeekLabel) - 1);
             lastWeekLabel[sizeof(lastWeekLabel) - 1] = '\0';
         }
@@ -889,8 +1057,10 @@ static void checkPeriodBoundaries() {
         strncpy(lastMonthLabel, m, sizeof(lastMonthLabel) - 1);
         lastMonthLabel[sizeof(lastMonthLabel) - 1] = '\0';
     } else if (strcmp(lastMonthLabel, m) != 0) {
-        if (flushPeriod("/stats/monthly", lastMonthLabel, currentMonth)) {
+        float monthE = (cfgShellyUrl[0] != '\0') ? (float)month_energy_wh : -1.0f;
+        if (flushPeriod("/stats/monthly", lastMonthLabel, currentMonth, monthE)) {
             resetPeriod(currentMonth);
+            month_energy_wh = 0.0f;
             strncpy(lastMonthLabel, m, sizeof(lastMonthLabel) - 1);
             lastMonthLabel[sizeof(lastMonthLabel) - 1] = '\0';
         }
@@ -900,8 +1070,10 @@ static void checkPeriodBoundaries() {
         strncpy(lastYearLabel, y, sizeof(lastYearLabel) - 1);
         lastYearLabel[sizeof(lastYearLabel) - 1] = '\0';
     } else if (strcmp(lastYearLabel, y) != 0) {
-        if (flushPeriod("/stats/yearly", lastYearLabel, currentYear)) {
+        float yearE = (cfgShellyUrl[0] != '\0') ? (float)year_energy_wh : -1.0f;
+        if (flushPeriod("/stats/yearly", lastYearLabel, currentYear, yearE)) {
             resetPeriod(currentYear);
+            year_energy_wh = 0.0f;
             strncpy(lastYearLabel, y, sizeof(lastYearLabel) - 1);
             lastYearLabel[sizeof(lastYearLabel) - 1] = '\0';
         }
@@ -1682,7 +1854,11 @@ void writeVisitorCount(int count) {
 
     if (SD.exists("/visitors.bak")) SD.remove("/visitors.bak");
     if (SD.exists("/visitors.txt")) SD.rename("/visitors.txt", "/visitors.bak");
-    SD.rename("/visitors.tmp", "/visitors.txt");
+    if (!SD.rename("/visitors.tmp", "/visitors.txt")) {
+        if (SD.exists("/visitors.bak")) SD.rename("/visitors.bak", "/visitors.txt");
+        return;
+    }
+    if (SD.exists("/visitors.bak")) SD.remove("/visitors.bak");
 }
 
 // True if s is 8 characters of Crockford base32 (digits + a-z minus i/l/o/u).
@@ -2179,6 +2355,125 @@ static void migrateGuestbookCsvToV3() {
     logError("migrate", msg);
 }
 
+// One-time migration of today's sensor log to v2 schema (adds power_w
+// column at the end). v1 = the original 16-col schema. Older daily files
+// keep their v1 columns; the chart frontend tolerates the missing column.
+// Per-file versioning (matches guestbook's marker scheme); the global
+// firmware version is unrelated. Only migrates today's file
+// because that's the one about to be appended to; recursing over all
+// historical files would block boot indefinitely on long-running devices.
+// Called lazily from logStats() with a static guard, not at boot, because
+// boot runs before NTP sync and getLogFilename() would resolve to the
+// fallback path before the proper YYYY-MM-DD path is known.
+//
+// Failure handling mirrors migrateGuestbookCsvToV2/V3: crash recovery
+// from prior failed runs, per-write failure tracking via lambdas, and a
+// two-step rename so the original is preserved as .bak until the swap
+// commits. On any failure the original file stays intact for the next
+// boot's retry. Sensor log loss is recoverable (we'd lose today's data
+// points), so unlike guestbook migration this doesn't migrationAbort.
+void migrateTodaysSensorLogToV2() {
+    String path = getLogFilename();
+    String tmp  = path + ".tmp";
+    String bak  = path + ".bak";
+
+    // Crash recovery from a prior failed migration: if the original file
+    // is gone but .tmp or .bak survives, restore before checking schema
+    // (so we don't silently start a new file and orphan today's data).
+    if (!SD.exists(path)) {
+        if (SD.exists(tmp) && SD.rename(tmp, path)) {
+            Serial.println("[migrate] recovered today's sensor log from .tmp (prior crash)");
+        } else if (SD.exists(bak) && SD.rename(bak, path)) {
+            Serial.println("[migrate] recovered today's sensor log from .bak (prior crash)");
+        }
+    }
+    if (!SD.exists(path)) return;  // first write of today, will get v2 header
+
+    // Idempotency guard: header line tells us whether the file is already v2.
+    File r = SD.open(path, FILE_READ);
+    if (!r) return;
+    String header = r.readStringUntil('\n');
+    r.close();
+    if (header.indexOf("power_w") >= 0) return;  // already v2
+
+    Serial.printf("[migrate] migrating sensor log to v2 (adds power_w): %s\n", path.c_str());
+
+    // Clean up any stale .tmp from a prior failed attempt before starting.
+    if (SD.exists(tmp)) SD.remove(tmp);
+
+    File src = SD.open(path, FILE_READ);
+    File dst = SD.open(tmp, FILE_WRITE);
+    if (!src || !dst) {
+        if (src) src.close();
+        if (dst) dst.close();
+        if (SD.exists(tmp)) SD.remove(tmp);
+        logError("migrate", "sensor log v2: could not open files");
+        return;
+    }
+
+    // Per-write failure tracking. Short writes (SD full, transient error)
+    // would otherwise silently truncate the new file before the swap.
+    bool writeFailed = false;
+    auto writeAll = [&](const char* data, size_t len) {
+        if (writeFailed) return;
+        if (dst.write((const uint8_t*)data, len) != len) writeFailed = true;
+    };
+    auto writeByte = [&](char b) {
+        if (writeFailed) return;
+        if (dst.write((uint8_t)b) != 1) writeFailed = true;
+    };
+
+    int rowsRewritten = 0;
+    bool first = true;
+    while (src.available() && !writeFailed) {
+        String line = src.readStringUntil('\n');
+        if (line.endsWith("\r")) line.remove(line.length() - 1);
+        if (first) {
+            writeAll(line.c_str(), line.length());
+            writeAll(",power_w", 8);
+            writeByte('\n');
+            first = false;
+        } else if (line.length() > 0) {
+            // Append empty power_w cell for pre-migration rows.
+            writeAll(line.c_str(), line.length());
+            writeByte(',');
+            writeByte('\n');
+            rowsRewritten++;
+        }
+        yield();
+        esp_task_wdt_reset();
+    }
+    src.close();
+    dst.close();
+
+    if (writeFailed) {
+        SD.remove(tmp);
+        logError("migrate", "sensor log v2 rewrite failed (SD full or write error); original kept");
+        return;
+    }
+
+    // Atomic swap: original -> .bak, then tmp -> original. If the second
+    // rename fails we restore from .bak so the file isn't lost.
+    if (SD.exists(bak)) SD.remove(bak);
+    if (!SD.rename(path, bak)) {
+        SD.remove(tmp);
+        logError("migrate", "sensor log v2: rename csv -> .bak failed; original kept");
+        return;
+    }
+    if (!SD.rename(tmp, path)) {
+        SD.rename(bak, path);   // best-effort restore
+        SD.remove(tmp);
+        logError("migrate", "sensor log v2: rename tmp -> csv failed; original restored");
+        return;
+    }
+    SD.remove(bak);
+
+    char msg[80];
+    snprintf(msg, sizeof(msg), "sensor log: migrated %d rows to v2 schema", rowsRewritten);
+    Serial.printf("[migrate] %s\n", msg);
+    logError("migrate", msg);
+}
+
 // Recompute guestbook counts (pendingGuestbook, gbCountApproved, gbCountDenied,
 // gbCountAll) by streaming through guestbook.csv. Avoids loading the whole file
 // into RAM. Called once at boot and as a safety net after delete/compact operations.
@@ -2208,6 +2503,144 @@ void countPendingGuestbook() {
         else if (s == '2') gbCountDenied++;
     }
     f.close();
+}
+
+// Poll the configured Shelly Gen 2+ smart plug for live power draw and
+// software-integrate the result into our running Wh accumulators. Pulls
+// only `apower` (W); we don't trust the Shelly's own aenergy.total
+// counter because some firmware versions reset it on reboot, factory
+// reset, or via the app. By integrating apower ourselves, our totals are
+// independent of the Shelly's internal state.
+//
+// Called from loop() every SHELLY_POLL_INTERVAL_MS. Skips silently if no
+// shelly_url is configured. Failures (timeout, non-200, parse error) just
+// don't update the cache; the staleness check in buildStatsJson() hides
+// the banner after SHELLY_STALE_MS without a successful read.
+//
+// The integration uses elapsed wall-clock time between successful polls,
+// not a fixed 30s assumption, so a missed poll doesn't underestimate the
+// energy used during that gap (capped at 5 min to prevent runaway delta
+// if the integrator stalled for a long time).
+void pollShelly() {
+    if (cfgShellyUrl[0] == '\0') return;
+    if (WiFi.status() != WL_CONNECTED) return;
+
+    lastShellyAttemptMs = millis();
+
+    HTTPClient http;
+    // 1500ms cap (was 3000ms): synchronous HTTPClient holds the lwip
+    // mutex for the duration of the call. If pollShelly overlaps with
+    // WS handshake / heavy activity, async_tcp can't acquire the mutex
+    // and its 5s task watchdog trips. Half the timeout = half the worst-
+    // case lwip-lock window. A LAN Shelly responds in <100ms when up,
+    // so 1500ms is plenty for healthy polls but bounds the bad case.
+    http.setTimeout(1500);
+    // Use the canonical POST RPC form rather than GET-with-querystring.
+    // ESP32 HTTPClient's URL parser drops the `?id=0` query parameter
+    // before it reaches the Shelly, so the GET form returns HTTP 500
+    // ("Missing required argument 'id'"). POST puts the id in the JSON
+    // body where it can't be stripped, and is the documented primary
+    // RPC interface so it's better tested across firmware revisions.
+    String url = String(cfgShellyUrl) + "/rpc";
+    if (!http.begin(url)) {
+        lastShellyHttpStatus = -1;
+        shellyConsecutiveFailures++;
+        return;
+    }
+    http.addHeader("Accept", "application/json");
+    http.addHeader("Content-Type", "application/json");
+    // Top-level id is the switch channel (matches the GET querystring's
+    // `?id=0`, not JSON-RPC 2.0's request id). This Shelly firmware
+    // 500s on the nested `params.id` form with "value 1 not found"
+    // because it reads the outer id as the channel.
+    int code = http.POST("{\"method\":\"Switch.GetStatus\",\"id\":0}");
+    if (code != 200) {
+        // Capture the response body once per outage for diagnostics. Logs
+        // only on the first failure of each consecutive-failure run so we
+        // don't fill errors.log under sustained Shelly downtime.
+        if (shellyConsecutiveFailures == 0) {
+            String errBody = http.getString();
+            if (errBody.length() > 200) errBody = errBody.substring(0, 200);
+            char buf[256];
+            snprintf(buf, sizeof(buf), "shelly poll failed: HTTP %d body=\"%s\"",
+                     code, errBody.c_str());
+            logError("shelly", buf);
+        }
+        http.end();
+        lastShellyHttpStatus = code;
+        shellyConsecutiveFailures++;
+        return;
+    }
+    String body = http.getString();
+    http.end();
+
+    // Lightweight indexOf parse, matching the rest of main.cpp's pattern.
+    int p = body.indexOf("\"apower\":");
+    if (p < 0) {
+        lastShellyHttpStatus = -100;
+        shellyConsecutiveFailures++;
+        return;
+    }
+    float power_w = body.substring(p + 9).toFloat();
+    // Sanity bound: Shelly Gen 4 plug max is 16A × 240V ≈ 3840W; anything
+    // outside [-1, 4000] is a parse glitch. Negative skipped because we
+    // don't track returned energy here.
+    if (power_w < 0.0f || power_w > 4000.0f) {
+        lastShellyHttpStatus = -101;
+        shellyConsecutiveFailures++;
+        return;
+    }
+
+    lastShellyHttpStatus = 200;
+    shellyConsecutiveFailures = 0;
+    cached_power_w = power_w;
+
+    // Accumulate for the per-interval CSV average. Reset by logStats() on
+    // each write. Independent from the energy integrator above; this is
+    // purely chart-display fidelity, not energy math.
+    interval_power_sum   += power_w;
+    interval_power_count += 1;
+
+    // Software integration: P × dt = E. dt comes from actual elapsed time
+    // since the last successful integration, not a fixed assumption.
+    unsigned long now = millis();
+    if (lastShellyIntegrationMs > 0 && now > lastShellyIntegrationMs) {
+        unsigned long dt_ms = now - lastShellyIntegrationMs;
+        // Cap dt at 5 min to bound runaway integrals if the integrator
+        // stalled (e.g., long WiFi outage between polls). 5 min × 4kW max
+        // sanity = 333 Wh, still bounded.
+        if (dt_ms > 300000UL) dt_ms = 300000UL;
+        float dt_hours = dt_ms / 3600000.0f;
+        float delta_wh = power_w * dt_hours;
+
+        lifetime_energy_wh += delta_wh;
+        today_energy_wh    += delta_wh;
+        week_energy_wh     += delta_wh;
+        month_energy_wh    += delta_wh;
+        year_energy_wh     += delta_wh;
+    }
+    lastShellyIntegrationMs = now;
+    lastShellyOk = now;
+
+    // Capture tracking-start unix on first successful poll, so the banner
+    // can show "since X" if/when we want that framing later.
+    if (shelly_tracking_started_unix == 0) {
+        time_t t = time(nullptr);
+        if (t > 1735689600) shelly_tracking_started_unix = (uint32_t)t;
+    }
+
+    // First-after-boot records.json refresh. saveCheckpoint piggybacks
+    // saveRecords every 15 min, but a fresh boot needs records.json
+    // populated with rates + lifetime + tracking date sooner so the
+    // homepage banner / about placard / history lifetime row don't sit
+    // hidden waiting on the first piggyback. Single SD write per boot,
+    // gated on lifetime > 0 (otherwise saveRecords would emit nothing
+    // useful anyway).
+    static bool initialRecordsSavedThisBoot = false;
+    if (!initialRecordsSavedThisBoot && lifetime_energy_wh > 0.0f) {
+        saveRecords();
+        initialRecordsSavedThisBoot = true;
+    }
 }
 
 void notifyPendingIfIncreased() {
@@ -2292,7 +2725,11 @@ void saveDailyVisitors() {
 
     if (SD.exists("/daily.bak")) SD.remove("/daily.bak");
     if (SD.exists("/daily.txt")) SD.rename("/daily.txt", "/daily.bak");
-    SD.rename("/daily.tmp", "/daily.txt");
+    if (!SD.rename("/daily.tmp", "/daily.txt")) {
+        if (SD.exists("/daily.bak")) SD.rename("/daily.bak", "/daily.txt");
+        return;
+    }
+    if (SD.exists("/daily.bak")) SD.remove("/daily.bak");
 }
 
 // Sensor readings
@@ -2347,6 +2784,16 @@ void logStats() {
     struct tm tCheck;
     if (!getLocalTime(&tCheck, 0)) return;
 
+    // First-write-after-boot guard: migrate today's file to v2 schema if
+    // it predates this firmware. Idempotent (no-op if already v2 or
+    // file doesn't exist yet). Static bool prevents the disk read on
+    // every subsequent logStats call.
+    static bool migrationCheckedThisBoot = false;
+    if (!migrationCheckedThisBoot) {
+        migrateTodaysSensorLogToV2();
+        migrationCheckedThisBoot = true;
+    }
+
     String filename = getLogFilename();
     bool isNew = !SD.exists(filename);
 
@@ -2354,7 +2801,7 @@ void logStats() {
     if (!log) return;
 
     if (isNew) {
-        log.println("timestamp,cpu_temp_c,cpu_temp_f,memory_percent,temperature_c,temperature_f,humidity_percent,pressure_hpa,altitude_ft,co2_ppm,voc_ppb,heat_index_c,heat_index_f,rssi,sd_free_mb,requests_interval");
+        log.println("timestamp,cpu_temp_c,cpu_temp_f,memory_percent,temperature_c,temperature_f,humidity_percent,pressure_hpa,altitude_ft,co2_ppm,voc_ppb,heat_index_c,heat_index_f,rssi,sd_free_mb,requests_interval,power_w");
     }
 
     int intervalRequests    = requestsThisInterval;
@@ -2377,7 +2824,23 @@ void logStats() {
     log.print(d.heat_index_f, 2);log.print(",");
     log.print(d.rssi);          log.print(",");
     log.print(d.sd_free_mb, 2); log.print(",");
-    log.println(intervalRequests);
+    log.print(intervalRequests);log.print(",");
+    // power_w cell: average of every successful Shelly poll since the
+    // last logStats call, rounded to nearest 0.1 W to match Shelly's
+    // own apower precision (sub-tenth digits would look like fake
+    // precision). Empty when no Shelly configured or no successful
+    // polls happened this interval; chart frontend treats empty cells
+    // as gaps. Reset the accumulators after every logStats run so the
+    // next interval starts fresh whether we logged a value or not.
+    if (cfgShellyUrl[0] != '\0' && interval_power_count > 0) {
+        float avg = interval_power_sum / (float)interval_power_count;
+        float rounded = roundf(avg * 10.0f) / 10.0f;
+        log.println(rounded, 1);
+    } else {
+        log.println("");
+    }
+    interval_power_sum   = 0.0f;
+    interval_power_count = 0;
 
     log.close();
 
@@ -2422,6 +2885,7 @@ String buildStatsJson() {
         ",\"co2_ppm\":%u"
         ",\"voc_ppb\":%u"
         ",\"countries\":%d"
+        ",\"guestbook_approved\":%d"
         ",\"sensors\":{\"bme_ok\":%s,\"ccs_ok\":%s,\"oled_ok\":%s,\"rtc_ok\":%s}"
         "}",
         responseMs,
@@ -2442,10 +2906,34 @@ String buildStatsJson() {
         (unsigned)cached_co2,
         (unsigned)cached_voc,
         countryCount,
+        gbCountApproved,
         bmeDegraded() ? "false" : "true",
         ccsDegraded() ? "false" : "true",
         oledOk ? "true" : "false",
         rtcOk ? "true" : "false");
+
+    // Optional Shelly power fields, appended only when shelly_url is set
+    // and a successful poll happened within SHELLY_STALE_MS. Insert before
+    // the closing brace so the base JSON shape stays unchanged when no
+    // Shelly is configured (frontends can detect the feature by presence).
+    if (cfgShellyUrl[0] != '\0' && lastShellyOk > 0
+        && (millis() - lastShellyOk) < SHELLY_STALE_MS
+        && !isnan(cached_power_w)) {
+        String out(buf);
+        // Strip trailing '}', append power block, re-close.
+        if (out.endsWith("}")) out.remove(out.length() - 1);
+        char ext[256];
+        snprintf(ext, sizeof(ext),
+            ",\"power_w\":%.2f"
+            ",\"energy_today_wh\":%.2f"
+            ",\"energy_total_wh\":%.1f"
+            "}",
+            cached_power_w,
+            today_energy_wh,
+            lifetime_energy_wh);
+        out += ext;
+        return out;
+    }
     return String(buf);
 }
 
@@ -3363,8 +3851,12 @@ void setup() {
                 if (key == "device_key")  val.toCharArray(cfgDeviceKey, sizeof(cfgDeviceKey));
                 if (key == "timezone")    val.toCharArray(cfgTimezone, sizeof(cfgTimezone));
                 if (key == "worker_exclusive") cfgWorkerExclusive = (val == "true");
+                if (key == "shelly_url")  val.toCharArray(cfgShellyUrl, sizeof(cfgShellyUrl));
+                if (key == "cost_per_kwh") cfgCostPerKwh = val.toFloat();
+                if (key == "co2_per_kwh")  cfgCo2PerKwh  = val.toFloat();
             }
             bootLog("[fs] config loaded");
+            bootLog(cfgShellyUrl[0] != '\0' ? "[net] shelly: on" : "[net] shelly: off");
         }
     } else {
         Serial.println("No config.txt found");
@@ -3686,6 +4178,26 @@ void setup() {
         rec("lowest_temp_f",     rec_lowest_temp_f,     false, false);
         rec("most_visitors_day", rec_most_visitors_day, false, true);
         rec("longest_uptime_d",  rec_longest_uptime_d,  true,  false);
+        // Power-related fields read from RAM globals (no SD read needed).
+        // Same gates and shape as the SD records.json saveRecords()
+        // emission; this is the path frontends actually consume since
+        // the SD file only exists for boot-time loadRecords() recovery.
+        if (cfgShellyUrl[0] != '\0' && lifetime_energy_wh > 0.0f) {
+            json += ",\"lifetime_energy_wh\":";
+            json += String((float)lifetime_energy_wh, 1);
+            if (shelly_tracking_started_unix > 0) {
+                json += ",\"tracking_started_unix\":";
+                json += String(shelly_tracking_started_unix);
+            }
+        }
+        if (cfgCostPerKwh > 0.0f) {
+            json += ",\"cost_per_kwh\":";
+            json += String(cfgCostPerKwh, 4);
+        }
+        if (cfgCo2PerKwh > 0.0f) {
+            json += ",\"co2_per_kwh\":";
+            json += String(cfgCo2PerKwh, 4);
+        }
         json += "}";
         AsyncWebServerResponse *r = request->beginResponse(200, "application/json", json);
         r->addHeader("Cache-Control", "public, max-age=300");
@@ -3808,7 +4320,7 @@ void setup() {
     // keep this list in sync with the changelog section in index.html
     server.on("/changelog.rss", HTTP_GET, [](AsyncWebServerRequest *request) {
         String rss;
-        rss.reserve(3500);
+        rss.reserve(5120);
         rss = F("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                 "<rss version=\"2.0\"><channel>"
                 "<title>HelloESP | Changelog</title>"
@@ -3826,6 +4338,8 @@ void setup() {
             rss += text;
             rss += "</description></item>";
         };
+        item("May 1, 2026", "Fri, 01 May 2026 12:00:00 GMT",
+             "The site can now track its own electricity use with an optional smart plug. The homepage shows live wattage and lifetime energy, plus cost and CO2 if you set your grid rate. Outdoor weather card grew with air quality, UV index, atmospheric CO2, dewpoint, and pressure trend, and the icons now match the time of day.");
         item("Apr 29, 2026", "Wed, 29 Apr 2026 12:00:00 GMT",
              "Added a DS3231 real-time clock module on the breadboard. Boot logs and timestamps are correct right away instead of being wrong for a few seconds until NTP syncs. History page got a year-grouped collapsible layout that stays readable as archives pile up over time. New /about page with the short version of the project story for casual visitors.");
         item("Apr 27, 2026", "Mon, 27 Apr 2026 12:00:00 GMT",
@@ -4114,9 +4628,15 @@ void setup() {
         }
 
         if (url == "/stats/current") {
-            String body = "{\"week\":"  + periodToJson(lastWeekLabel,  currentWeek)
-                       + ",\"month\":" + periodToJson(lastMonthLabel, currentMonth)
-                       + ",\"year\":"  + periodToJson(lastYearLabel,  currentYear) + "}";
+            // Pass live energy accumulators so current-period cards on the
+            // history page show the in-progress kWh used. Sentinel -1 when
+            // no Shelly configured so the field is omitted entirely.
+            float weekE  = (cfgShellyUrl[0] != '\0') ? (float)week_energy_wh  : -1.0f;
+            float monthE = (cfgShellyUrl[0] != '\0') ? (float)month_energy_wh : -1.0f;
+            float yearE  = (cfgShellyUrl[0] != '\0') ? (float)year_energy_wh  : -1.0f;
+            String body = "{\"week\":"  + periodToJson(lastWeekLabel,  currentWeek,  weekE)
+                       + ",\"month\":" + periodToJson(lastMonthLabel, currentMonth, monthE)
+                       + ",\"year\":"  + periodToJson(lastYearLabel,  currentYear,  yearE) + "}";
             AsyncWebServerResponse *r = request->beginResponse(200, "application/json", body);
             r->addHeader("Cache-Control", "public, max-age=300");
             request->send(r);
@@ -5474,7 +5994,16 @@ void setup() {
 
             if (SD.exists("/guestbook.bak")) SD.remove("/guestbook.bak");
             if (SD.exists("/guestbook.csv")) SD.rename("/guestbook.csv", "/guestbook.bak");
-            SD.rename("/guestbook.tmp", "/guestbook.csv");
+            if (!SD.rename("/guestbook.tmp", "/guestbook.csv")) {
+                // Roll back so memory and disk don't diverge: restore the old
+                // CSV and skip the in-memory delta application below. Without
+                // this, a failed rename would leave guestbook.csv missing
+                // while counters reflect the would-be new state.
+                if (SD.exists("/guestbook.bak")) SD.rename("/guestbook.bak", "/guestbook.csv");
+                request->send(500, "text/plain", "moderation save failed");
+                return;
+            }
+            if (SD.exists("/guestbook.bak")) SD.remove("/guestbook.bak");
 
             pendingGuestbook += dPending;
             gbCountApproved += dApproved;
@@ -5598,7 +6127,7 @@ void setup() {
             int reason = (int)esp_reset_reason();
             const char* reasonStr = (reason >= 0 && reason <= 10) ? resetReasons[reason] : "Unknown";
             String json;
-            json.reserve(512);
+            json.reserve(1024);
             json  = "{";
             json += "\"firmware\":\"" + String(FIRMWARE_VERSION) + "\",";
             json += "\"chip_model\":\"" + String(ESP.getChipModel()) + "\",";
@@ -5622,6 +6151,29 @@ void setup() {
             json += "\"worker_connected\":" + String((wsConnected && wsClient.connected()) ? "true" : "false") + ",";
             json += "\"worker_reconnects\":" + String(wsReconnectCount) + ",";
             json += "\"worker_last_activity_ms\":" + String((wsConnected && lastWsActivity > 0) ? (millis() - lastWsActivity) : 0) + ",";
+            // Shelly observability. Fields always emit so the frontend
+            // can branch on shelly_configured; hidden in the UI when not
+            // configured. last_*_seconds_ago = -1 means "never tried/seen".
+            unsigned long shNow = millis();
+            long shellyOkAgo  = (lastShellyOk > 0)
+                ? (long)((shNow - lastShellyOk) / 1000) : -1;
+            long shellyAttAgo = (lastShellyAttemptMs > 0)
+                ? (long)((shNow - lastShellyAttemptMs) / 1000) : -1;
+            float shCachedW = cached_power_w;
+            json += "\"shelly_configured\":" + String(cfgShellyUrl[0] != '\0' ? "true" : "false") + ",";
+            json += "\"shelly_last_ok_seconds_ago\":" + String(shellyOkAgo) + ",";
+            json += "\"shelly_last_attempt_seconds_ago\":" + String(shellyAttAgo) + ",";
+            json += "\"shelly_consecutive_failures\":" + String(shellyConsecutiveFailures) + ",";
+            json += "\"shelly_last_http_status\":" + String(lastShellyHttpStatus) + ",";
+            json += "\"shelly_current_power_w\":";
+            json += isnan(shCachedW) ? "null" : String(shCachedW, 2);
+            json += ",";
+            json += "\"shelly_today_wh\":"    + String((float)today_energy_wh, 2)    + ",";
+            json += "\"shelly_week_wh\":"     + String((float)week_energy_wh, 2)     + ",";
+            json += "\"shelly_month_wh\":"    + String((float)month_energy_wh, 2)    + ",";
+            json += "\"shelly_year_wh\":"     + String((float)year_energy_wh, 2)     + ",";
+            json += "\"shelly_lifetime_wh\":" + String((float)lifetime_energy_wh, 2) + ",";
+            json += "\"shelly_cost_per_kwh\":" + String(cfgCostPerKwh, 4) + ",";
             // Maintenance state for the admin UI. Worker DO is authoritative.
             time_t nowSec = time(nullptr);
             bool maintActive = (localMaintenanceUntilUnix > 0 && nowSec > 0 && (uint32_t)nowSec < localMaintenanceUntilUnix);
@@ -5807,6 +6359,31 @@ void setup() {
                 addTest("Worker link", "pass", "connected, last activity " + String(ageMs / 1000) + "s ago");
             } else {
                 addTest("Worker link", "fail", "not connected (reconnect in progress)");
+            }
+
+            // 4b. Shelly smart plug. Same pass/warn/fail bands as the admin
+            // panel: fresh + zero failures = pass, fresh + failures = warn,
+            // stale or never seen = fail.
+            if (cfgShellyUrl[0] == '\0') {
+                addTest("Shelly", "warn", "not configured");
+            } else if (lastShellyOk == 0) {
+                addTest("Shelly", "fail", "never reached (check shelly_url + LAN auth disabled)");
+            } else {
+                unsigned long ageMs = millis() - lastShellyOk;
+                if (ageMs >= SHELLY_STALE_MS) {
+                    addTest("Shelly", "fail",
+                        "no successful poll in " + String(ageMs / 1000) + "s; " +
+                        String(shellyConsecutiveFailures) + " consecutive failures");
+                } else if (shellyConsecutiveFailures > 0) {
+                    addTest("Shelly", "warn",
+                        "recovering; " + String(shellyConsecutiveFailures) + " recent failures");
+                } else {
+                    String detail = "polling OK, " + String(ageMs / 1000) + "s since last read";
+                    if (!isnan(cached_power_w)) {
+                        detail += ", " + String((float)cached_power_w, 1) + " W";
+                    }
+                    addTest("Shelly", "pass", detail);
+                }
             }
 
             // 5. NTP
@@ -6871,9 +7448,14 @@ void loop() {
             display.setCursor(shiftX, 4);
             display.print(line);
             struct tm now;
-            unsigned long secs = 0;
-            if (bootTime > 0 && getLocalTime(&now)) secs = mktime(&now) - bootTime;
-            else secs = millis() / 1000;
+            unsigned long secs = millis() / 1000;
+            if (bootTime > 0 && getLocalTime(&now)) {
+                time_t nowEpoch = mktime(&now);
+                // Guard against backward time-steps (NTP slew, RTC step):
+                // unsigned subtraction would wrap to ~136 years and the OLED
+                // would print "Uptime: 49710d 14h" until the page rotates.
+                if (nowEpoch > bootTime) secs = (unsigned long)(nowEpoch - bootTime);
+            }
             int d = secs / 86400; int h = (secs % 86400) / 3600;
             snprintf(line, sizeof(line), "Uptime: %dd %dh", d, h);
             display.setCursor(shiftX, 18);
@@ -7258,6 +7840,43 @@ void loop() {
     if (pendingBackupFlag && !busyWithUpload) {
         pendingBackupFlag = false;
         buildAndSendBackup();
+    }
+
+    // Shelly poll for power monitoring. Skips silently if no shelly_url
+    // configured. Gated on !busyWithUpload (avoids upload contention)
+    // AND on the WS being either absent (LAN-only install) or fully
+    // connected. The handshake window is when async_tcp is most likely
+    // to starve if the synchronous HTTPClient call grabs the lwip mutex
+    // for any extended period; a half-connected WS state means we wait
+    // for the next 30s tick before trying.
+    static unsigned long lastShellyPollMs = 0;
+    bool wsQuiet = (strlen(cfgWorkerUrl) == 0)
+                || (wsConnected && wsClient.connected());
+    if (cfgShellyUrl[0] != '\0' && !busyWithUpload && wsQuiet
+        && millis() - lastShellyPollMs > SHELLY_POLL_INTERVAL_MS) {
+        lastShellyPollMs = millis();
+        pollShelly();
+    }
+
+    // Midnight rollover for today_energy_wh. Detects local-date change
+    // since the last rollover and zeroes today_energy on transition.
+    // Cheap to check every loop; only does work on actual day boundary.
+    {
+        struct tm tmNow;
+        if (getLocalTime(&tmNow, 0)) {
+            char todayNow[11];
+            snprintf(todayNow, sizeof(todayNow), "%04d-%02d-%02d",
+                     tmNow.tm_year + 1900, tmNow.tm_mon + 1, tmNow.tm_mday);
+            if (shelly_today_date[0] == '\0') {
+                // First successful local time read; capture without resetting.
+                strncpy(shelly_today_date, todayNow, sizeof(shelly_today_date) - 1);
+                shelly_today_date[sizeof(shelly_today_date) - 1] = '\0';
+            } else if (strcmp(todayNow, shelly_today_date) != 0) {
+                today_energy_wh = 0.0f;
+                strncpy(shelly_today_date, todayNow, sizeof(shelly_today_date) - 1);
+                shelly_today_date[sizeof(shelly_today_date) - 1] = '\0';
+            }
+        }
     }
 
     if (pendingR2HealthcheckFlag) {

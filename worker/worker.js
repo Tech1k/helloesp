@@ -4,7 +4,7 @@ const PAGE_CSS = `*{margin:0;padding:0;box-sizing:border-box}:root{--bg:#f8f7f4;
 
 const CHIP_ICON_PATHS = `<path fill-rule="evenodd" d="M7 5a2 2 0 00-2 2v18a2 2 0 002 2h18a2 2 0 002-2V7a2 2 0 00-2-2H7zm6 7a1 1 0 00-1 1v6a1 1 0 001 1h6a1 1 0 001-1v-6a1 1 0 00-1-1h-6z"/><rect x="7.5" y="1" width="2" height="3" rx=".5"/><rect x="12.5" y="1" width="2" height="3" rx=".5"/><rect x="17.5" y="1" width="2" height="3" rx=".5"/><rect x="22.5" y="1" width="2" height="3" rx=".5"/><rect x="7.5" y="28" width="2" height="3" rx=".5"/><rect x="12.5" y="28" width="2" height="3" rx=".5"/><rect x="17.5" y="28" width="2" height="3" rx=".5"/><rect x="22.5" y="28" width="2" height="3" rx=".5"/><rect x="1" y="7.5" width="3" height="2" rx=".5"/><rect x="1" y="12.5" width="3" height="2" rx=".5"/><rect x="1" y="17.5" width="3" height="2" rx=".5"/><rect x="1" y="22.5" width="3" height="2" rx=".5"/><rect x="28" y="7.5" width="3" height="2" rx=".5"/><rect x="28" y="12.5" width="3" height="2" rx=".5"/><rect x="28" y="17.5" width="3" height="2" rx=".5"/><rect x="28" y="22.5" width="3" height="2" rx=".5"/>`;
 
-const SNAKE_GAME = `<div class="snk" role="group" aria-label="Snake"><div class="snk-h"><span class="snk-h-l">Snake</span><div class="snk-h-r"><span class="snk-stat"><span class="snk-stat-k">Score</span><b id="snk-s">0</b></span><span class="snk-stat snk-stat-pb" id="snk-pb-wrap" hidden><span class="snk-stat-k">Best</span><b id="snk-pb">0</b></span></div></div><div class="snk-board"><canvas id="snk-c" width="280" height="280" aria-hidden="true"></canvas><div class="snk-o" id="snk-o"><div class="snk-o-inner" id="snk-m"><div class="snk-go">Snake</div><div class="snk-cta">tap to play</div><div class="snk-hint"><span class="snk-hint-desk">Arrow keys or WASD</span><span class="snk-hint-touch">Swipe or tap arrows below</span></div></div></div></div><div class="snk-p" aria-hidden="true"><button type="button" data-snk="up">&uarr;</button><button type="button" data-snk="left">&larr;</button><button type="button" data-snk="down">&darr;</button><button type="button" data-snk="right">&rarr;</button></div><div class="snk-lb" id="snk-lb" hidden><div class="snk-lb-h"><span class="snk-lb-h-t">Leaderboard</span></div><ol class="snk-lb-l" id="snk-lb-l"></ol></div></div><style>.snk{max-width:280px;margin:32px auto 0;text-align:left}.snk-board{position:relative}.snk-h{display:flex;justify-content:space-between;align-items:baseline;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--mid);margin-bottom:8px}.snk-h-l{font-weight:500;color:var(--ink)}.snk-h-r{display:flex;gap:14px;align-items:baseline}.snk-stat{display:inline-flex;gap:6px;align-items:baseline}.snk-stat-k{font-size:9px;letter-spacing:0.12em;color:var(--mid)}.snk-stat b{color:var(--ink);font-weight:500;font-size:14px;letter-spacing:0.02em;font-variant-numeric:tabular-nums}.snk-stat-pb b{color:var(--mid)}#snk-c{display:block;width:100%;max-width:280px;aspect-ratio:1;background:var(--faint);border:1px solid var(--faint);border-radius:3px;image-rendering:pixelated;touch-action:none;cursor:crosshair;box-shadow:inset 0 0 0 1px rgba(0,0,0,0.06)}.snk-o{position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.62);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;padding:16px;text-align:center;border-radius:3px}.snk-o.hide{display:none}.snk-o-inner{max-width:240px}.snk-o .snk-go{font-size:22px;letter-spacing:-0.01em;text-transform:none;font-weight:400;color:#fff;margin-bottom:6px;line-height:1}.snk-o .snk-go-sc{font-size:36px;font-weight:300;letter-spacing:0;color:#fff;font-variant-numeric:tabular-nums;line-height:1;margin:8px 0 6px}.snk-o .snk-go-pb{font-size:9px;color:#bbb;letter-spacing:0.1em;margin-top:4px}.snk-o .snk-go-sub{font-size:9px;opacity:0.55;letter-spacing:0.12em;margin-top:14px}.snk-o .snk-cta{font-size:11px;color:#fff;opacity:0.85;letter-spacing:0.18em;text-transform:uppercase;margin-top:14px;animation:snk-pulse 2.4s ease-in-out infinite}.snk-o .snk-hint{font-size:9px;color:#fff;opacity:0.45;letter-spacing:0.1em;margin-top:10px;text-transform:uppercase}.snk-hint-touch{display:none}@media(hover:none) and (pointer:coarse){.snk-hint-desk{display:none}.snk-hint-touch{display:inline}}.snk-add-lb{font:inherit;font-size:9px;letter-spacing:0.18em;text-transform:uppercase;padding:7px 14px;background:transparent;color:#fff;border:1px solid #aaa;border-radius:3px;cursor:pointer;margin-top:12px;transition:border-color 0.1s,background 0.1s}.snk-add-lb:hover{border-color:#fff;background:rgba(255,255,255,0.08)}.snk-p{display:none;grid-template-columns:repeat(3,52px);grid-template-rows:repeat(2,52px);gap:4px;justify-content:center;margin:12px auto 0}.snk-p button{background:none;border:1px solid var(--faint);color:var(--mid);font:inherit;font-size:20px;border-radius:4px;touch-action:manipulation;cursor:pointer;transition:color 0.1s,border-color 0.1s}.snk-p button:hover,.snk-p button:active{color:var(--ink);border-color:var(--mid)}.snk-p [data-snk=up]{grid-column:2;grid-row:1}.snk-p [data-snk=left]{grid-column:1;grid-row:2}.snk-p [data-snk=down]{grid-column:2;grid-row:2}.snk-p [data-snk=right]{grid-column:3;grid-row:2}@media(hover:none)and(pointer:coarse){.snk-p{display:grid}}.snk-lb{margin-top:18px;font-size:11px;color:var(--mid)}.snk-lb-h{display:flex;align-items:center;gap:8px;margin-bottom:8px}.snk-lb-h-t{text-transform:uppercase;letter-spacing:0.15em;font-size:9px;color:var(--mid);white-space:nowrap}.snk-lb-h::after{content:'';flex:1;height:1px;background:var(--faint)}.snk-lb-l{list-style:none;padding:0;margin:0;font-variant-numeric:tabular-nums}.snk-lb-l li{display:grid;grid-template-columns:20px 42px 1fr auto;gap:8px;padding:3px 4px;align-items:baseline;border-radius:2px;margin-left:-4px;margin-right:-4px}.snk-lb-l .ri{color:var(--mid);text-align:right;font-size:10px;font-weight:500}.snk-lb-l .ii{color:var(--ink);letter-spacing:0.1em;font-size:11px}.snk-lb-l .sc{color:var(--ink);font-weight:500}.snk-lb-l .dt{color:var(--mid);font-size:9px;letter-spacing:0.05em}.snk-lb-l li.r1 .ri{color:#c89b1a}.snk-lb-l li.r2 .ri{color:#9da3ac}.snk-lb-l li.r3 .ri{color:#b87333}.snk-lb-l li.r1{background:rgba(200,155,26,0.07)}.snk-lb-l li.you{outline:1px solid var(--mid)}.snk-lb-l li.you .ii::before{content:'> ';color:var(--mid);letter-spacing:0}.snk-lb-empty{font-size:10px;color:var(--mid);font-style:italic;list-style:none;padding:6px 0;text-align:center}.snk-init-form{display:flex;flex-direction:column;gap:10px;align-items:center;font-family:inherit;text-transform:none;letter-spacing:0;margin-top:12px}.snk-init-headline{font-size:11px;letter-spacing:0.25em;color:#ffd24a;text-transform:uppercase;animation:snk-pulse 1.4s ease-in-out infinite}@keyframes snk-pulse{0%,100%{opacity:0.6}50%{opacity:1}}.snk-init-form input{font:inherit;font-size:24px;letter-spacing:0.5em;text-align:center;text-transform:uppercase;width:120px;padding:8px 6px 8px 12px;background:transparent;border:1px solid #888;color:#fff;border-radius:3px;outline:none}.snk-init-form input:focus{border-color:#fff}.snk-init-form button{font:inherit;font-size:9px;letter-spacing:0.18em;text-transform:uppercase;padding:8px 18px;background:#fff;color:#000;border:none;border-radius:3px;cursor:pointer;transition:background 0.1s}.snk-init-form button:hover{background:#e8e6e1}.snk-init-form button[disabled]{opacity:0.5;cursor:default}.snk-init-err{font-size:10px;color:#ff7a7a;letter-spacing:0.05em;text-transform:none;min-height:14px;text-align:center;font-family:inherit;margin-top:-2px}.snk-init-form.snk-err input{border-color:#ff7a7a}.snk-init-form.snk-shake{animation:snk-shake 0.32s ease-in-out}@keyframes snk-shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}.snk-init-skip{font-size:9px;opacity:0.55;letter-spacing:0.12em;margin-top:2px}@media(prefers-reduced-motion:reduce){.snk-init-headline{animation:none;opacity:0.9}.snk-o .snk-cta{animation:none}.snk-init-form.snk-shake{animation:none}}</style><script>(function(){var c=document.getElementById('snk-c'),ov=document.getElementById('snk-o'),mg=document.getElementById('snk-m'),sc=document.getElementById('snk-s');if(!c)return;var pbWrap=document.getElementById('snk-pb-wrap'),pbEl=document.getElementById('snk-pb');var cx=c.getContext('2d'),CELL=14,COLS=20,ROWS=20,state='idle',sn,dr,nd,fd,score,ls,ms,stepN,moves,gameId,seed,rngState,showingInit=false,lastSubmittedRank=null,personalBest=0,pendingSubmit=null,demoTimer=null;var lbEl=document.getElementById('snk-lb'),lbList=document.getElementById('snk-lb-l'),board=[];var API=(location.host&&location.host.indexOf('helloesp.com')>=0)?'':'https://helloesp.com';try{var pb=parseInt(localStorage.getItem('snk-pb')||'0',10);if(pb>0){personalBest=pb;pbEl.textContent=pb;pbWrap.hidden=false;}}catch(e){}function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}function fmtDate(t){if(!t)return '';try{return new Date(t*1000).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});}catch(e){return '';}}function fmtIso(t){if(!t)return '';try{return new Date(t*1000).toISOString();}catch(e){return '';}}function renderLb(){if(!lbEl)return;if(!board||!board.length){lbList.innerHTML='<li class="snk-lb-empty">No scores yet. Be first.</li>';lbEl.hidden=false;return;}var html='';for(var i=0;i<board.length;i++){var e=board[i];var rankCls=i<3?' r'+(i+1):'';var youCls=(lastSubmittedRank===i+1)?' you':'';html+='<li class="'+(rankCls+youCls).trim()+'"><span class="ri">'+(i+1)+'</span><span class="ii">'+esc(e.i)+'</span><span class="sc">'+e.s+'</span><span class="dt" title="'+esc(fmtIso(e.t))+'">'+esc(fmtDate(e.t))+'</span></li>';}lbList.innerHTML=html;lbEl.hidden=false;}function fetchLb(){fetch(API+'/snake/leaderboard',{cache:'no-cache'}).then(function(r){return r.ok?r.json():null;}).then(function(b){if(Array.isArray(b)){board=b;renderLb();}}).catch(function(){if(lbEl)lbEl.hidden=true;});}function requestSeed(cb){fetch(API+'/snake/seed',{cache:'no-store'}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d&&typeof d.seed==='number'&&typeof d.gameId==='string'){seed=d.seed;gameId=d.gameId;}cb();}).catch(function(){cb();});}function rng32(s){s=(s+0x6D2B79F5)|0;var t=s;t=Math.imul(t^(t>>>15),t|1);t^=t+Math.imul(t^(t>>>7),t|61);return [(((t^(t>>>14))>>>0)/4294967296),s];}function sf(){if(seed!=null){for(var i=0;i<200;i++){var r1=rng32(rngState);rngState=r1[1];var r2=rng32(rngState);rngState=r2[1];var x=Math.floor(r1[0]*COLS),y=Math.floor(r2[0]*ROWS);if(!sn.some(function(s){return s.x===x&&s.y===y})){fd={x:x,y:y};return;}}}else{for(var k=0;k<400;k++){var x=Math.floor(Math.random()*COLS),y=Math.floor(Math.random()*ROWS);if(!sn.some(function(s){return s.x===x&&s.y===y})){fd={x:x,y:y};return;}}}}function reset(){sn=[{x:10,y:10},{x:9,y:10},{x:8,y:10}];dr={x:1,y:0};nd=dr;score=0;ms=140;stepN=0;moves=[];rngState=(seed!=null?seed:0)|0;sf();sc.textContent=0;draw();}function step(){if(nd.x!==-dr.x||nd.y!==-dr.y)dr=nd;var h={x:sn[0].x+dr.x,y:sn[0].y+dr.y};stepN++;if(h.x<0||h.x>=COLS||h.y<0||h.y>=ROWS)return over();if(sn.some(function(s){return s.x===h.x&&s.y===h.y}))return over();sn.unshift(h);if(h.x===fd.x&&h.y===fd.y){score+=10;sc.textContent=score;sf();if(ms>65)ms-=3;}else sn.pop();draw();}function draw(){cx.clearRect(0,0,c.width,c.height);cx.fillStyle=(state==='demo')?'#c97326':'#e67e22';cx.fillRect(fd.x*CELL+2,fd.y*CELL+2,CELL-4,CELL-4);cx.fillStyle=(state==='demo')?'#5a8db9':'#2686e6';for(var i=0;i<sn.length;i++){var s=sn[i];cx.fillRect(s.x*CELL+1,s.y*CELL+1,CELL-2,CELL-2);}}function loop(t){if(state!=='playing')return;if(!ls)ls=t;if(t-ls>=ms){ls=t;step();}if(state==='playing')requestAnimationFrame(loop);}function startGame(){if(state==='playing')return;stopDemo();reset();state='playing';ls=0;ov.classList.add('hide');requestAnimationFrame(loop);}function play(){pendingSubmit=null;if(state==='paused'){state='playing';ls=0;ov.classList.add('hide');requestAnimationFrame(loop);return;}if(state==='over'){seed=null;gameId=null;}if(seed==null){requestSeed(startGame);return;}startGame();}function pause(){if(state!=='playing')return;state='paused';mg.innerHTML='<div class="snk-go">Paused</div><div class="snk-go-sub">tap to resume</div>';ov.classList.remove('hide');}function updatePB(){if(score>personalBest){personalBest=score;try{localStorage.setItem('snk-pb',String(score));}catch(e){}pbEl.textContent=score;pbWrap.hidden=false;}}function over(){state='over';updatePB();var qualifies=score>=10&&gameId!=null&&(board.length<10||score>(board[board.length-1].s||0));if(qualifies){pendingSubmit={score:score,gameId:gameId,moves:moves.slice(),seed:seed};showInitials(false);}else{pendingSubmit=null;showOver();}}function showOver(){showingInit=false;var pbLine=personalBest>0?'<div class="snk-go-pb">Your best &middot; '+personalBest+'</div>':'';var addBtn=pendingSubmit?'<button type="button" class="snk-add-lb" id="snk-add-lb">Add to leaderboard</button>':'';mg.innerHTML='<div class="snk-go">Game over</div><div class="snk-go-sc">'+score+'</div>'+pbLine+addBtn+'<div class="snk-go-sub">tap canvas to play again</div>';ov.classList.remove('hide');if(pendingSubmit){var addB=document.getElementById('snk-add-lb');if(addB)addB.addEventListener('click',function(e){e.stopPropagation();showInitials(true);});}}function showInitials(isReopen){showingInit=true;var head=isReopen?'Add your initials':'New high score';var displayScore=pendingSubmit?pendingSubmit.score:score;mg.innerHTML='<div class="snk-init-headline">'+head+'</div><div class="snk-go-sc">'+displayScore+'</div><form class="snk-init-form" id="snk-init-f"><input id="snk-init-i" maxlength="3" pattern="[A-Za-z0-9]{3}" placeholder="AAA" autocomplete="off" autocapitalize="characters" inputmode="latin" required><button type="submit">Submit</button><div class="snk-init-err" id="snk-init-err"></div><span class="snk-init-skip">tap outside to skip</span></form>';ov.classList.remove('hide');var f=document.getElementById('snk-init-f'),inp=document.getElementById('snk-init-i');setTimeout(function(){if(inp)inp.focus();},20);f.addEventListener('submit',function(e){e.preventDefault();var v=(inp.value||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,3);if(v.length!==3){inp.focus();return;}submit(v);});}function submit(initials){if(!pendingSubmit)return;var btn=document.querySelector('#snk-init-f button'),inp=document.getElementById('snk-init-i'),err=document.getElementById('snk-init-err'),f=document.getElementById('snk-init-f');if(btn){btn.disabled=true;btn.textContent='...';}if(inp)inp.disabled=true;if(err)err.textContent='';if(f)f.classList.remove('snk-err','snk-shake');var payload={gameId:pendingSubmit.gameId,initials:initials,score:pendingSubmit.score,moves:pendingSubmit.moves};fetch(API+'/snake/score',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(function(r){return r.json().catch(function(){return null;}).then(function(j){return {ok:r.ok,body:j};});}).then(function(res){if(res.ok&&res.body&&res.body.ok){if(Array.isArray(res.body.leaderboard)){board=res.body.leaderboard;lastSubmittedRank=res.body.rank||null;renderLb();}pendingSubmit=null;gameId=null;seed=null;showOver();}else{if(btn){btn.disabled=false;btn.textContent='Submit';}if(inp){inp.disabled=false;inp.value='';inp.focus();}var msg=(res.body&&res.body.error)||'submission failed';if(err)err.textContent=msg;if(f){f.classList.add('snk-err','snk-shake');setTimeout(function(){if(f)f.classList.remove('snk-shake');},340);}var fatalRe=/expired|not found|score does not match/i;if(res.body&&res.body.error&&fatalRe.test(res.body.error)){pendingSubmit=null;if(btn)btn.disabled=true;if(inp)inp.disabled=true;}}}).catch(function(){if(btn){btn.disabled=false;btn.textContent='Submit';}if(inp)inp.disabled=false;if(err)err.textContent='connection failed, try again';if(f){f.classList.add('snk-shake');setTimeout(function(){if(f)f.classList.remove('snk-shake');},340);}});}function setDir(x,y){if(state!=='playing')return;if(x===-dr.x&&y===-dr.y)return;if(nd.x===x&&nd.y===y)return;nd={x:x,y:y};var ch=x===0?(y<0?'U':'D'):(x<0?'L':'R');moves.push(stepN+ch);}function aiPick(){var head=sn[0],dx=fd.x-head.x,dy=fd.y-head.y,prefs=[];if(Math.abs(dx)>=Math.abs(dy)){if(dx>0)prefs.push([1,0]);else if(dx<0)prefs.push([-1,0]);if(dy>0)prefs.push([0,1]);else if(dy<0)prefs.push([0,-1]);}else{if(dy>0)prefs.push([0,1]);else if(dy<0)prefs.push([0,-1]);if(dx>0)prefs.push([1,0]);else if(dx<0)prefs.push([-1,0]);}var all=[[1,0],[-1,0],[0,1],[0,-1]];for(var i=0;i<all.length;i++){var found=false;for(var j=0;j<prefs.length;j++)if(prefs[j][0]===all[i][0]&&prefs[j][1]===all[i][1]){found=true;break;}if(!found)prefs.push(all[i]);}for(var k=0;k<prefs.length;k++){var mv=prefs[k];if(mv[0]===-dr.x&&mv[1]===-dr.y)continue;var nx=head.x+mv[0],ny=head.y+mv[1];if(nx<0||nx>=COLS||ny<0||ny>=ROWS)continue;var willGrow=(nx===fd.x&&ny===fd.y),hit=false;for(var l=0;l<sn.length-(willGrow?0:1);l++)if(sn[l].x===nx&&sn[l].y===ny){hit=true;break;}if(!hit)return mv;}return null;}function demoSpawnFood(){for(var k=0;k<400;k++){var x=Math.floor(Math.random()*COLS),y=Math.floor(Math.random()*ROWS);if(!sn.some(function(s){return s.x===x&&s.y===y})){fd={x:x,y:y};return;}}}function demoStart(){if(state==='playing'||state==='paused'||state==='over')return;state='demo';sn=[{x:10,y:10},{x:9,y:10},{x:8,y:10}];dr={x:1,y:0};demoSpawnFood();draw();demoTick();}function demoTick(){if(state!=='demo'){demoTimer=null;return;}var pick=aiPick();if(!pick){demoTimer=setTimeout(function(){demoTimer=null;if(state==='demo')demoStart();},800);return;}dr={x:pick[0],y:pick[1]};var h={x:sn[0].x+dr.x,y:sn[0].y+dr.y};if(h.x<0||h.x>=COLS||h.y<0||h.y>=ROWS||sn.some(function(s){return s.x===h.x&&s.y===h.y})){demoTimer=setTimeout(function(){demoTimer=null;if(state==='demo')demoStart();},800);return;}sn.unshift(h);if(h.x===fd.x&&h.y===fd.y){demoSpawnFood();if(sn.length>=COLS*ROWS-3){demoTimer=setTimeout(function(){demoTimer=null;if(state==='demo')demoStart();},1200);draw();return;}}else sn.pop();draw();demoTimer=setTimeout(demoTick,170);}function stopDemo(){if(demoTimer){clearTimeout(demoTimer);demoTimer=null;}}var K={ArrowUp:[0,-1],ArrowDown:[0,1],ArrowLeft:[-1,0],ArrowRight:[1,0],w:[0,-1],s:[0,1],a:[-1,0],d:[1,0],W:[0,-1],S:[0,1],A:[-1,0],D:[1,0]};document.addEventListener('keydown',function(e){if(showingInit)return;if(!K[e.key])return;e.preventDefault();if(state!=='playing')play();else setDir(K[e.key][0],K[e.key][1]);});var ts=null;c.addEventListener('touchstart',function(e){ts={x:e.touches[0].clientX,y:e.touches[0].clientY};},{passive:true});c.addEventListener('touchmove',function(e){if(ts&&state==='playing')e.preventDefault();},{passive:false});c.addEventListener('touchend',function(e){if(!ts)return;var t=e.changedTouches[0],dx=t.clientX-ts.x,dy=t.clientY-ts.y;if(Math.abs(dx)<20&&Math.abs(dy)<20){ts=null;return;}if(state==='playing'){if(Math.abs(dx)>Math.abs(dy))setDir(dx>0?1:-1,0);else setDir(0,dy>0?1:-1);}else if(!showingInit){play();}ts=null;});document.querySelectorAll('.snk-p button').forEach(function(b){b.addEventListener('click',function(){if(showingInit)return;if(state!=='playing'){play();return;}var d=b.getAttribute('data-snk');if(d==='up')setDir(0,-1);else if(d==='down')setDir(0,1);else if(d==='left')setDir(-1,0);else if(d==='right')setDir(1,0);});});ov.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('#snk-init-f'))return;if(e.target.closest&&e.target.closest('#snk-add-lb'))return;if(showingInit){showOver();return;}if(state!=='playing')play();});var prefersReducedMotion=function(){try{return window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;}catch(e){return false;}};document.addEventListener('visibilitychange',function(){if(document.hidden){if(state==='playing')pause();if(state==='demo')stopDemo();}else{if((state==='idle'||state==='demo')&&!prefersReducedMotion())demoStart();}});fetchLb();setTimeout(function(){if(state==='idle'&&!prefersReducedMotion())demoStart();},400);})();</script>`;
+const SNAKE_GAME = `<div class="snk" role="group" aria-label="Snake"><div class="snk-h"><span class="snk-h-l">Snake</span><div class="snk-h-r"><span class="snk-stat"><span class="snk-stat-k">Score</span><b id="snk-s">0</b></span><span class="snk-stat snk-stat-pb" id="snk-pb-wrap" hidden><span class="snk-stat-k">Best</span><b id="snk-pb">0</b></span></div></div><div class="snk-board"><canvas id="snk-c" width="280" height="280" aria-hidden="true"></canvas><div class="snk-o" id="snk-o"><div class="snk-o-inner" id="snk-m"><div class="snk-go">Snake</div><div class="snk-cta">tap to play</div><div class="snk-hint"><span class="snk-hint-desk">Arrow keys or WASD</span><span class="snk-hint-touch">Swipe or tap arrows below</span></div></div></div></div><div class="snk-p" aria-hidden="true"><button type="button" data-snk="up">&uarr;</button><button type="button" data-snk="left">&larr;</button><button type="button" data-snk="down">&darr;</button><button type="button" data-snk="right">&rarr;</button></div><div class="snk-lb" id="snk-lb" hidden><div class="snk-lb-h"><span class="snk-lb-h-t">Leaderboard</span></div><ol class="snk-lb-l" id="snk-lb-l"></ol></div></div><style>.snk{max-width:280px;margin:32px auto 0;text-align:left}.snk-board{position:relative}.snk-h{display:flex;justify-content:space-between;align-items:baseline;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--mid);margin-bottom:8px}.snk-h-l{font-weight:500;color:var(--ink)}.snk-h-r{display:flex;gap:14px;align-items:baseline}.snk-stat{display:inline-flex;gap:6px;align-items:baseline}.snk-stat-k{font-size:9px;letter-spacing:0.12em;color:var(--mid)}.snk-stat b{color:var(--ink);font-weight:500;font-size:14px;letter-spacing:0.02em;font-variant-numeric:tabular-nums}.snk-stat-pb b{color:var(--mid)}#snk-c{display:block;width:100%;max-width:280px;aspect-ratio:1;background:var(--faint);border:1px solid var(--faint);border-radius:3px;image-rendering:pixelated;touch-action:none;cursor:crosshair;box-shadow:inset 0 0 0 1px rgba(0,0,0,0.06)}.snk-o{position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.62);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;padding:16px;text-align:center;border-radius:3px}.snk-o.hide{display:none}.snk-o-inner{max-width:240px}.snk-o .snk-go{font-size:22px;letter-spacing:-0.01em;text-transform:none;font-weight:400;color:#fff;margin-bottom:6px;line-height:1}.snk-o .snk-go-sc{font-size:36px;font-weight:300;letter-spacing:0;color:#fff;font-variant-numeric:tabular-nums;line-height:1;margin:8px 0 6px}.snk-o .snk-go-pb{font-size:9px;color:#bbb;letter-spacing:0.1em;margin-top:4px}.snk-o .snk-go-sub{font-size:9px;opacity:0.55;letter-spacing:0.12em;margin-top:14px}.snk-o .snk-cta{font-size:11px;color:#fff;opacity:0.85;letter-spacing:0.18em;text-transform:uppercase;margin-top:14px;animation:snk-pulse 2.4s ease-in-out infinite}.snk-o .snk-hint{font-size:9px;color:#fff;opacity:0.45;letter-spacing:0.1em;margin-top:10px;text-transform:uppercase}.snk-hint-touch{display:none}@media(hover:none) and (pointer:coarse){.snk-hint-desk{display:none}.snk-hint-touch{display:inline}}.snk-add-lb{font:inherit;font-size:9px;letter-spacing:0.18em;text-transform:uppercase;padding:7px 14px;background:transparent;color:#fff;border:1px solid #aaa;border-radius:3px;cursor:pointer;margin-top:12px;transition:border-color 0.1s,background 0.1s}.snk-add-lb:hover{border-color:#fff;background:rgba(255,255,255,0.08)}.snk-p{display:none;grid-template-columns:repeat(3,52px);grid-template-rows:repeat(2,52px);gap:4px;justify-content:center;margin:12px auto 0}.snk-p button{background:none;border:1px solid var(--faint);color:var(--mid);font:inherit;font-size:20px;border-radius:4px;touch-action:manipulation;cursor:pointer;transition:color 0.1s,border-color 0.1s}.snk-p button:hover,.snk-p button:active{color:var(--ink);border-color:var(--mid)}.snk-p [data-snk=up]{grid-column:2;grid-row:1}.snk-p [data-snk=left]{grid-column:1;grid-row:2}.snk-p [data-snk=down]{grid-column:2;grid-row:2}.snk-p [data-snk=right]{grid-column:3;grid-row:2}@media(hover:none)and(pointer:coarse){.snk-p{display:grid}}.snk-lb{margin-top:18px;font-size:11px;color:var(--mid)}.snk-lb-h{display:flex;align-items:center;gap:8px;margin-bottom:8px}.snk-lb-h-t{text-transform:uppercase;letter-spacing:0.15em;font-size:9px;color:var(--mid);white-space:nowrap}.snk-lb-h::after{content:'';flex:1;height:1px;background:var(--faint)}.snk-lb-l{list-style:none;padding:0;margin:0;font-variant-numeric:tabular-nums}.snk-lb-l li{display:grid;grid-template-columns:20px 42px 1fr auto;gap:8px;padding:3px 4px;align-items:baseline;border-radius:2px;margin-left:-4px;margin-right:-4px}.snk-lb-l .ri{color:var(--mid);text-align:right;font-size:10px;font-weight:500}.snk-lb-l .ii{color:var(--ink);letter-spacing:0.1em;font-size:11px}.snk-lb-l .sc{color:var(--ink);font-weight:500}.snk-lb-l .dt{color:var(--mid);font-size:9px;letter-spacing:0.05em}.snk-lb-l li.r1 .ri{color:#c89b1a}.snk-lb-l li.r2 .ri{color:#9da3ac}.snk-lb-l li.r3 .ri{color:#b87333}.snk-lb-l li.r1{background:rgba(200,155,26,0.07)}.snk-lb-l li.you{outline:1px solid var(--mid)}.snk-lb-l li.you .ii::before{content:'> ';color:var(--mid);letter-spacing:0}.snk-lb-empty{font-size:10px;color:var(--mid);font-style:italic;list-style:none;padding:6px 0;text-align:center}.snk-init-form{display:flex;flex-direction:column;gap:10px;align-items:center;font-family:inherit;text-transform:none;letter-spacing:0;margin-top:12px}.snk-init-headline{font-size:11px;letter-spacing:0.25em;color:#ffd24a;text-transform:uppercase;animation:snk-pulse 1.4s ease-in-out infinite}@keyframes snk-pulse{0%,100%{opacity:0.6}50%{opacity:1}}.snk-init-form input{font:inherit;font-size:24px;letter-spacing:0.5em;text-align:center;text-transform:uppercase;width:120px;padding:8px 6px 8px 12px;background:transparent;border:1px solid #888;color:#fff;border-radius:3px;outline:none}.snk-init-form input:focus{border-color:#fff}.snk-init-form button{font:inherit;font-size:9px;letter-spacing:0.18em;text-transform:uppercase;padding:8px 18px;background:#fff;color:#000;border:none;border-radius:3px;cursor:pointer;transition:background 0.1s}.snk-init-form button:hover{background:#e8e6e1}.snk-init-form button[disabled]{opacity:0.5;cursor:default}.snk-init-err{font-size:10px;color:#ff7a7a;letter-spacing:0.05em;text-transform:none;min-height:14px;text-align:center;font-family:inherit;margin-top:-2px}.snk-init-form.snk-err input{border-color:#ff7a7a}.snk-init-form.snk-shake{animation:snk-shake 0.32s ease-in-out}@keyframes snk-shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}.snk-init-skip{font-size:9px;opacity:0.55;letter-spacing:0.12em;margin-top:2px}@media(prefers-reduced-motion:reduce){.snk-init-headline{animation:none;opacity:0.9}.snk-o .snk-cta{animation:none}.snk-init-form.snk-shake{animation:none}}</style><script>(function(){var c=document.getElementById('snk-c'),ov=document.getElementById('snk-o'),mg=document.getElementById('snk-m'),sc=document.getElementById('snk-s');if(!c)return;var pbWrap=document.getElementById('snk-pb-wrap'),pbEl=document.getElementById('snk-pb');var cx=c.getContext('2d'),CELL=14,COLS=20,ROWS=20,state='idle',sn,dr,nd,fd,score,ls,ms,stepN,moves,gameId,seed,rngState,showingInit=false,lastSubmittedRank=null,personalBest=0,pendingSubmit=null,demoTimer=null;var lbEl=document.getElementById('snk-lb'),lbList=document.getElementById('snk-lb-l'),board=[];var API=(location.host==='helloesp.com'||location.host==='www.helloesp.com')?'':'https://helloesp.com';try{var pb=parseInt(localStorage.getItem('snk-pb')||'0',10);if(pb>0){personalBest=pb;pbEl.textContent=pb;pbWrap.hidden=false;}}catch(e){}function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}function fmtDate(t){if(!t)return '';try{return new Date(t*1000).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'});}catch(e){return '';}}function fmtIso(t){if(!t)return '';try{return new Date(t*1000).toISOString();}catch(e){return '';}}function renderLb(){if(!lbEl)return;if(!board||!board.length){lbList.innerHTML='<li class="snk-lb-empty">No scores yet. Be first.</li>';lbEl.hidden=false;return;}var html='';for(var i=0;i<board.length;i++){var e=board[i];var rankCls=i<3?' r'+(i+1):'';var youCls=(lastSubmittedRank===i+1)?' you':'';html+='<li class="'+(rankCls+youCls).trim()+'"><span class="ri">'+(i+1)+'</span><span class="ii">'+esc(e.i)+'</span><span class="sc">'+e.s+'</span><span class="dt" title="'+esc(fmtIso(e.t))+'">'+esc(fmtDate(e.t))+'</span></li>';}lbList.innerHTML=html;lbEl.hidden=false;}function fetchLb(){fetch(API+'/snake/leaderboard',{cache:'no-cache'}).then(function(r){return r.ok?r.json():null;}).then(function(b){if(Array.isArray(b)){board=b;renderLb();}}).catch(function(){if(lbEl)lbEl.hidden=true;});}function requestSeed(cb){fetch(API+'/snake/seed',{cache:'no-store'}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d&&typeof d.seed==='number'&&typeof d.gameId==='string'){seed=d.seed;gameId=d.gameId;}cb();}).catch(function(){cb();});}function rng32(s){s=(s+0x6D2B79F5)|0;var t=s;t=Math.imul(t^(t>>>15),t|1);t^=t+Math.imul(t^(t>>>7),t|61);return [(((t^(t>>>14))>>>0)/4294967296),s];}function sf(){if(seed!=null){for(var i=0;i<200;i++){var r1=rng32(rngState);rngState=r1[1];var r2=rng32(rngState);rngState=r2[1];var x=Math.floor(r1[0]*COLS),y=Math.floor(r2[0]*ROWS);if(!sn.some(function(s){return s.x===x&&s.y===y})){fd={x:x,y:y};return;}}}else{for(var k=0;k<400;k++){var x=Math.floor(Math.random()*COLS),y=Math.floor(Math.random()*ROWS);if(!sn.some(function(s){return s.x===x&&s.y===y})){fd={x:x,y:y};return;}}}}function reset(){sn=[{x:10,y:10},{x:9,y:10},{x:8,y:10}];dr={x:1,y:0};nd=dr;score=0;ms=140;stepN=0;moves=[];rngState=(seed!=null?seed:0)|0;sf();sc.textContent=0;draw();}function step(){if(nd.x!==-dr.x||nd.y!==-dr.y)dr=nd;var h={x:sn[0].x+dr.x,y:sn[0].y+dr.y};stepN++;if(h.x<0||h.x>=COLS||h.y<0||h.y>=ROWS)return over();if(sn.some(function(s){return s.x===h.x&&s.y===h.y}))return over();sn.unshift(h);if(h.x===fd.x&&h.y===fd.y){score+=10;sc.textContent=score;sf();if(ms>65)ms-=3;}else sn.pop();draw();}function draw(){cx.clearRect(0,0,c.width,c.height);cx.fillStyle=(state==='demo')?'#c97326':'#e67e22';cx.fillRect(fd.x*CELL+2,fd.y*CELL+2,CELL-4,CELL-4);cx.fillStyle=(state==='demo')?'#5a8db9':'#2686e6';for(var i=0;i<sn.length;i++){var s=sn[i];cx.fillRect(s.x*CELL+1,s.y*CELL+1,CELL-2,CELL-2);}}function loop(t){if(state!=='playing')return;if(!ls)ls=t;if(t-ls>=ms){ls=t;step();}if(state==='playing')requestAnimationFrame(loop);}function startGame(){if(state==='playing')return;stopDemo();reset();state='playing';ls=0;ov.classList.add('hide');requestAnimationFrame(loop);}function play(){pendingSubmit=null;if(state==='paused'){state='playing';ls=0;ov.classList.add('hide');requestAnimationFrame(loop);return;}if(state==='over'){seed=null;gameId=null;}if(seed==null){requestSeed(startGame);return;}startGame();}function pause(){if(state!=='playing')return;state='paused';mg.innerHTML='<div class="snk-go">Paused</div><div class="snk-go-sub">tap to resume</div>';ov.classList.remove('hide');}function updatePB(){if(score>personalBest){personalBest=score;try{localStorage.setItem('snk-pb',String(score));}catch(e){}pbEl.textContent=score;pbWrap.hidden=false;}}function over(){state='over';updatePB();var qualifies=score>=10&&gameId!=null&&(board.length<10||score>(board[board.length-1].s||0));if(qualifies){pendingSubmit={score:score,gameId:gameId,moves:moves.slice(),seed:seed};showInitials(false);}else{pendingSubmit=null;showOver();}}function showOver(){showingInit=false;var pbLine=personalBest>0?'<div class="snk-go-pb">Your best &middot; '+personalBest+'</div>':'';var addBtn=pendingSubmit?'<button type="button" class="snk-add-lb" id="snk-add-lb">Add to leaderboard</button>':'';mg.innerHTML='<div class="snk-go">Game over</div><div class="snk-go-sc">'+score+'</div>'+pbLine+addBtn+'<div class="snk-go-sub">tap canvas to play again</div>';ov.classList.remove('hide');if(pendingSubmit){var addB=document.getElementById('snk-add-lb');if(addB)addB.addEventListener('click',function(e){e.stopPropagation();showInitials(true);});}}function showInitials(isReopen){showingInit=true;var head=isReopen?'Add your initials':'New high score';var displayScore=pendingSubmit?pendingSubmit.score:score;mg.innerHTML='<div class="snk-init-headline">'+head+'</div><div class="snk-go-sc">'+displayScore+'</div><form class="snk-init-form" id="snk-init-f"><input id="snk-init-i" maxlength="3" pattern="[A-Za-z0-9]{3}" placeholder="AAA" autocomplete="off" autocapitalize="characters" inputmode="latin" required><button type="submit">Submit</button><div class="snk-init-err" id="snk-init-err"></div><span class="snk-init-skip">tap outside to skip</span></form>';ov.classList.remove('hide');var f=document.getElementById('snk-init-f'),inp=document.getElementById('snk-init-i');setTimeout(function(){if(inp)inp.focus();},20);f.addEventListener('submit',function(e){e.preventDefault();var v=(inp.value||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,3);if(v.length!==3){inp.focus();return;}submit(v);});}function submit(initials){if(!pendingSubmit)return;var btn=document.querySelector('#snk-init-f button'),inp=document.getElementById('snk-init-i'),err=document.getElementById('snk-init-err'),f=document.getElementById('snk-init-f');if(btn){btn.disabled=true;btn.textContent='...';}if(inp)inp.disabled=true;if(err)err.textContent='';if(f)f.classList.remove('snk-err','snk-shake');var payload={gameId:pendingSubmit.gameId,initials:initials,score:pendingSubmit.score,moves:pendingSubmit.moves};fetch(API+'/snake/score',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(function(r){return r.json().catch(function(){return null;}).then(function(j){return {ok:r.ok,body:j};});}).then(function(res){if(res.ok&&res.body&&res.body.ok){if(Array.isArray(res.body.leaderboard)){board=res.body.leaderboard;lastSubmittedRank=res.body.rank||null;renderLb();}pendingSubmit=null;gameId=null;seed=null;showOver();}else{if(btn){btn.disabled=false;btn.textContent='Submit';}if(inp){inp.disabled=false;inp.value='';inp.focus();}var msg=(res.body&&res.body.error)||'submission failed';if(err)err.textContent=msg;if(f){f.classList.add('snk-err','snk-shake');setTimeout(function(){if(f)f.classList.remove('snk-shake');},340);}var fatalRe=/expired|not found|score does not match/i;if(res.body&&res.body.error&&fatalRe.test(res.body.error)){pendingSubmit=null;if(btn)btn.disabled=true;if(inp)inp.disabled=true;}}}).catch(function(){if(btn){btn.disabled=false;btn.textContent='Submit';}if(inp)inp.disabled=false;if(err)err.textContent='connection failed, try again';if(f){f.classList.add('snk-shake');setTimeout(function(){if(f)f.classList.remove('snk-shake');},340);}});}function setDir(x,y){if(state!=='playing')return;if(x===-dr.x&&y===-dr.y)return;if(nd.x===x&&nd.y===y)return;nd={x:x,y:y};var ch=x===0?(y<0?'U':'D'):(x<0?'L':'R');moves.push(stepN+ch);}function aiPick(){var head=sn[0],dx=fd.x-head.x,dy=fd.y-head.y,prefs=[];if(Math.abs(dx)>=Math.abs(dy)){if(dx>0)prefs.push([1,0]);else if(dx<0)prefs.push([-1,0]);if(dy>0)prefs.push([0,1]);else if(dy<0)prefs.push([0,-1]);}else{if(dy>0)prefs.push([0,1]);else if(dy<0)prefs.push([0,-1]);if(dx>0)prefs.push([1,0]);else if(dx<0)prefs.push([-1,0]);}var all=[[1,0],[-1,0],[0,1],[0,-1]];for(var i=0;i<all.length;i++){var found=false;for(var j=0;j<prefs.length;j++)if(prefs[j][0]===all[i][0]&&prefs[j][1]===all[i][1]){found=true;break;}if(!found)prefs.push(all[i]);}for(var k=0;k<prefs.length;k++){var mv=prefs[k];if(mv[0]===-dr.x&&mv[1]===-dr.y)continue;var nx=head.x+mv[0],ny=head.y+mv[1];if(nx<0||nx>=COLS||ny<0||ny>=ROWS)continue;var willGrow=(nx===fd.x&&ny===fd.y),hit=false;for(var l=0;l<sn.length-(willGrow?0:1);l++)if(sn[l].x===nx&&sn[l].y===ny){hit=true;break;}if(!hit)return mv;}return null;}function demoSpawnFood(){for(var k=0;k<400;k++){var x=Math.floor(Math.random()*COLS),y=Math.floor(Math.random()*ROWS);if(!sn.some(function(s){return s.x===x&&s.y===y})){fd={x:x,y:y};return;}}}function demoStart(){if(state==='playing'||state==='paused'||state==='over')return;state='demo';sn=[{x:10,y:10},{x:9,y:10},{x:8,y:10}];dr={x:1,y:0};demoSpawnFood();draw();demoTick();}function demoTick(){if(state!=='demo'){demoTimer=null;return;}var pick=aiPick();if(!pick){demoTimer=setTimeout(function(){demoTimer=null;if(state==='demo')demoStart();},800);return;}dr={x:pick[0],y:pick[1]};var h={x:sn[0].x+dr.x,y:sn[0].y+dr.y};if(h.x<0||h.x>=COLS||h.y<0||h.y>=ROWS||sn.some(function(s){return s.x===h.x&&s.y===h.y})){demoTimer=setTimeout(function(){demoTimer=null;if(state==='demo')demoStart();},800);return;}sn.unshift(h);if(h.x===fd.x&&h.y===fd.y){demoSpawnFood();if(sn.length>=COLS*ROWS-3){demoTimer=setTimeout(function(){demoTimer=null;if(state==='demo')demoStart();},1200);draw();return;}}else sn.pop();draw();demoTimer=setTimeout(demoTick,170);}function stopDemo(){if(demoTimer){clearTimeout(demoTimer);demoTimer=null;}}var K={ArrowUp:[0,-1],ArrowDown:[0,1],ArrowLeft:[-1,0],ArrowRight:[1,0],w:[0,-1],s:[0,1],a:[-1,0],d:[1,0],W:[0,-1],S:[0,1],A:[-1,0],D:[1,0]};document.addEventListener('keydown',function(e){if(showingInit)return;if(!K[e.key])return;e.preventDefault();if(state!=='playing')play();else setDir(K[e.key][0],K[e.key][1]);});var ts=null;c.addEventListener('touchstart',function(e){ts={x:e.touches[0].clientX,y:e.touches[0].clientY};},{passive:true});c.addEventListener('touchmove',function(e){if(ts&&state==='playing')e.preventDefault();},{passive:false});c.addEventListener('touchend',function(e){if(!ts)return;var t=e.changedTouches[0],dx=t.clientX-ts.x,dy=t.clientY-ts.y;if(Math.abs(dx)<20&&Math.abs(dy)<20){ts=null;return;}if(state==='playing'){if(Math.abs(dx)>Math.abs(dy))setDir(dx>0?1:-1,0);else setDir(0,dy>0?1:-1);}else if(!showingInit){play();}ts=null;});document.querySelectorAll('.snk-p button').forEach(function(b){b.addEventListener('click',function(){if(showingInit)return;if(state!=='playing'){play();return;}var d=b.getAttribute('data-snk');if(d==='up')setDir(0,-1);else if(d==='down')setDir(0,1);else if(d==='left')setDir(-1,0);else if(d==='right')setDir(1,0);});});ov.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('#snk-init-f'))return;if(e.target.closest&&e.target.closest('#snk-add-lb'))return;if(showingInit){showOver();return;}if(state!=='playing')play();});var prefersReducedMotion=function(){try{return window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;}catch(e){return false;}};document.addEventListener('visibilitychange',function(){if(document.hidden){if(state==='playing')pause();if(state==='demo')stopDemo();}else{if((state==='idle'||state==='demo')&&!prefersReducedMotion())demoStart();}});fetchLb();setTimeout(function(){if(state==='idle'&&!prefersReducedMotion())demoStart();},400);})();</script>`;
 
 const FAVICON = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="#2686e6">${CHIP_ICON_PATHS}</svg>`).replace(/'/g, '%27').replace(/"/g, '%22')}">`;
 
@@ -174,6 +174,7 @@ export class EspRelay {
     this.lastStats = null;  // JSON string of the most recent ESP stats push
     this.lastStatsAt = 0;   // epoch ms when lastStats was set; used to detect staleness for badges
     this.lastWeather = null; // cached outdoor weather object
+    this.lastAirQuality = null; // cached outdoor air-quality object (PM2.5, US AQI)
     this.deadmanAlertSent = false; // so we don't spam when offline persists past 24h
     this.backupSessions = new Map(); // seq -> { startedAt, meta, files[], currentFile, totalB64, aborted }
     this.lastBackupAt = 0;
@@ -185,6 +186,7 @@ export class EspRelay {
       const u = await state.storage.get('maintenanceUntil');
       const m = await state.storage.get('maintenanceMessage');
       const w = await state.storage.get('lastWeather');
+      const aq = await state.storage.get('lastAirQuality');
       const dm = await state.storage.get('deadmanAlertSent');
       const lba = await state.storage.get('lastBackupAt');
       const lbd = await state.storage.get('lastBackupDate');
@@ -193,6 +195,7 @@ export class EspRelay {
       if (typeof u === 'number') this.maintenanceUntil = u;
       if (typeof m === 'string') this.maintenanceMessage = m;
       if (w && typeof w === 'object') this.lastWeather = w;
+      if (aq && typeof aq === 'object') this.lastAirQuality = aq;
       if (typeof dm === 'boolean') this.deadmanAlertSent = dm;
       if (typeof lba === 'number') this.lastBackupAt = lba;
       if (typeof lbd === 'string') this.lastBackupDate = lbd;
@@ -309,22 +312,57 @@ export class EspRelay {
     }
   }
 
+  async refreshAirQuality() {
+    try {
+      const url = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${WEATHER_LAT}&longitude=${WEATHER_LON}&current=us_aqi,pm2_5,carbon_dioxide,uv_index`;
+      const res = await fetch(url, { cf: { cacheTtl: 3600 } });
+      if (!res.ok) { console.error('air quality http', res.status); return; }
+      const data = await res.json();
+      if (!data || !data.current) return;
+      const c = data.current;
+      this.lastAirQuality = {
+        us_aqi:        c.us_aqi,
+        pm2_5:         c.pm2_5,
+        co2_ppm:       c.carbon_dioxide,
+        uv_index:      c.uv_index,
+        fetched_at:    Date.now()
+      };
+      await this.state.storage.put('lastAirQuality', this.lastAirQuality);
+    } catch (e) {
+      console.error('air quality fetch failed:', e && e.message);
+    }
+  }
+
   async refreshWeather() {
     try {
-      const url = `https://api.open-meteo.com/v1/forecast?latitude=${WEATHER_LAT}&longitude=${WEATHER_LON}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,surface_pressure&temperature_unit=fahrenheit&wind_speed_unit=mph`;
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${WEATHER_LAT}&longitude=${WEATHER_LON}&current=temperature_2m,apparent_temperature,relative_humidity_2m,dew_point_2m,weather_code,wind_speed_10m,wind_direction_10m,surface_pressure,is_day&temperature_unit=fahrenheit&wind_speed_unit=mph`;
       const res = await fetch(url, { cf: { cacheTtl: 3600 } });
       if (!res.ok) { console.error('weather http', res.status); return; }
       const data = await res.json();
       if (!data || !data.current) return;
       const c = data.current;
+      // Capture previous pressure BEFORE overwriting lastWeather, so we can derive
+      // a trend label (Rising/Falling/Steady) over the hourly refresh interval.
+      const prevPressure = this.lastWeather && this.lastWeather.pressure_hpa;
+      let pressureTrend = 'Steady';
+      if (typeof prevPressure === 'number' && typeof c.surface_pressure === 'number') {
+        const diff = c.surface_pressure - prevPressure;
+        if (diff > 1.0)  pressureTrend = 'Rising';
+        else if (diff < -1.0) pressureTrend = 'Falling';
+      }
       this.lastWeather = {
-        temp_f:        c.temperature_2m,
-        humidity:      c.relative_humidity_2m,
-        weather_code:  c.weather_code,
-        wind_mph:      c.wind_speed_10m,
-        pressure_hpa:  c.surface_pressure,
-        location:      WEATHER_LOCATION,
-        fetched_at:    Date.now()
+        temp_f:         c.temperature_2m,
+        feels_like_f:   c.apparent_temperature,
+        humidity:       c.relative_humidity_2m,
+        dewpoint_f:     c.dew_point_2m,
+        weather_code:   c.weather_code,
+        wind_mph:       c.wind_speed_10m,
+        wind_deg:       c.wind_direction_10m,
+        pressure_hpa:   c.surface_pressure,
+        pressure_trend: pressureTrend,
+        is_day:         c.is_day === 1,
+        location:       WEATHER_LOCATION,
+        fetched_at:     Date.now()
       };
       await this.state.storage.put('lastWeather', this.lastWeather);
     } catch (e) {
@@ -336,18 +374,39 @@ export class EspRelay {
     // returns the stats object with outdoor weather injected if we have fresh-enough data
     if (!this.lastWeather) return rawData;
     if (Date.now() - this.lastWeather.fetched_at > WEATHER_STALE_MS) return rawData;
-    return {
-      ...rawData,
-      outdoor: {
-        temp_f:       this.lastWeather.temp_f,
-        humidity:     this.lastWeather.humidity,
-        weather_code: this.lastWeather.weather_code,
-        wind_mph:     this.lastWeather.wind_mph,
-        pressure_hpa: this.lastWeather.pressure_hpa,
-        location:     this.lastWeather.location,
-        age_ms:       Date.now() - this.lastWeather.fetched_at
-      }
+    const outdoor = {
+      temp_f:         this.lastWeather.temp_f,
+      feels_like_f:   this.lastWeather.feels_like_f,
+      humidity:       this.lastWeather.humidity,
+      dewpoint_f:     this.lastWeather.dewpoint_f,
+      weather_code:   this.lastWeather.weather_code,
+      wind_mph:       this.lastWeather.wind_mph,
+      wind_deg:       this.lastWeather.wind_deg,
+      pressure_hpa:   this.lastWeather.pressure_hpa,
+      pressure_trend: this.lastWeather.pressure_trend,
+      is_day:         this.lastWeather.is_day,
+      location:       this.lastWeather.location,
+      age_ms:         Date.now() - this.lastWeather.fetched_at
     };
+    // Air quality piggybacks on the same outdoor block, gated independently
+    // on its own freshness so a stale AQ fetch doesn't suppress weather and
+    // vice versa. Same staleness window (2h) since both refresh hourly.
+    if (this.lastAirQuality
+        && Date.now() - this.lastAirQuality.fetched_at <= WEATHER_STALE_MS) {
+      if (typeof this.lastAirQuality.us_aqi === 'number') {
+        outdoor.us_aqi = this.lastAirQuality.us_aqi;
+      }
+      if (typeof this.lastAirQuality.pm2_5 === 'number') {
+        outdoor.pm2_5 = this.lastAirQuality.pm2_5;
+      }
+      if (typeof this.lastAirQuality.co2_ppm === 'number') {
+        outdoor.co2_ppm = this.lastAirQuality.co2_ppm;
+      }
+      if (typeof this.lastAirQuality.uv_index === 'number') {
+        outdoor.uv_index = this.lastAirQuality.uv_index;
+      }
+    }
+    return { ...rawData, outdoor };
   }
 
   badgeState() {
@@ -504,6 +563,21 @@ export class EspRelay {
       '    Pressure     ' + pressure,
     ];
 
+    if (s && Number.isFinite(s.power_w)) {
+      const fmtWh = (v) => {
+        if (!Number.isFinite(v)) return dash;
+        if (v >= 1000) return (v / 1000).toFixed(2) + ' kWh';
+        return Math.round(v) + ' Wh';
+      };
+      lines.push(
+        '',
+        '  POWER (smart plug)',
+        '    Now          ' + s.power_w.toFixed(1) + ' W',
+        '    Today        ' + fmtWh(s.energy_today_wh),
+        '    Lifetime     ' + fmtWh(s.energy_total_wh)
+      );
+    }
+
     if (s && s.outdoor && Number.isFinite(s.outdoor.temp_f)) {
       const o = s.outdoor;
       const loc = (o.location && typeof o.location === 'string') ? o.location : 'Denver, CO';
@@ -558,6 +632,16 @@ export class EspRelay {
             valueText = Math.round(stats.temperature.fahrenheit) + '\u00b0F';
           } else { valueText = 'no data'; }
           break;
+        case 'power':
+          // Live wattage from the Shelly poll (only present when shelly_url
+          // is configured AND the freshness gate in buildStatsJson is met).
+          // 'no data' covers both the forker case (no Shelly) and the stale
+          // case (Shelly unreachable for >3 min) using the same fallback
+          // the temp/visits cases use.
+          if (typeof stats.power_w === 'number') {
+            valueText = stats.power_w.toFixed(1) + ' W';
+          } else { valueText = 'no data'; }
+          break;
         case 'online':
           valueText = '\u25CF live';
           break;
@@ -595,14 +679,34 @@ export class EspRelay {
 
     let row2 = '', row3 = '';
     if (stats && s.state !== 'offline' && s.state !== 'stale') {
+      // Row A: indoor environment readings + power draw (when Shelly fresh)
       const tempF = stats.temperature && typeof stats.temperature.fahrenheit === 'number'
         ? Math.round(stats.temperature.fahrenheit) + '\u00b0F' : null;
       const hum = stats.humidity_percent != null ? Math.round(stats.humidity_percent) + '% RH' : null;
       const co2 = stats.co2_ppm != null ? stats.co2_ppm + ' CO\u2082 ppm' : null;
-      const rowA = [tempF, hum, co2].filter(Boolean).join('  \u00b7  ');
-      const up = formatUptime(stats.uptime || '');
-      const vis = stats.visitors != null ? stats.visitors + ' visits' : null;
-      const rowB = [up, vis].filter(Boolean).join('  \u00b7  ');
+      const power = (typeof stats.power_w === 'number') ? Math.round(stats.power_w) + ' W' : null;
+      const rowA = [tempF, hum, co2, power].filter(Boolean).join(' \u00b7 ');
+
+      // Row B: ops/social (uptime, visits, countries, messages). Compact
+      // uptime ("47d" / "8h" / "23m") and tight separators are needed to
+      // fit all four within the 340px wide-card budget. Missing values
+      // collapse the row gracefully via filter(Boolean).
+      let up = null;
+      const upMatch = String(stats.uptime || '').match(/(\d+)\s*days?[,\s]+(\d+)\s*hours?[,\s]+(\d+)\s*minutes?/);
+      if (upMatch) {
+        const d = +upMatch[1], h = +upMatch[2], mn = +upMatch[3];
+        if (d > 0)       up = d + 'd';
+        else if (h > 0)  up = h + 'h';
+        else if (mn > 0) up = mn + 'm';
+      }
+      const vis = (typeof stats.visitors === 'number' && stats.visitors > 0)
+        ? stats.visitors.toLocaleString() + ' visits' : null;
+      const countries = (typeof stats.countries === 'number' && stats.countries > 0)
+        ? stats.countries + ' countries' : null;
+      const messages = (typeof stats.guestbook_approved === 'number' && stats.guestbook_approved > 0)
+        ? stats.guestbook_approved.toLocaleString() + ' msgs' : null;
+      const rowB = [up, vis, countries, messages].filter(Boolean).join(' \u00b7 ');
+
       row2 = escapeHtml(rowA);
       row3 = escapeHtml(rowB);
     } else {
@@ -1181,7 +1285,10 @@ export class EspRelay {
     // split a code point. Encode once and slice the resulting byte buffer.
     const bundleBytes = new TextEncoder().encode(bundleJson);
     const date = (meta.generated_at || new Date().toISOString()).slice(0, 10);
-    const sessionId = Math.random().toString(36).slice(2, 8);
+    // 6-char unique session token for grouping multipart email backups.
+    // Not security-critical (just a uniqueness key) but switched to
+    // crypto-RNG to satisfy CodeQL's insecure-randomness check across the codebase.
+    const sessionId = crypto.randomUUID().replace(/-/g, '').slice(0, 6);
     const totalParts = Math.max(1, Math.ceil(bundleBytes.length / BACKUP_PART_SIZE));
     const padWidth = String(totalParts).length;
 
@@ -1276,6 +1383,10 @@ export class EspRelay {
     // lazy weather refresh: fetch on first tick, then every WEATHER_REFRESH_MS (1 hour)
     if (!this.lastWeather || Date.now() - this.lastWeather.fetched_at > WEATHER_REFRESH_MS) {
       this.refreshWeather().catch(() => {});
+    }
+    // Same cadence for air quality (Open-Meteo updates both hourly).
+    if (!this.lastAirQuality || Date.now() - this.lastAirQuality.fetched_at > WEATHER_REFRESH_MS) {
+      this.refreshAirQuality().catch(() => {});
     }
 
     // dead-man's-switch: email if ESP has been silent for >24h
@@ -1447,8 +1558,11 @@ export class EspRelay {
       const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
       const limited = this._enforceRateLimit(clientIP);
       if (limited) return limited;
-      const seed = (Math.random() * 0xFFFFFFFF) | 0;
-      const gameId = (Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+      // Cryptographically secure RNG for the seed and gameId.
+      const seedArr = new Uint32Array(1);
+      crypto.getRandomValues(seedArr);
+      const seed = seedArr[0] | 0;
+      const gameId = Date.now().toString(36) + '-' + crypto.randomUUID().replace(/-/g, '').slice(0, 12);
       // Persist only the seed and timestamp; no IP. The active entry is just
       // a single-use replay credential paired with /snake/score, so the IP
       // would be dead data and an unnecessary durable storage of a PII-ish

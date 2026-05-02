@@ -72,7 +72,7 @@
             gap: 16px;
             row-gap: 10px;
             flex-wrap: wrap;
-            margin-bottom: 14px;
+            margin-bottom: 24px;
         }
         @media (max-width: 480px) {
             .top-links { gap: 14px; font-size: 10px; }
@@ -179,10 +179,12 @@
         }
         .row.new { animation: fadeIn 0.3s ease-out; }
 
+        main > *:last-child { margin-bottom: 0; }
+
         footer {
             max-width: 640px;
             margin: 0 auto;
-            padding: 24px;
+            padding: 32px 24px 32px;
             width: 100%;
             display: flex;
             justify-content: space-between;
@@ -212,9 +214,10 @@
             color: var(--mid);
             opacity: 0.7;
         }
-        .served:not(:empty)::before {
-            content: ' \2022 ';
-            margin: 0 2px;
+        .footer-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
         }
         @media (max-width: 480px) {
             .row { grid-template-columns: 58px 28px 50px 1fr 44px; gap: 8px; }
@@ -258,7 +261,10 @@
 </main>
 
 <footer>
-    <span>Made by <a href="https://tech1k.com" target="_blank" rel="noopener">Tech1k</a><span class="served" id="served-time"></span></span>
+    <div class="footer-meta">
+        <span>Made by <a href="https://tech1k.com" target="_blank" rel="noopener">Tech1k</a></span>
+        <span class="served" id="served-time"></span>
+    </div>
     <ul class="footer-links">
         <li><a href="/"><i class="fa-solid fa-house"></i> Home</a></li>
         <li><a href="/guestbook"><i class="fa-solid fa-pen"></i> Guestbook</a></li>
@@ -475,9 +481,18 @@
             var nav = performance.getEntriesByType('navigation')[0];
             if (!nav) return;
             var ms = Math.round(nav.responseEnd - nav.requestStart);
-            if (ms < 0 || ms > 60000) return;
+            var msValid = (ms >= 0 && ms <= 60000);
+            var totalBytes = nav.transferSize || nav.encodedBodySize || 0;
+            performance.getEntriesByType('resource').forEach(function(r) {
+                totalBytes += r.transferSize || r.encodedBodySize || 0;
+            });
+            var kb = totalBytes > 0 ? Math.round(totalBytes / 1024) + ' KB' : '';
+            var label = '';
+            if (kb && msValid)      label = kb + ' in ' + ms + ' ms';
+            else if (kb)            label = kb;
+            else if (msValid)       label = 'served in ' + ms + ' ms';
             var el = document.getElementById('served-time');
-            if (el) el.textContent = ms + ' ms';
+            if (el && label) el.textContent = label;
         } catch (e) {}
     });
 </script>
