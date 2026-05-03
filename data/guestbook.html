@@ -612,16 +612,16 @@
         footer {
             max-width: 640px;
             margin: 0 auto;
-            padding: 32px 24px 32px;
+            padding: 16px 24px 32px;
             width: 100%;
             display: flex;
-            justify-content: space-between;
+            flex-direction: column;
             align-items: center;
             border-top: 1px solid var(--faint);
             font-size: 11px;
             color: var(--mid);
-            gap: 16px;
-            flex-wrap: wrap;
+            gap: 14px;
+            text-align: center;
         }
 
         footer a {
@@ -634,20 +634,28 @@
         footer a:hover { color: var(--ink); }
 
         .footer-links {
+            order: 1;
             display: flex;
             gap: 15px;
             list-style: none;
             flex-wrap: wrap;
+            justify-content: center;
         }
 
         .served {
             color: var(--mid);
             opacity: 0.7;
         }
+        .served:not(:empty)::before {
+            content: ' • ';
+            margin: 0 4px;
+        }
         .footer-meta {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
+            order: 2;
+        }
+        .footer-meta a {
+            text-decoration: underline;
+            text-underline-offset: 2px;
         }
         /* dark mode */
 
@@ -894,6 +902,7 @@
         <li><a href="/history"><i class="fa-solid fa-clock-rotate-left"></i> History</a></li>
         <li><a href="/console"><i class="fa-solid fa-terminal"></i> Console</a></li>
         <li><a href="/about"><i class="fa-solid fa-circle-info"></i> About</a></li>
+        <li><a href="/snake"><i class="fa-solid fa-gamepad"></i> Snake</a></li>
         <li><a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener"><i class="fa-brands fa-github"></i> GitHub</a></li>
     </ul>
 </footer>
@@ -1079,6 +1088,9 @@
     function guessLatinLang(text) {
         if (!text) return null;
         if (/[ąćęłńśźż]/i.test(text)) return 'pl';
+        if (/[ěřůť]/i.test(text))     return 'cs';
+        if (/[ľŕĺ]/i.test(text))      return 'sk';
+        if (/[őű]/i.test(text))       return 'hu';
         if (/[äöüß]/i.test(text))     return 'de';
         if (/[ñ¿¡]/.test(text))       return 'es';
         if (/[àâæçéèêëîïôœùû]/i.test(text)) return 'fr';
@@ -1086,6 +1098,14 @@
         return null;
     }
 
+    function hasLatinDiacritics(text) {
+        if (!text) return false;
+        for (var i = 0; i < text.length; i++) {
+            var c = text.charCodeAt(i);
+            if ((c >= 0x00C0 && c <= 0x024F) || (c >= 0x1E00 && c <= 0x1EFF)) return true;
+        }
+        return false;
+    }
     function shouldOfferTranslate(message) {
         if (detectScript(message) !== userScript) return true;
         // Same-script fallback: if we can guess a specific Latin language
@@ -1095,6 +1115,11 @@
         // unaccented same-script pairs, but those are the accepted limit.
         var guess = guessLatinLang(message);
         if (guess && guess !== userLocale) return true;
+        // Wider fallback for diacritic-rich Latin languages whose marker chars
+        // don't match a specific pattern above (Czech ě/ý, Slovak ľ,
+        // Hungarian ő/ű, Croatian č/š, etc). m2m100 takes 'auto' source_lang
+        // gracefully, so don't gate the button on knowing the exact language.
+        if (userScript === 'latin' && hasLatinDiacritics(message)) return true;
         return false;
     }
 

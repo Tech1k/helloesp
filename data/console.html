@@ -184,16 +184,16 @@
         footer {
             max-width: 640px;
             margin: 0 auto;
-            padding: 32px 24px 32px;
+            padding: 16px 24px 32px;
             width: 100%;
             display: flex;
-            justify-content: space-between;
+            flex-direction: column;
             align-items: center;
             border-top: 1px solid var(--faint);
             font-size: 11px;
             color: var(--mid);
-            gap: 16px;
-            flex-wrap: wrap;
+            gap: 14px;
+            text-align: center;
         }
         footer a {
             color: var(--mid);
@@ -204,20 +204,28 @@
         footer a:hover { color: var(--ink); }
 
         .footer-links {
+            order: 1;
             display: flex;
             gap: 15px;
             list-style: none;
             flex-wrap: wrap;
+            justify-content: center;
         }
 
         .served {
             color: var(--mid);
             opacity: 0.7;
         }
+        .served:not(:empty)::before {
+            content: ' • ';
+            margin: 0 4px;
+        }
         .footer-meta {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
+            order: 2;
+        }
+        .footer-meta a {
+            text-decoration: underline;
+            text-underline-offset: 2px;
         }
         @media (max-width: 480px) {
             .row { grid-template-columns: 58px 28px 50px 1fr 44px; gap: 8px; }
@@ -270,6 +278,7 @@
         <li><a href="/guestbook"><i class="fa-solid fa-pen"></i> Guestbook</a></li>
         <li><a href="/history"><i class="fa-solid fa-clock-rotate-left"></i> History</a></li>
         <li><a href="/about"><i class="fa-solid fa-circle-info"></i> About</a></li>
+        <li><a href="/snake"><i class="fa-solid fa-gamepad"></i> Snake</a></li>
         <li><a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener"><i class="fa-brands fa-github"></i> GitHub</a></li>
     </ul>
 </footer>
@@ -374,6 +383,23 @@
         }
     }
 
+    // Append history (older than what SSE has already delivered) to the
+    // bottom. Used by the SSE/poll merge path: fetchFeed's snapshot can
+    // arrive after SSE has already streamed in newer entries, so missing
+    // rows from the snapshot are older and belong below. Prepending them
+    // would push the live entries off the top.
+    function appendEntry(entry) {
+        var k = keyOf(entry);
+        if (keysInDom.has(k)) return;
+        if (entries.length >= 50) return;
+        if (!entries.length) feedEl.innerHTML = '';
+        entries.push(entry);
+        keysInDom.add(k);
+        var tmp = document.createElement('div');
+        tmp.innerHTML = rowHtml(entry, false);
+        feedEl.appendChild(tmp.firstChild);
+    }
+
     // Refresh "5s ago" / "2m ago" textContent on existing rows so a quiet
     // feed doesn't show frozen timestamps until the next event arrives.
     setInterval(function() {
@@ -405,8 +431,10 @@
                 if (sseHealthy()) {
                     // SSE is the source of truth; merge any rows that aren't
                     // already on screen instead of clobbering live events.
-                    for (var i = fresh.length - 1; i >= 0; i--) {
-                        if (!keysInDom.has(keyOf(fresh[i]))) prependEntry(fresh[i]);
+                    // fresh is newest-first; missing rows are older than what
+                    // SSE has streamed, so append them below in that order.
+                    for (var i = 0; i < fresh.length; i++) {
+                        if (!keysInDom.has(keyOf(fresh[i]))) appendEntry(fresh[i]);
                     }
                 } else {
                     entries = fresh;

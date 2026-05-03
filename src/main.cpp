@@ -1657,6 +1657,7 @@ static bool isProtectedPath(const String& p) {
         || p == "/guestbook.html"
         || p == "/history.html"
         || p == "/console.html"
+        || p == "/snake.html"
         || p == "/admin.html"
         || p == "/404.html";
 }
@@ -4134,6 +4135,14 @@ void setup() {
         logConsole(request, 200);
     });
 
+    server.on("/snake", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (redirectLanToWorker(request)) return;
+        AsyncWebServerResponse *r = beginResponseGzipOrRaw(request, "/snake.html", "text/html");
+        r->addHeader("Cache-Control", "public, max-age=300");
+        request->send(r);
+        logConsole(request, 200);
+    });
+
     server.on("/console.json", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (redirectLanToWorker(request)) return;
         String json;
@@ -4310,6 +4319,7 @@ void setup() {
             "  <url><loc>https://helloesp.com/history</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>\n"
             "  <url><loc>https://helloesp.com/console</loc><changefreq>always</changefreq><priority>0.5</priority></url>\n"
             "  <url><loc>https://helloesp.com/about</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>\n"
+            "  <url><loc>https://helloesp.com/snake</loc><changefreq>weekly</changefreq><priority>0.5</priority></url>\n"
             "  <url><loc>https://helloesp.com/changelog.rss</loc><changefreq>monthly</changefreq><priority>0.4</priority></url>\n"
             "  <url><loc>https://helloesp.com/guestbook.rss</loc><changefreq>daily</changefreq><priority>0.4</priority></url>\n"
             "</urlset>\n");

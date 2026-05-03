@@ -103,7 +103,7 @@ These are all lessons from this build. A PCB respin would fix most of them at th
 - `/console` live feed: last 50 public requests with country flags, updated instantly via SSE
 - Outdoor weather + air quality context (via Cloudflare Worker proxy to Open-Meteo): conditions with day/night-aware icons, feels-like, dewpoint, wind direction, pressure trend, AQI + PM2.5, atmospheric CO₂, UV index
 - Guestbook with two-level reply threading, tombstone deletes, moderation queue, inline AI translation, rate limiting
-- Snake easter egg with global leaderboard on the 404 / offline / timeout pages: replay-verified server-side, 3-letter initials with content blocklist, idle demo mode
+- Snake at /snake (also embedded on the 404 / offline / timeout pages) with two leaderboards (today's top scores + all-time top ten, top scores cross over automatically), replay viewer for top entries, quarterly Hall of Fame archive of past all-time boards, 3-letter initials with content blocklist, server-side replay verification, idle demo mode
 - Dark mode, responsive, SRI-pinned CDN scripts, no tracking
 
 **Firmware**

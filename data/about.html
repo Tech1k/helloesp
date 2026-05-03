@@ -100,7 +100,7 @@
         .top-links a:hover { color: var(--ink); }
 
         h1 {
-            font-size: 36px;
+            font-size: clamp(28px, 5vw, 42px);
             font-weight: 400;
             letter-spacing: -0.02em;
             line-height: 1.1;
@@ -192,16 +192,16 @@
         footer {
             max-width: 640px;
             margin: 0 auto;
-            padding: 32px 24px 32px;
+            padding: 16px 24px 32px;
             width: 100%;
             display: flex;
-            justify-content: space-between;
+            flex-direction: column;
             align-items: center;
             border-top: 1px solid var(--faint);
             font-size: 11px;
             color: var(--mid);
-            gap: 16px;
-            flex-wrap: wrap;
+            gap: 14px;
+            text-align: center;
         }
 
         footer a {
@@ -212,20 +212,28 @@
         footer a:hover { color: var(--ink); }
 
         .footer-links {
+            order: 1;
             display: flex;
             gap: 15px;
             list-style: none;
             flex-wrap: wrap;
+            justify-content: center;
         }
 
         .served {
             color: var(--mid);
             opacity: 0.7;
         }
+        .served:not(:empty)::before {
+            content: ' • ';
+            margin: 0 4px;
+        }
         .footer-meta {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
+            order: 2;
+        }
+        .footer-meta a {
+            text-decoration: underline;
+            text-underline-offset: 2px;
         }
 
         @media (prefers-color-scheme: dark) {
@@ -301,6 +309,7 @@
         <li><a href="/guestbook"><i class="fa-solid fa-pen"></i> Guestbook</a></li>
         <li><a href="/history"><i class="fa-solid fa-clock-rotate-left"></i> History</a></li>
         <li><a href="/console"><i class="fa-solid fa-terminal"></i> Console</a></li>
+        <li><a href="/snake"><i class="fa-solid fa-gamepad"></i> Snake</a></li>
         <li><a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener"><i class="fa-brands fa-github"></i> GitHub</a></li>
     </ul>
 </footer>

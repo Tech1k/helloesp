@@ -295,30 +295,64 @@
             50%      { opacity: 1; }
         }
 
-        /* Power banner (Shelly smart-plug integration). Single-line strip
-           between the stats grid and the outdoor section. Hidden by default;
-           the .live class is added when the stats payload includes a
-           power_w field, removed when it goes stale. Styled to read as
-           project meta-info ("here's the cost of running this") rather
-           than another sensor reading. */
+        /* Power banner (Shelly smart-plug integration). Fluid row of
+           labeled stats between the grid and the outdoor section, with a
+           bolt icon as left rail. Items wrap to new rows automatically
+           when the viewport narrows. Hidden by default; the .live class
+           is added when the stats payload includes a power_w field,
+           removed when it goes stale. Styled to read as project meta-info
+           ("here's the cost of running this") rather than another sensor
+           reading. */
         .power-banner {
             display: none;
             border-top: 1px solid var(--faint);
             border-bottom: 1px solid var(--faint);
-            padding: 14px 18px;
             margin-bottom: 48px;
-            font-size: 12px;
-            color: var(--mid);
-            align-items: center;
-            gap: 6px;
-            flex-wrap: wrap;
-            line-height: 1.6;
         }
-        .power-banner.live { display: flex; }
-        .power-banner strong { color: var(--ink); font-weight: 500; }
-        .power-banner .power-icon { color: #f59e0b; margin-right: 4px; }
-        .power-banner .power-sep { opacity: 0.4; margin: 0 2px; }
-        .power-banner .power-label { color: var(--mid); }
+        .power-banner.live { display: flex; align-items: stretch; }
+        .power-banner .power-row-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 18px;
+            color: #f59e0b;
+            font-size: 20px;
+            flex-shrink: 0;
+            background: var(--bg);
+            border-right: 1px solid var(--faint);
+        }
+        .power-banner .power-items {
+            display: flex;
+            flex: 1 1 auto;
+            flex-wrap: wrap;
+            gap: 1px;
+            background: var(--faint);
+            min-width: 0;
+        }
+        .power-banner .power-item {
+            background: var(--bg);
+            padding: 12px 16px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 6px;
+            min-width: 0;
+            flex: 1 0 100px;
+        }
+        .power-banner .power-label {
+            font-size: 9px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--mid);
+            line-height: 1;
+        }
+        .power-banner .power-value {
+            font-size: 14px;
+            color: var(--ink);
+            font-weight: 500;
+            line-height: 1;
+            font-variant-numeric: tabular-nums;
+        }
 
         .outdoor { margin-bottom: 48px; }
         .outdoor-head {
@@ -740,16 +774,16 @@
         footer {
             max-width: 640px;
             margin: 0 auto;
-            padding: 32px 24px 32px;
+            padding: 16px 24px 32px;
             width: 100%;
             display: flex;
-            justify-content: space-between;
+            flex-direction: column;
             align-items: center;
             border-top: 1px solid var(--faint);
             font-size: 11px;
             color: var(--mid);
-            gap: 16px;
-            flex-wrap: wrap;
+            gap: 14px;
+            text-align: center;
         }
 
         footer a {
@@ -762,25 +796,28 @@
         footer a:hover { color: var(--ink); }
 
         .footer-links {
+            order: 1;
             display: flex;
             gap: 15px;
             list-style: none;
             flex-wrap: wrap;
+            justify-content: center;
         }
 
         .served {
             color: var(--mid);
             opacity: 0.7;
         }
-        /* footer-meta stacks "Made by Tech1k" and "23 KB in 47 ms"
-           vertically on the left side of the footer; nav links sit
-           on the right. On mobile, flex-wrap drops nav to its own
-           line below. served-time no longer needs the inline bullet
-           separator since it's a standalone line now. */
+        .served:not(:empty)::before {
+            content: ' • ';
+            margin: 0 4px;
+        }
         .footer-meta {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
+            order: 2;
+        }
+        .footer-meta a {
+            text-decoration: underline;
+            text-underline-offset: 2px;
         }
         /* dark mode */
 
@@ -963,16 +1000,29 @@
     </p>
 
     <div class="power-banner" id="power-banner" role="status">
-        <span class="power-icon"><i class="fa-solid fa-bolt"></i></span>
-        <span><strong id="power-now">—</strong> <span class="power-label">from the wall</span></span>
-        <span class="power-sep">·</span>
-        <span><strong id="power-today">—</strong> <span class="power-label">today</span></span>
-        <span class="power-sep">·</span>
-        <span><strong id="power-total">—</strong> <span class="power-label">total</span></span>
-        <span class="power-sep" id="power-cost-sep" style="display:none;">·</span>
-        <span id="power-cost-wrap" style="display:none;"><strong id="power-cost"></strong></span>
-        <span class="power-sep" id="power-co2-sep" style="display:none;">·</span>
-        <span id="power-co2-wrap" style="display:none;"><strong id="power-co2"></strong></span>
+        <span class="power-row-icon" aria-hidden="true"><i class="fa-solid fa-bolt"></i></span>
+        <div class="power-items">
+            <span class="power-item">
+                <span class="power-label">Now</span>
+                <span class="power-value" id="power-now">—</span>
+            </span>
+            <span class="power-item">
+                <span class="power-label">Today</span>
+                <span class="power-value" id="power-today">—</span>
+            </span>
+            <span class="power-item">
+                <span class="power-label">Total</span>
+                <span class="power-value" id="power-total">—</span>
+            </span>
+            <span class="power-item" id="power-cost-wrap" style="display:none;">
+                <span class="power-label">Cost</span>
+                <span class="power-value" id="power-cost"></span>
+            </span>
+            <span class="power-item" id="power-co2-wrap" style="display:none;">
+                <span class="power-label">CO<sub>2</sub></span>
+                <span class="power-value" id="power-co2"></span>
+            </span>
+        </div>
     </div>
 
     <section class="outdoor" id="outdoor-section" style="display:none;">
@@ -1096,6 +1146,10 @@
     <div class="log">
         <div class="section-label"><i class="fa-solid fa-list"></i> Changelog <a class="section-rss" href="/changelog.rss" aria-label="Subscribe to changelog via RSS" title="Subscribe via RSS"><i class="fa-solid fa-rss"></i></a></div>
         <div class="log-entry">
+            <div class="log-date">May 3, 2026</div>
+            <div class="log-text">Snake got its own page. Same game, with two leaderboards now: today's top scores and the all-time top ten. Strong scores cross to all-time on their own. Each top entry has a watch button that plays back the actual game. Past quarters move to a Hall of Fame archive so the leaderboard stays fresh.</div>
+        </div>
+        <div class="log-entry">
             <div class="log-date">May 1, 2026</div>
             <div class="log-text">The site can now track its own electricity use with an optional smart plug. The homepage shows live wattage and lifetime energy, plus cost and CO&#x2082; if you set your grid rate. Outdoor weather card grew with air quality, UV index, atmospheric CO&#x2082;, dewpoint, and pressure trend, and the icons now match the time of day.</div>
         </div>
@@ -1174,6 +1228,7 @@
         <li><a href="/history"><i class="fa-solid fa-clock-rotate-left"></i> History</a></li>
         <li><a href="/console"><i class="fa-solid fa-terminal"></i> Console</a></li>
         <li><a href="/about"><i class="fa-solid fa-circle-info"></i> About</a></li>
+        <li><a href="/snake"><i class="fa-solid fa-gamepad"></i> Snake</a></li>
         <li><a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener"><i class="fa-brands fa-github"></i> GitHub</a></li>
     </ul>
 </footer>
@@ -1685,7 +1740,6 @@
                     // magnitude reads honestly, matching the about page
                     // placard: sub-penny → mils ("$0.002"), cents range
                     // → 2 decimals ("$0.04"), dollars → integer ("$32").
-                    var costSep  = document.getElementById('power-cost-sep');
                     var costWrap = document.getElementById('power-cost-wrap');
                     if (lifetimeCostPerKwh > 0 && Number.isFinite(s.energy_total_wh)) {
                         var dollars = (s.energy_total_wh / 1000) * lifetimeCostPerKwh;
@@ -1695,36 +1749,30 @@
                             else if (dollars >= 0.01) costStr = '$' + dollars.toFixed(2);
                             else                       costStr = '$' + dollars.toFixed(3);
                             document.getElementById('power-cost').textContent = costStr;
-                            costSep.style.display = '';
                             costWrap.style.display = '';
                         } else {
-                            costSep.style.display = 'none';
                             costWrap.style.display = 'none';
                         }
-                    } else if (costSep) {
-                        costSep.style.display = 'none';
+                    } else if (costWrap) {
                         costWrap.style.display = 'none';
                     }
                     // Lifetime CO2 segment. Tiered: sub-1 kg shows in
-                    // grams ("141 g CO₂"), 1+ kg shows integer ("4 kg CO₂").
-                    var co2Sep  = document.getElementById('power-co2-sep');
+                    // grams ("141 g"), 1+ kg shows integer ("4 kg").
+                    // Unit only, the CO₂ label sits above the value.
                     var co2Wrap = document.getElementById('power-co2-wrap');
                     if (lifetimeCo2PerKwh > 0 && Number.isFinite(s.energy_total_wh)) {
                         var co2_kg = (s.energy_total_wh / 1000) * lifetimeCo2PerKwh;
                         var co2_g  = co2_kg * 1000;
                         if (co2_g >= 1) {
                             var co2Str = (co2_g < 1000)
-                                ? Math.round(co2_g) + ' g CO₂'
-                                : Math.round(co2_kg) + ' kg CO₂';
+                                ? Math.round(co2_g) + ' g'
+                                : Math.round(co2_kg) + ' kg';
                             document.getElementById('power-co2').textContent = co2Str;
-                            co2Sep.style.display = '';
                             co2Wrap.style.display = '';
                         } else {
-                            co2Sep.style.display = 'none';
                             co2Wrap.style.display = 'none';
                         }
-                    } else if (co2Sep) {
-                        co2Sep.style.display = 'none';
+                    } else if (co2Wrap) {
                         co2Wrap.style.display = 'none';
                     }
                     pb.classList.add('live');

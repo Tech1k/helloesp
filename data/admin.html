@@ -2262,6 +2262,9 @@
     function guessLatinLang(text) {
         if (!text) return null;
         if (/[ąćęłńśźż]/i.test(text)) return 'pl';
+        if (/[ěřůť]/i.test(text))     return 'cs';
+        if (/[ľŕĺ]/i.test(text))      return 'sk';
+        if (/[őű]/i.test(text))       return 'hu';
         if (/[äöüß]/i.test(text))     return 'de';
         if (/[ñ¿¡]/.test(text))       return 'es';
         if (/[àâæçéèêëîïôœùû]/i.test(text)) return 'fr';
@@ -2301,10 +2304,22 @@
         th: 'thai', el: 'greek'
     };
     var userScript = localeScriptMap[userLocale] || 'latin';
+    function hasLatinDiacritics(text) {
+        if (!text) return false;
+        for (var i = 0; i < text.length; i++) {
+            var c = text.charCodeAt(i);
+            if ((c >= 0x00C0 && c <= 0x024F) || (c >= 0x1E00 && c <= 0x1EFF)) return true;
+        }
+        return false;
+    }
     function shouldOfferTranslate(message) {
         if (detectScript(message) !== userScript) return true;
         var guess = guessLatinLang(message);
         if (guess && guess !== userLocale) return true;
+        // Same-script Latin with diacritics no specific-language pattern matched
+        // (Czech ě/ý, Slovak ľ, Hungarian ő/ű, Croatian č/š, etc). Offer the
+        // link when the user reads Latin since they likely can't read this one.
+        if (userScript === 'latin' && hasLatinDiacritics(message)) return true;
         return false;
     }
 
