@@ -28,13 +28,25 @@
     <link rel="icon" type="image/png" href="/favicon.png">
     <link rel="alternate" type="application/rss+xml" title="HelloESP Changelog" href="/changelog.rss">
     <link rel="alternate" type="application/rss+xml" title="HelloESP Guestbook" href="/guestbook.rss">
+    <!-- Async-load Font Awesome to keep it off the render-blocking critical
+         path. Browser fetches as print-media (non-blocking), then onload
+         swaps to all-media so the icons apply. <noscript> fallback for
+         JS-disabled users gives them the synchronous load. -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
           integrity="sha384-/o6I2CkkWC//PSjvWC/eYN7l3xM3tJm8ZzVkCOfp//W05QcE3mlGskpoHB6XqI+B"
-          crossorigin="anonymous" referrerpolicy="no-referrer">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"
+          crossorigin="anonymous" referrerpolicy="no-referrer"
+          media="print" onload="this.media='all'">
+    <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
+          integrity="sha384-/o6I2CkkWC//PSjvWC/eYN7l3xM3tJm8ZzVkCOfp//W05QcE3mlGskpoHB6XqI+B"
+          crossorigin="anonymous" referrerpolicy="no-referrer"></noscript>
+    <!-- Chart.js + geo plugin only run for the chart and country map, both
+         below the fold. defer so they download in parallel with HTML parse
+         but don't block paint; they execute before DOMContentLoaded, well
+         before the load-event handlers that actually instantiate charts. -->
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"
             integrity="sha384-bs/nf9FbdNouRbMiFcrcZfLXYPKiPaGVGplVbv7dLGECccEXDW+S3zjqSKR5ZEaD"
             crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-geo@4.3.4/build/index.umd.min.js"
+    <script defer src="https://cdn.jsdelivr.net/npm/chartjs-chart-geo@4.3.4/build/index.umd.min.js"
             integrity="sha384-w1pUD3mXXBR/E/GTwT4uFKy89MVbiK9B2muZoTm4RLgdZM9u1xnIgzUlixoW/NLR"
             crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <style>

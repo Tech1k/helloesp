@@ -5,23 +5,55 @@ saturate LWIP's pbuf pool and cascade into WS write failures; serving the
 ~22KB gzipped version keeps the pool clear.
 
 Runs automatically before every `pio run` via platformio.ini's extra_scripts.
-Regenerates a file only if the source is newer than the .gz (or .gz missing),
-and removes orphan .gz files whose source HTML has been deleted.
+Also runnable standalone: `python3 scripts/gzip_assets.py`.
+
+Skip-current check is content-based, not mtime-based: compares the source
+file's CRC32 to the CRC32 stored in the existing .gz's gzip trailer (which
+records the uncompressed data's CRC32 by spec). This sidesteps an mtime
+comparison failing when something else touches the .gz timestamp without
+changing its content.
+
+Removes orphan .gz files whose source HTML has been deleted.
 
 The firmware's beginResponseGzipOrRaw() helper falls back to the uncompressed
 file if no .gz is present, so this script is a performance optimization, not
 a hard dependency.
 """
 
-Import("env")
-
 import gzip
 import os
 import shutil
+import zlib
+
+try:
+    Import("env")
+    _PROJECT_DIR = env.get("PROJECT_DIR")
+except NameError:
+    # Standalone CLI mode: project root is one level up from this script
+    _PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _file_crc32(path):
+    crc = 0
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(65536)
+            if not chunk:
+                break
+            crc = zlib.crc32(chunk, crc)
+    return crc & 0xffffffff
+
+
+def _gzip_trailer_crc32(gz_path):
+    """Read CRC32 of uncompressed data from gzip trailer (last 8 bytes:
+    4 bytes CRC32 + 4 bytes ISIZE, little-endian, per RFC 1952)."""
+    with open(gz_path, "rb") as f:
+        f.seek(-8, 2)
+        return int.from_bytes(f.read(4), "little")
 
 
 def gzip_html_assets():
-    data_dir = os.path.join(env.get("PROJECT_DIR"), "data")
+    data_dir = os.path.join(_PROJECT_DIR, "data")
     if not os.path.isdir(data_dir):
         return
 
@@ -61,12 +93,17 @@ def gzip_html_assets():
     for filename in sorted(html_files):
         src_path = os.path.join(data_dir, filename)
         gz_path = src_path + ".gz"
-        if os.path.exists(gz_path) and os.path.getmtime(gz_path) >= os.path.getmtime(src_path):
-            continue
+        if os.path.exists(gz_path):
+            try:
+                if _gzip_trailer_crc32(gz_path) == _file_crc32(src_path):
+                    continue
+            except (OSError, ValueError):
+                # Malformed or unreadable .gz: regenerate
+                pass
         # Write to .tmp then rename so a Ctrl+C mid-compress doesn't leave a
-        # half-written .gz that looks newer than source on the next run.
-        # mtime=0 in the gzip header makes output a deterministic function of input
-        # bytes so anyone rebuilding from the same source gets identical checksums.
+        # half-written .gz that looks current on the next run. mtime=0 in the
+        # gzip header makes output a deterministic function of input bytes so
+        # rebuilding from the same source produces identical checksums.
         tmp_path = gz_path + ".tmp"
         try:
             with open(src_path, "rb") as src, open(tmp_path, "wb") as raw, \

@@ -6,7 +6,8 @@
         "https://helloesp.com/guestbook",
         "https://helloesp.com/history",
         "https://helloesp.com/console",
-        "https://helloesp.com/about"
+        "https://helloesp.com/about",
+        "https://helloesp.com/snake"
       ],
       "numberOfRuns": 3
     },

@@ -4348,6 +4348,8 @@ void setup() {
             rss += text;
             rss += "</description></item>";
         };
+        item("May 3, 2026", "Sun, 03 May 2026 12:00:00 GMT",
+             "Snake got its own page. Same game, with two leaderboards now: today's top scores and the all-time top ten. Strong scores cross to all-time on their own. Each top entry has a watch button that plays back the actual game. Past quarters move to a Hall of Fame archive so the leaderboard stays fresh.");
         item("May 1, 2026", "Fri, 01 May 2026 12:00:00 GMT",
              "The site can now track its own electricity use with an optional smart plug. The homepage shows live wattage and lifetime energy, plus cost and CO2 if you set your grid rate. Outdoor weather card grew with air quality, UV index, atmospheric CO2, dewpoint, and pressure trend, and the icons now match the time of day.");
         item("Apr 29, 2026", "Wed, 29 Apr 2026 12:00:00 GMT",
