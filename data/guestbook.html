@@ -1633,7 +1633,8 @@
         var id = entry.getAttribute('data-id');
         var msgEl = entry.querySelector(':scope > .entry-message');
         if (!msgEl) return;
-        if (msgEl.getAttribute('data-translated') === '1') {
+        if (msgEl.getAttribute('data-translated') === '1' ||
+            msgEl.getAttribute('data-translation')) {
             toggleTranslation(entry);
             return;
         }
