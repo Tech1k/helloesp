@@ -898,11 +898,9 @@ export class EspRelay {
     return {
       date,
       samples: 0,
-      // visitors_today high-water-marks the chip's daily_visitors field
-      // (chip-side counter, chip resets at chip-local midnight). Earlier
-      // this was a lifetime-counter delta with a visitors_start anchor;
-      // see _chronicleAccumulate for the full rationale on the switch.
-      // visitors_total still uses the lifetime counter directly.
+      // visitors_today is computed as a delta from a lifetime-counter
+      // anchor captured at the start of each chip-local day.
+      visitors_start: null,
       visitors_today: 0,
       visitors_total: 0,
       countries_total: 0,
@@ -1007,25 +1005,21 @@ export class EspRelay {
     }
     const s = this.chronicleSnapshot;
     s.samples++;
-    // visitors_today mirrors the chip's daily_visitors counter (chip resets
-    // it at chip-local midnight via tzset). Earlier this was computed as a
-    // lifetime delta from a visitors_start anchor, but that approach drifted
-    // across worker restarts: a fresh isolate captured visitors_start at
-    // whatever the chip's lifetime counter happened to be when the first
-    // post-restart event arrived, dropping any visits between snap creation
-    // and that moment. The original motivation for the delta approach was a
-    // chip-local-vs-UTC timezone race that no longer exists now that the
-    // chronicle buckets by today_local. Trusting daily_visitors directly is
-    // simpler, self-healing across worker restarts, and uses the chip's own
-    // day boundary as the day boundary (which is the right one).
-    //
-    // High-water mark via Math.max so a momentary stats hiccup (zero or
-    // stale value mid-day) can't drop the count back to a smaller number.
-    if (typeof stats.daily_visitors === 'number' && stats.daily_visitors >= 0) {
-      s.visitors_today = Math.max(s.visitors_today, stats.daily_visitors);
-    }
+    // visitors_today via lifetime-counter delta. Anchor captured on first
+    // sample after snap rotation; subsequent samples compute (current -
+    // anchor) as today's count.
     if (typeof stats.visitors === 'number' && stats.visitors >= 0) {
+      if (s.visitors_start == null) {
+        if (typeof stats.daily_visitors === 'number' && stats.daily_visitors >= 0) {
+          s.visitors_start = stats.visitors - stats.daily_visitors;
+          s.visitors_today = stats.daily_visitors;
+        } else {
+          s.visitors_start = stats.visitors;
+          s.visitors_today = 0;
+        }
+      }
       s.visitors_total = Math.max(s.visitors_total, stats.visitors);
+      s.visitors_today = Math.max(s.visitors_today, stats.visitors - s.visitors_start);
     }
     if (typeof stats.countries === 'number') {
       s.countries_total = Math.max(s.countries_total, stats.countries);
@@ -1218,6 +1212,26 @@ export class EspRelay {
       } catch (e) {}
     }
     if (!today) return;
+    // Helper: create a new snap and capture chip's lifetime visitors
+    // count from lastStats as the new day's anchor. Without this, the
+    // rotated snap relies on the accumulator's back-compute (anchor =
+    // lifetime - daily) on the next stats event, which mishandles stale
+    // chip-side daily counters that haven't reset across midnight.
+    // Capturing the anchor at rotation, from the always-monotonic
+    // lifetime counter, sidesteps any chip-side daily timing issues.
+    const rotateSnap = (toDate) => {
+      const fresh = this._chronicleNewSnapshot(toDate);
+      if (this.lastStats) {
+        try {
+          const v = JSON.parse(this.lastStats).visitors;
+          if (typeof v === 'number' && v >= 0) {
+            fresh.visitors_start = v;
+            fresh.visitors_today = 0;
+          }
+        } catch (e) {}
+      }
+      return fresh;
+    };
     let sealedEntry = null;
     let didSeal = false;
     let newToday = null;
@@ -1229,7 +1243,7 @@ export class EspRelay {
         // chip having been awake to notice anything. Still set newToday
         // so reflection seals fire downstream: a chip-offline day shouldn't
         // suppress the week's reflection if prior days had data.
-        this.chronicleSnapshot = this._chronicleNewSnapshot(today);
+        this.chronicleSnapshot = rotateSnap(today);
         await this.state.storage.put('chronicleSnapshot', this.chronicleSnapshot);
         newToday = today;
         return;
@@ -1246,7 +1260,7 @@ export class EspRelay {
       // alone preserves body+template_id but lets stats refresh on each
       // seal. stats_locked makes the entry fully sealed-in-stone.
       if (existing && existing.locked && existing.stats_locked) {
-        this.chronicleSnapshot = this._chronicleNewSnapshot(today);
+        this.chronicleSnapshot = rotateSnap(today);
         await this.state.storage.put('chronicleSnapshot', this.chronicleSnapshot);
         newToday = today;
         return;
@@ -1276,7 +1290,7 @@ export class EspRelay {
         ...(isLocked ? { locked: true } : {}),
       };
       await this.state.storage.put('chronicle/' + snap.date, entry);
-      this.chronicleSnapshot = this._chronicleNewSnapshot(today);
+      this.chronicleSnapshot = rotateSnap(today);
       await this.state.storage.put('chronicleSnapshot', this.chronicleSnapshot);
       sealedEntry = entry;
       didSeal = true;

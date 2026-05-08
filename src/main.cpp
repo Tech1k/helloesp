@@ -4276,14 +4276,22 @@ void setup() {
 
             struct tm timeinfo;
             bool haveTime = getLocalTime(&timeinfo);
-            if (haveTime && timeinfo.tm_mday != lastVisitorDay) {
-                dailyVisitors  = 0;
-                lastVisitorDay = timeinfo.tm_mday;
+            if (haveTime) {
+                char nowDate[12];
+                strftime(nowDate, sizeof(nowDate), "%Y-%m-%d", &timeinfo);
+                // Full YYYY-MM-DD compare (not just tm_mday) so May 8 ->
+                // Jun 8 cross-month-same-day rollover correctly resets.
+                // Loop-based midnight reset usually fires first; this is
+                // belt-and-suspenders for cases where loop didn't catch
+                // it (NTP failure across the boundary, etc.).
+                if (strcmp(nowDate, dailyVisitorsDate) != 0) {
+                    dailyVisitors = 0;
+                    strncpy(dailyVisitorsDate, nowDate, sizeof(dailyVisitorsDate) - 1);
+                    dailyVisitorsDate[sizeof(dailyVisitorsDate) - 1] = '\0';
+                    lastVisitorDay = timeinfo.tm_mday;
+                }
             }
             dailyVisitors++;
-            if (haveTime) {
-                strftime(dailyVisitorsDate, sizeof(dailyVisitorsDate), "%Y-%m-%d", &timeinfo);
-            }
             saveDailyVisitors();
             currentWeek.visitors++;
             currentMonth.visitors++;
@@ -8264,6 +8272,19 @@ void loop() {
                 today_energy_wh = 0.0f;
                 strncpy(shelly_today_date, todayNow, sizeof(shelly_today_date) - 1);
                 shelly_today_date[sizeof(shelly_today_date) - 1] = '\0';
+            }
+            // Reset dailyVisitors at chip-local midnight too. Previously
+            // this only reset on the first post-midnight visit handler
+            // call; without traffic during the gap, the counter held
+            // yesterday's value. Full YYYY-MM-DD comparison (not just
+            // tm_mday) so May 8 -> Jun 8 cross-month-same-day boundary
+            // also fires the reset; tm_mday alone would miss it.
+            if (strcmp(todayNow, dailyVisitorsDate) != 0) {
+                dailyVisitors = 0;
+                strncpy(dailyVisitorsDate, todayNow, sizeof(dailyVisitorsDate) - 1);
+                dailyVisitorsDate[sizeof(dailyVisitorsDate) - 1] = '\0';
+                lastVisitorDay = tmNow.tm_mday;
+                saveDailyVisitors();
             }
         }
     }
