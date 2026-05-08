@@ -687,6 +687,57 @@
         </div>
     </div>
 
+    <!-- chronicle today preview -->
+    <div class="section" id="chronicle-preview-section">
+        <div class="section-title">Chronicle: Today (in progress)</div>
+        <div class="card">
+            <div style="font-size:12px;color:var(--mid);line-height:1.7;margin-bottom:14px;">
+                Preview of what tonight's chronicle entry will look like
+                if it sealed right now. Re-renders on every refresh, so
+                the body shifts as the chip records more of the day. The
+                actual seal happens at chip-local midnight.
+            </div>
+            <div id="chronicle-preview" style="font-size:13px;line-height:1.7;color:var(--ink);">
+                <div style="color:var(--mid);font-style:italic;">Loading...</div>
+            </div>
+            <div style="margin-top:12px;display:flex;gap:8px;align-items:center;">
+                <button type="button" class="btn" id="chronicle-preview-refresh" style="font-size:11px;padding:6px 12px;">Refresh preview</button>
+                <span id="chronicle-preview-status" style="font-size:11px;color:var(--mid);"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- chronicle owner notes -->
+    <div class="section" id="chronicle-section">
+        <div class="section-title">Chronicle Notes</div>
+        <div class="card">
+            <div style="font-size:12px;color:var(--mid);line-height:1.7;margin-bottom:14px;">
+                Add a curatorial note to any sealed Chronicle entry. Notes
+                appear in italic above the auto-generated body on
+                <a href="/chronicle" target="_blank" style="color:var(--mid);">/chronicle</a>,
+                and post once as a reply to the entry's tweet on X. First
+                non-empty save posts; later edits update the website only.
+                Empty save clears the note (the X reply, if any, stays).
+                Latest 3 entries shown by default; X reply engagement is
+                strongest within hours of an entry's seal. Use the date
+                jumper or "show older" toggle below for retroactive notes
+                on older entries.
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;">
+                <label for="chronicle-jump" style="font-size:11px;color:var(--mid);text-transform:uppercase;letter-spacing:0.1em;">
+                    Jump to date:
+                </label>
+                <input type="date" id="chronicle-jump" min="2026-05-04"
+                       style="font-family:inherit;font-size:12px;background:var(--bg);color:var(--ink);border:1px solid var(--faint);padding:4px 6px;">
+                <span id="chronicle-jump-status" style="font-size:11px;color:var(--mid);"></span>
+            </div>
+            <div id="chronicle-list" style="font-size:12px;">
+                <div style="color:var(--mid);">Loading...</div>
+            </div>
+            <div class="status" id="chronicle-status"></div>
+        </div>
+    </div>
+
     <!-- maintenance -->
     <div class="section" id="maintenance-section" style="display:none;">
         <div class="section-title">Maintenance Mode</div>
@@ -2269,7 +2320,24 @@
         if (/[ñ¿¡]/.test(text))       return 'es';
         if (/[àâæçéèêëîïôœùû]/i.test(text)) return 'fr';
         if (/[ãõ]/i.test(text))       return 'pt';
+        // Italian via word-pattern detection: Italian shares accented chars
+        // with French and casual messages often drop accents entirely.
+        // These short Italian function/content words don't appear in
+        // English/French/etc. Mirrors guestbook.html's logic.
+        if (/\b(che|sono|anche|perché|quando|amico|amici|piccolo|grande|molto|sempre|adesso|tenere|duro|niente)\b/i.test(text)) return 'it';
         return null;
+    }
+    // Strong English markers: -ing/-ed/-ly suffixes or common content/
+    // function words. Used as a gate before the no-stopwords last-resort
+    // heuristic so casual English ("Keep going strong little guy") doesn't
+    // trip the foreign-language fallback. Mirrors guestbook.html.
+    function looksLikeEnglish(text) {
+        if (!text) return false;
+        if (/\b\w{2,}ing\b/.test(text)) return true;
+        if (/\b\w{2,}ed\b/.test(text))  return true;
+        if (/\b\w{2,}ly\b/.test(text))  return true;
+        if (/\b(keep|get|make|take|come|see|look|let|got|going|gone|been|will|would|could|should|might|may|just|like|good|bad|nice|cool|love|hate|hi|hey|hello|thanks|please|strong|weak|big|small|little|great|best|worst|new|old)\b/i.test(text)) return true;
+        return false;
     }
     function detectScript(text) {
         if (!text) return 'latin';
@@ -2312,6 +2380,14 @@
         }
         return false;
     }
+    // Common English stop-words. Absence of all of them in a multi-word
+    // Latin-script message strongly implies not-English. Catches keyboard-
+    // typed Czech/Polish/Slovak/Hungarian where the writer dropped
+    // diacritics (e.g. "Plzen zdravi sveho bratrance!").
+    function hasNoEnglishStopwords(text) {
+        var re = /\b(the|a|an|is|are|was|were|be|been|being|of|to|in|on|at|for|with|by|and|or|but|not|no|this|that|these|those|i|you|he|she|it|we|they|my|your|his|her|its|our|their|me|him|us|them|do|does|did|have|has|had|can|could|will|would|should|may|might|so|if|when|where|why|how|what|who|which|all|some|any|each|every|few|many|more|most|much|other|same|than|then|too|very|just|now|out|up|down|over|under|here|there|hello|hi|hey|thanks|thx|cool|nice|love|like|from)\b/i;
+        return !re.test(text);
+    }
     function shouldOfferTranslate(message) {
         if (detectScript(message) !== userScript) return true;
         var guess = guessLatinLang(message);
@@ -2320,6 +2396,17 @@
         // (Czech ě/ý, Slovak ľ, Hungarian ő/ű, Croatian č/š, etc). Offer the
         // link when the user reads Latin since they likely can't read this one.
         if (userScript === 'latin' && hasLatinDiacritics(message)) return true;
+        // Last-resort: Latin-script with no English stopwords AND no English
+        // suffix/word markers is probably not English. Catches unaccented
+        // keyboard-typed European-language entries. The looksLikeEnglish
+        // gate prevents casual English without articles from being mis-
+        // classified as foreign.
+        if (userScript === 'latin' && message && message.length >= 15) {
+            var words = (message.match(/\b\w+\b/g) || []).filter(function (w) {
+                return /[a-zA-Z]/.test(w);
+            });
+            if (words.length >= 3 && hasNoEnglishStopwords(message) && !looksLikeEnglish(message)) return true;
+        }
         return false;
     }
 
@@ -3285,6 +3372,270 @@
         }
     });
 
+    // Chronicle owner notes. Lists sealed entries from the worker's
+    // /chronicle.json and attaches a per-row textarea + save. Latest 14
+    // are visible by default; older entries are hidden behind a toggle.
+    // Date jumper input above scrolls to (and reveals if hidden) the row
+    // for any specific date so retroactive notes don't require manual
+    // scrolling through hundreds of entries.
+    function escAttr(s) { return esc(s).replace(/"/g, '&quot;'); }
+
+    // Tweet reply budget: 280 - 23 (t.co permalink) - 2 ("\n\n") = 255
+    // chars usable for note text before X truncates.
+    var CHRONICLE_NOTE_X_BUDGET = 255;
+    // Latest 3 entries shown by default (today + 2 prior days). Aligns with
+    // when adding a note actually has X engagement value: replies land on
+    // feeds while the original tweet is still fresh, mostly within ~6-12h
+    // of seal. Older entries remain accessible via the date jumper for
+    // retroactive curatorial notes.
+    var CHRONICLE_INITIAL_VISIBLE = 3;
+
+    function buildChronicleRowHtml(e) {
+        var dayLabel = e.day_number ? ' · Day ' + e.day_number : '';
+        var bodyPreview = (e.body || '').substring(0, 120);
+        if ((e.body || '').length > 120) bodyPreview += '...';
+        // X status badge: indicates whether the entry has been tweeted
+        // and whether the owner note has been replied. Helps the user
+        // see state before editing.
+        var xBadge = '';
+        if (e.posted_to_x) {
+            if (e.note_x_tweet_id) {
+                xBadge = '<span style="font-weight:400;color:var(--mid);font-size:10px;">posted · note replied</span>';
+            } else if (e.owner_note) {
+                xBadge = '<span style="font-weight:400;color:var(--mid);font-size:10px;">posted · note not replied</span>';
+            } else {
+                xBadge = '<span style="font-weight:400;color:var(--mid);font-size:10px;">posted</span>';
+            }
+        }
+        var noteReplied = !!e.note_x_tweet_id;
+        return '<div class="chronicle-row" data-date="' + escAttr(e.date) + '"'
+             + ' data-note-replied="' + (noteReplied ? '1' : '0') + '"'
+             + ' style="border-bottom:1px solid var(--faint);padding:10px 0;">'
+             + '<div style="font-weight:600;">' + esc(e.date) + esc(dayLabel)
+             +   (e.backfill ? ' <span style="font-weight:400;color:var(--mid);font-size:10px;">backfill</span>' : '')
+             +   (xBadge ? ' ' + xBadge : '')
+             + '</div>'
+             + '<div style="color:var(--mid);font-size:11px;line-height:1.5;margin:4px 0 8px;">' + esc(bodyPreview) + '</div>'
+             + '<textarea class="chronicle-note" placeholder="Curatorial note (italic, appears above the auto-body)"'
+             +   ' style="width:100%;min-height:50px;font-family:inherit;font-size:12px;background:var(--bg);color:var(--ink);border:1px solid var(--faint);padding:6px;resize:vertical;">'
+             +   esc(e.owner_note || '') + '</textarea>'
+             + (noteReplied
+                 ? '<div class="chronicle-replied-warn" style="font-size:11px;color:var(--mid);margin-top:4px;font-style:italic;">Already replied on X. Edits update the website only.</div>'
+                 : '')
+             + '<div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+             +   '<button class="btn btn-small chronicle-save">Save note</button>'
+             +   '<span class="chronicle-row-status" style="font-size:11px;color:var(--mid);"></span>'
+             +   '<span class="chronicle-charcount" style="font-size:11px;color:var(--mid);font-variant-numeric:tabular-nums;margin-left:auto;"></span>'
+             + '</div>'
+             + '</div>';
+    }
+
+    function updateCharCount(counterEl, text) {
+        var len = (text || '').length;
+        counterEl.textContent = len + ' / ' + CHRONICLE_NOTE_X_BUDGET;
+        if (len > CHRONICLE_NOTE_X_BUDGET) {
+            counterEl.style.color = '#b02030';
+            counterEl.title = 'Over X reply budget; tweet will truncate at last word boundary. Website shows full text.';
+        } else if (len > CHRONICLE_NOTE_X_BUDGET - 25) {
+            counterEl.style.color = '#c06b00';
+            counterEl.title = 'Approaching X reply budget (' + CHRONICLE_NOTE_X_BUDGET + ' chars).';
+        } else {
+            counterEl.style.color = 'var(--mid)';
+            counterEl.title = '';
+        }
+    }
+
+    function initialCharCounts(scope) {
+        var rows = scope.querySelectorAll('.chronicle-row');
+        for (var i = 0; i < rows.length; i++) {
+            var ta = rows[i].querySelector('.chronicle-note');
+            var counter = rows[i].querySelector('.chronicle-charcount');
+            if (ta && counter) updateCharCount(counter, ta.value);
+        }
+    }
+
+    function loadChronicleList() {
+        var el = document.getElementById('chronicle-list');
+        var url = (location.host === 'helloesp.com' || location.host === 'www.helloesp.com')
+            ? '/chronicle.json'
+            : 'https://helloesp.com/chronicle.json';
+        fetch(url, { cache: 'no-cache' })
+            .then(function(r) { return r.ok ? r.json() : Promise.reject(r.status); })
+            .then(function(data) {
+                var entries = (data && data.entries) || [];
+                if (entries.length === 0) {
+                    el.innerHTML = '<div style="color:var(--mid);">No entries yet. The first will be sealed at the next UTC midnight.</div>';
+                    return;
+                }
+                // entries arrives reverse-chronological from /chronicle.json,
+                // so slice() gives latest N for the visible portion.
+                var visible = entries.slice(0, CHRONICLE_INITIAL_VISIBLE);
+                var hidden  = entries.slice(CHRONICLE_INITIAL_VISIBLE);
+                var html = '<div id="chronicle-visible">';
+                for (var i = 0; i < visible.length; i++) {
+                    html += buildChronicleRowHtml(visible[i]);
+                }
+                html += '</div>';
+                if (hidden.length > 0) {
+                    html += '<div id="chronicle-hidden" hidden>';
+                    for (var j = 0; j < hidden.length; j++) {
+                        html += buildChronicleRowHtml(hidden[j]);
+                    }
+                    html += '</div>';
+                    html += '<button type="button" class="btn btn-small" id="chronicle-show-older" style="margin-top:14px;">'
+                          + 'Show older entries (' + hidden.length + ')</button>';
+                }
+                el.innerHTML = html;
+                initialCharCounts(el);
+                var olderBtn = document.getElementById('chronicle-show-older');
+                if (olderBtn) {
+                    olderBtn.addEventListener('click', function() {
+                        var hiddenWrap = document.getElementById('chronicle-hidden');
+                        if (!hiddenWrap) return;
+                        if (hiddenWrap.hasAttribute('hidden')) {
+                            hiddenWrap.removeAttribute('hidden');
+                            olderBtn.textContent = 'Hide older entries';
+                        } else {
+                            hiddenWrap.setAttribute('hidden', '');
+                            olderBtn.textContent = 'Show older entries (' + hidden.length + ')';
+                        }
+                    });
+                }
+            })
+            .catch(function() {
+                el.innerHTML = '<div style="color:#b02030;">Could not load Chronicle entries.</div>';
+            });
+    }
+    // Live char-counter on every chronicle textarea via event delegation.
+    document.getElementById('chronicle-list').addEventListener('input', function(ev) {
+        if (!ev.target.classList || !ev.target.classList.contains('chronicle-note')) return;
+        var row = ev.target.closest('.chronicle-row');
+        if (!row) return;
+        var counter = row.querySelector('.chronicle-charcount');
+        if (counter) updateCharCount(counter, ev.target.value);
+    });
+
+    // Date jumper: scroll to the row for the picked date, expanding the
+    // older-entries section if the row lives there. Date format is YYYY-MM-DD
+    // from the native <input type="date"> control.
+    document.getElementById('chronicle-jump').addEventListener('change', function(ev) {
+        var date = ev.target.value;
+        var statusEl = document.getElementById('chronicle-jump-status');
+        if (!date) { statusEl.textContent = ''; return; }
+        var row = document.querySelector('.chronicle-row[data-date="' + date + '"]');
+        if (!row) {
+            statusEl.textContent = 'No entry for ' + date;
+            statusEl.style.color = '#b02030';
+            return;
+        }
+        // Reveal hidden section if the row is in it.
+        var hiddenWrap = document.getElementById('chronicle-hidden');
+        if (hiddenWrap && hiddenWrap.contains(row) && hiddenWrap.hasAttribute('hidden')) {
+            hiddenWrap.removeAttribute('hidden');
+            var olderBtn = document.getElementById('chronicle-show-older');
+            if (olderBtn) olderBtn.textContent = 'Hide older entries';
+        }
+        statusEl.textContent = 'Jumped to ' + date;
+        statusEl.style.color = 'var(--mid)';
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // Defer focus so the smooth-scroll animation completes first.
+        var ta = row.querySelector('.chronicle-note');
+        if (ta) setTimeout(function() { ta.focus(); }, 350);
+    });
+
+    document.getElementById('chronicle-list').addEventListener('click', function(ev) {
+        var btn = ev.target.closest('.chronicle-save');
+        if (!btn) return;
+        var row = btn.closest('.chronicle-row');
+        if (!row) return;
+        var date = row.getAttribute('data-date');
+        var note = row.querySelector('.chronicle-note').value;
+        var statusEl = row.querySelector('.chronicle-row-status');
+        statusEl.textContent = 'Saving...';
+        statusEl.style.color = 'var(--mid)';
+        var body = 'date=' + encodeURIComponent(date) + '&note=' + encodeURIComponent(note);
+        fetch('/admin/chronicle/note', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body
+        }).then(function(r) {
+            if (r.ok) {
+                statusEl.textContent = 'Saved.';
+                statusEl.style.color = 'var(--ok, #0a8b4a)';
+                setTimeout(function() { statusEl.textContent = ''; }, 2000);
+            } else if (r.status === 503) {
+                statusEl.textContent = 'Worker offline; try again.';
+                statusEl.style.color = '#b02030';
+            } else {
+                statusEl.textContent = 'Save failed (HTTP ' + r.status + ').';
+                statusEl.style.color = '#b02030';
+            }
+        }).catch(function() {
+            statusEl.textContent = 'Save failed.';
+            statusEl.style.color = '#b02030';
+        });
+    });
+
+    // Chronicle preview: fetches today's in-progress snapshot rendered
+    // through templates as if sealing right now. Worker-only data so we
+    // hit it cross-origin when admin loads from LAN; same /chronicle.json
+    // origin pattern as the Notes section.
+    function loadChronicleTodayPreview() {
+        var el = document.getElementById('chronicle-preview');
+        var statusEl = document.getElementById('chronicle-preview-status');
+        var url = (location.host === 'helloesp.com' || location.host === 'www.helloesp.com')
+            ? '/chronicle/preview' : 'https://helloesp.com/chronicle/preview';
+        if (statusEl) statusEl.textContent = 'Loading...';
+        fetch(url, { cache: 'no-store' })
+            .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+            .then(function (p) {
+                if (!p || !p.body) {
+                    el.innerHTML = '<div style="color:var(--mid);font-style:italic;">No in-progress snapshot yet.</div>';
+                    if (statusEl) statusEl.textContent = '';
+                    return;
+                }
+                var dayLabel = p.day_number ? 'Day ' + p.day_number + ' &middot; ' : '';
+                var ageStr = p.snapshot_age_seconds != null
+                    ? ' &middot; ' + p.snapshot_age_seconds + 's since last sample'
+                    : '';
+                var stats = p.stats || {};
+                var bits = [];
+                if (stats.visitors != null) bits.push(stats.visitors + ' visitors');
+                if (stats.countries != null) bits.push(stats.countries + ' countries');
+                if (stats.co2_max != null) bits.push('CO₂ ' + (stats.co2_min || 0) + '–' + stats.co2_max + ' ppm');
+                if (stats.temp_max_f != null) bits.push(Math.round(stats.temp_min_f) + '–' + Math.round(stats.temp_max_f) + '°F');
+                if (stats.samples != null) bits.push(stats.samples + ' samples');
+                var statBar = bits.length
+                    ? '<div style="font-size:11px;color:var(--mid);letter-spacing:0.05em;margin-top:10px;">'
+                       + bits.map(function (b) { return esc(b); }).join(' &middot; ') + '</div>'
+                    : '';
+                var pillStyle = 'font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--mid);'
+                              + 'border:1px solid var(--faint);padding:2px 6px;border-radius:2px;margin-left:8px;';
+                // Friendly label mapping mirrors chronicle.html's
+                // displayTemplateId. Empty for generic so the pill hides
+                // entirely on ordinary days.
+                var rawTpl = (p.template_id || 'generic');
+                var friendlyTpl = ({busy_rel:'busy',quiet_rel:'quiet',generic:''})[rawTpl];
+                var tplShown = friendlyTpl !== undefined ? friendlyTpl : rawTpl;
+                el.innerHTML =
+                    '<div style="font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:var(--ink);font-weight:500;">'
+                  + dayLabel + esc(p.date)
+                  + (tplShown ? '<span style="' + pillStyle + '">' + esc(tplShown) + '</span>' : '')
+                  + '</div>'
+                  + '<div style="margin-top:8px;white-space:pre-line;">' + esc(p.body) + '</div>'
+                  + statBar;
+                if (statusEl) {
+                    statusEl.textContent = 'Updated' + ageStr.replace(/&middot;/g, '·').replace(/<[^>]+>/g, '');
+                }
+            })
+            .catch(function () {
+                el.innerHTML = '<div style="color:#b02030;">Could not load preview.</div>';
+                if (statusEl) statusEl.textContent = '';
+            });
+    }
+    var chronicleRefreshBtn = document.getElementById('chronicle-preview-refresh');
+    if (chronicleRefreshBtn) chronicleRefreshBtn.addEventListener('click', loadChronicleTodayPreview);
+
     // Init
     loadDeviceInfo();
     updateGbFilterButtons();
@@ -3292,6 +3643,8 @@
     loadFiles('/');
     loadBackupStatus();
     loadFirmwareList();
+    loadChronicleList();
+    loadChronicleTodayPreview();
 
     // 30s polling so sparklines, maintenance countdown, and worker-link
     // state stay live. Paused on hidden tab to avoid background polling.

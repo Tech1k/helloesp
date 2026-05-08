@@ -26,8 +26,14 @@
 #include <HTTPClient.h>
 #include <atomic>
 
+// Bump the Arduino loop task stack from the 8KB default to 12KB. The
+// chronicle_seal handler combined with SD.rename's tmp/bak orchestration
+// and JSON unescape can spike past 8KB on receipt of an entry, tripping
+// the stack canary and rebooting.
+SET_LOOP_TASK_STACK_SIZE(12 * 1024);
+
 // Version
-#define FIRMWARE_VERSION "1.3"
+#define FIRMWARE_VERSION "1.4"
 
 // Pins
 #define SD_CS    5
@@ -301,7 +307,32 @@ uint32_t shelly_tracking_started_unix = 0; // when we first saw a Shelly poll su
 #define BME_PRESS_MIN_HPA  300.0f
 #define BME_PRESS_MAX_HPA  1100.0f
 
+// Forward decl: logError lives much further down but the sensor health
+// helpers below need it.
+void logError(const char* tag, const char* msg);
+
+// Per-sensor graceful-failure tracker. When a sensor produces no good read
+// for SENSOR_RETIRE_THRESHOLD consecutive logStats cycles (~2.5 hours at
+// the 5-min interval), the chip declares it retired: stops attempting
+// reads, persists the retirement date, and emits a chronicle event so
+// "the day the chip went blind to humidity" becomes part of the archive.
+// Threshold is intentionally conservative: survives I2C glitches, CCS811
+// boot warm-up, transient bus contention. Owner can un-retire from the
+// admin panel after replacing/fixing a sensor. Existing bmeDegraded() /
+// ccsDegraded() timestamp-based degradation logic is unchanged; retire
+// sits on top as a stronger persistent signal.
+struct SensorHealth {
+    uint32_t consecutive_bad;
+    bool     retired;
+    uint32_t retired_unix;  // 0 = never retired
+};
+SensorHealth bmeHealth = { 0, false, 0 };
+SensorHealth ccsHealth = { 0, false, 0 };
+#define SENSOR_RETIRE_THRESHOLD 30
+#define SENSOR_HEALTH_PATH      "/sensor_health.json"
+
 static float safeBmeTemp() {
+    if (bmeHealth.retired) return cached_temp_c;
     float t = bme.readTemperature();
     if (!isnan(t) && t >= BME_TEMP_MIN_C && t <= BME_TEMP_MAX_C) {
         cached_temp_c = t; lastBmeGoodAt = millis();
@@ -309,6 +340,7 @@ static float safeBmeTemp() {
     return cached_temp_c;
 }
 static float safeBmeHumidity() {
+    if (bmeHealth.retired) return cached_humidity;
     float h = bme.readHumidity();
     if (!isnan(h) && h >= BME_HUM_MIN && h <= BME_HUM_MAX) {
         cached_humidity = h; lastBmeGoodAt = millis();
@@ -316,6 +348,7 @@ static float safeBmeHumidity() {
     return cached_humidity;
 }
 static float safeBmePressureHpa() {
+    if (bmeHealth.retired) return cached_pressure_hpa;
     float p = bme.readPressure() / 100.0f;
     if (!isnan(p) && p >= BME_PRESS_MIN_HPA && p <= BME_PRESS_MAX_HPA) {
         cached_pressure_hpa = p; lastBmeGoodAt = millis();
@@ -351,6 +384,117 @@ static bool bmeDegraded() {
 static bool ccsDegraded() {
     if (lastCcsGoodAt > 0) return (millis() - lastCcsGoodAt) > SENSOR_STALE_MS;
     return millis() > SENSOR_BOOT_GRACE_MS;
+}
+
+// Persisted sensor health: simple JSON file with per-sensor retire state.
+// Atomic tmp+bak+rename pattern matches the rest of the persisted state on
+// SD. Fields are minimal: consecutive_bad isn't persisted (resets on reboot
+// and re-accumulates if the sensor is still bad), only the retired flag +
+// timestamp need to survive across boots so chronicle isn't double-emitted.
+static void loadSensorHealth() {
+    if (!SD.exists(SENSOR_HEALTH_PATH)) return;
+    File f = SD.open(SENSOR_HEALTH_PATH, FILE_READ);
+    if (!f) return;
+    String s;
+    s.reserve(f.size() + 1);
+    while (f.available()) s += (char)f.read();
+    f.close();
+    auto skipSpace = [&](int p) {
+        while (p < (int)s.length() && (s[p] == ' ' || s[p] == '\t')) p++;
+        return p;
+    };
+    auto parseSensor = [&](const char* key, SensorHealth& h) {
+        int kPos = s.indexOf(String("\"") + key + "\"");
+        if (kPos < 0) return;
+        int retPos = s.indexOf("\"retired\":", kPos);
+        if (retPos > 0 && retPos < kPos + 200) {
+            int v = skipSpace(retPos + 10);
+            h.retired = (s.indexOf("true", v) == v);
+        }
+        int unixPos = s.indexOf("\"retired_unix\":", kPos);
+        if (unixPos > 0 && unixPos < kPos + 200) {
+            int valStart = skipSpace(unixPos + 15);
+            int valEnd = valStart;
+            while (valEnd < (int)s.length() && (s[valEnd] >= '0' && s[valEnd] <= '9')) valEnd++;
+            if (valEnd > valStart) h.retired_unix = (uint32_t)s.substring(valStart, valEnd).toInt();
+        }
+    };
+    parseSensor("bme280", bmeHealth);
+    parseSensor("ccs811", ccsHealth);
+    if (bmeHealth.retired) Serial.println("[sensor] BME280 retired (loaded from SD)");
+    if (ccsHealth.retired) Serial.println("[sensor] CCS811 retired (loaded from SD)");
+}
+
+static void saveSensorHealth() {
+    String json;
+    json.reserve(256);
+    json  = "{\n  \"bme280\": {\"retired\": ";
+    json += (bmeHealth.retired ? "true" : "false");
+    json += ", \"retired_unix\": ";
+    json += String(bmeHealth.retired_unix);
+    json += "},\n  \"ccs811\": {\"retired\": ";
+    json += (ccsHealth.retired ? "true" : "false");
+    json += ", \"retired_unix\": ";
+    json += String(ccsHealth.retired_unix);
+    json += "}\n}\n";
+    String tmp = String(SENSOR_HEALTH_PATH) + ".tmp";
+    String bak = String(SENSOR_HEALTH_PATH) + ".bak";
+    File f = SD.open(tmp.c_str(), FILE_WRITE);
+    if (!f) { logError("sensor", "saveSensorHealth: open .tmp failed"); return; }
+    f.print(json);
+    f.close();
+    if (SD.exists(bak.c_str())) SD.remove(bak.c_str());
+    if (SD.exists(SENSOR_HEALTH_PATH)) SD.rename(SENSOR_HEALTH_PATH, bak.c_str());
+    if (!SD.rename(tmp.c_str(), SENSOR_HEALTH_PATH)) {
+        logError("sensor", "saveSensorHealth: rename failed");
+        if (SD.exists(bak.c_str())) SD.rename(bak.c_str(), SENSOR_HEALTH_PATH);
+        return;
+    }
+    if (SD.exists(bak.c_str())) SD.remove(bak.c_str());
+}
+
+// Emit chronicle event so the worker can mark the day as "the chip went
+// blind to <sensor>". Worker stores under a dedicated DO key so the next
+// chronicle seal can surface it. Fires once per retire transition.
+static void emitChronicleSensorRetired(const char* sensor, uint32_t retireUnix) {
+    if (!wsConnected || !wsClient.connected()) return;
+    String msg;
+    msg.reserve(160);
+    msg  = "{\"type\":\"event\",\"event\":\"chronicle_sensor_retired\",\"data\":{\"sensor\":\"";
+    msg += sensor;
+    msg += "\",\"unix\":";
+    msg += String(retireUnix);
+    msg += "}}";
+    wsSendText(wsClient, msg);
+}
+
+// Called at the end of each logStats cycle (every 5 min). Increments
+// per-sensor consecutive_bad if degraded this cycle, resets on a healthy
+// cycle. Crosses SENSOR_RETIRE_THRESHOLD → retire transition: persist,
+// log, and emit chronicle event. Only fires on the transition itself, so
+// a retired sensor doesn't re-emit on every subsequent cycle.
+static void evalSensorHealth() {
+    bool dirty = false;
+    auto eval = [&](SensorHealth& h, bool degradedNow, const char* name) {
+        if (h.retired) return;
+        if (degradedNow) {
+            h.consecutive_bad++;
+            if (h.consecutive_bad >= SENSOR_RETIRE_THRESHOLD) {
+                h.retired = true;
+                time_t now = time(nullptr);
+                h.retired_unix = (now > 0) ? (uint32_t)now : 0;
+                dirty = true;
+                logError("sensor", (String(name) + " RETIRED after "
+                    + String(h.consecutive_bad) + " consecutive bad cycles").c_str());
+                emitChronicleSensorRetired(name, h.retired_unix);
+            }
+        } else {
+            h.consecutive_bad = 0;
+        }
+    };
+    eval(bmeHealth, bmeDegraded(), "BME280");
+    eval(ccsHealth, ccsDegraded(), "CCS811");
+    if (dirty) saveSensorHealth();
 }
 
 volatile bool          ledOn               = false;
@@ -1045,7 +1189,11 @@ static void checkPeriodBoundaries() {
         // Capture the period's accumulated energy at flush time so the
         // archive JSON records it. -1 sentinel when no Shelly is set.
         float weekE = (cfgShellyUrl[0] != '\0') ? (float)week_energy_wh : -1.0f;
-        if (flushPeriod("/stats/weekly", lastWeekLabel, currentWeek, weekE)) {
+        // Year-subdir grouping keeps each weekly dir bounded at ~52 files.
+        // Year is the first 4 chars of the ISO week label "YYYY-WNN".
+        String weeklyDir = String("/stats/weekly/") + String(lastWeekLabel).substring(0, 4);
+        if (!SD.exists(weeklyDir.c_str())) SD.mkdir(weeklyDir.c_str());
+        if (flushPeriod(weeklyDir.c_str(), lastWeekLabel, currentWeek, weekE)) {
             resetPeriod(currentWeek);
             week_energy_wh = 0.0f;  // reset accumulator for the new period
             strncpy(lastWeekLabel, w, sizeof(lastWeekLabel) - 1);
@@ -1058,7 +1206,11 @@ static void checkPeriodBoundaries() {
         lastMonthLabel[sizeof(lastMonthLabel) - 1] = '\0';
     } else if (strcmp(lastMonthLabel, m) != 0) {
         float monthE = (cfgShellyUrl[0] != '\0') ? (float)month_energy_wh : -1.0f;
-        if (flushPeriod("/stats/monthly", lastMonthLabel, currentMonth, monthE)) {
+        // Year-subdir grouping: same rationale as weekly. Year is the first
+        // 4 chars of the month label "YYYY-MM".
+        String monthlyDir = String("/stats/monthly/") + String(lastMonthLabel).substring(0, 4);
+        if (!SD.exists(monthlyDir.c_str())) SD.mkdir(monthlyDir.c_str());
+        if (flushPeriod(monthlyDir.c_str(), lastMonthLabel, currentMonth, monthE)) {
             resetPeriod(currentMonth);
             month_energy_wh = 0.0f;
             strncpy(lastMonthLabel, m, sizeof(lastMonthLabel) - 1);
@@ -1658,6 +1810,7 @@ static bool isProtectedPath(const String& p) {
         || p == "/history.html"
         || p == "/console.html"
         || p == "/snake.html"
+        || p == "/chronicle.html"
         || p == "/admin.html"
         || p == "/404.html";
 }
@@ -2007,473 +2160,12 @@ static void migrationAbort(const char* msg) {
     while (1) { delay(1000); }
 }
 
-// CSV migrations
-// Future migrations follow the same shape: check /<file>.schema for the
-// version, copy original to /<file>.vN backup, stream old to .tmp with the
-// transform applied, atomic rename .tmp over original, bump the schema file
-// last. migrationAbort() on any failure so we don't serve half-migrated data.
-// Version check at the top makes each migration a no-op on clean boots.
-
-// v1: time,country,name,message,status
-// v2: time,country,name,message,id,status   (id = 6-char base36)
-static void migrateGuestbookCsvToV2() {
-    if (readGuestbookSchemaVersion() >= 2) return;
-
-    // Recover from a prior crashed mid-rename: /guestbook.csv gone, but real
-    // data still sits in .tmp (v2) or .csv.bak (v1). Pull it back before the
-    // "no data" fast path below would stamp v2 and orphan the rows.
-    if (!SD.exists("/guestbook.csv")) {
-        if (SD.exists("/guestbook.csv.tmp")) {
-            if (SD.rename("/guestbook.csv.tmp", "/guestbook.csv")) {
-                Serial.println("[migrate] recovered v2 csv from .tmp (prior crash)");
-            }
-        }
-        if (!SD.exists("/guestbook.csv") && SD.exists("/guestbook.csv.bak")) {
-            if (SD.rename("/guestbook.csv.bak", "/guestbook.csv")) {
-                Serial.println("[migrate] recovered v1 csv from .bak (prior crash)");
-            }
-        }
-    }
-
-    // No data yet: just stamp the version so submit/parse code knows what shape to expect.
-    if (!SD.exists("/guestbook.csv")) {
-        writeGuestbookSchemaVersion(2);
-        return;
-    }
-
-    // Probe first non-empty line to detect existing schema.
-    int commas = -1;
-    {
-        File probe = SD.open("/guestbook.csv", FILE_READ);
-        if (!probe) { migrationAbort("cannot read guestbook.csv to probe schema"); return; }
-        char line[400];
-        while (probe.available()) {
-            int n = probe.readBytesUntil('\n', line, sizeof(line) - 1);
-            if (n <= 0) continue;
-            line[n] = '\0';
-            while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) n--;
-            if (n == 0) continue;
-            commas = 0;
-            for (int i = 0; i < n; i++) if (line[i] == ',') commas++;
-            break;
-        }
-        probe.close();
-    }
-
-    if (commas < 0) {
-        // file exists but is empty/whitespace, treat as no data.
-        writeGuestbookSchemaVersion(2);
-        return;
-    }
-    if (commas == 5) {
-        // Already v2 shape but schema marker was missing (maybe wiped). Stamp it so future boots take the fast path.
-        writeGuestbookSchemaVersion(2);
-        Serial.println("[migrate] guestbook.csv already v2, stamped marker");
-        return;
-    }
-    if (commas != 4) {
-        char buf[72];
-        snprintf(buf, sizeof(buf), "guestbook.csv unexpected commas=%d", commas);
-        migrationAbort(buf);
-        return;
-    }
-
-    Serial.println("[migrate] guestbook.csv is v1, migrating to v2 (adds id column)");
-
-    // Keep the pre-migration copy around permanently. If a .v1 from a prior
-    // failed attempt is already on disk, don't overwrite it.
-    if (!SD.exists("/guestbook.csv.v1")) {
-        File src = SD.open("/guestbook.csv", FILE_READ);
-        File dst = SD.open("/guestbook.csv.v1", FILE_WRITE);
-        if (!src || !dst) {
-            if (src) src.close();
-            if (dst) dst.close();
-            migrationAbort("cannot open files for v1 backup copy");
-            return;
-        }
-        uint8_t buf[1024];
-        int rd;
-        while ((rd = src.read(buf, sizeof(buf))) > 0) {
-            if (dst.write(buf, rd) != (size_t)rd) {
-                src.close(); dst.close();
-                migrationAbort("v1 backup write failed");
-                return;
-            }
-        }
-        src.close();
-        dst.close();
-    }
-
-    // Stream old csv into the tmp file, inserting ,id between message and status.
-    File in  = SD.open("/guestbook.csv", FILE_READ);
-    File out = SD.open("/guestbook.csv.tmp", FILE_WRITE);
-    if (!in || !out) {
-        if (in) in.close();
-        if (out) out.close();
-        migrationAbort("cannot open files for v2 rewrite");
-        return;
-    }
-
-    int migrated = 0;
-    bool writeFailed = false;
-    char line[400];
-
-    // A partial write would truncate the new v2 file, which then gets renamed
-    // over the original. Track failures via these lambdas and abort before
-    // the swap if any write fell short; .v1 backup stays intact either way.
-    auto writeAll = [&](const uint8_t* data, size_t len) {
-        if (writeFailed) return;
-        if (out.write(data, len) != len) writeFailed = true;
-    };
-    auto writeByte = [&](uint8_t b) {
-        if (writeFailed) return;
-        if (out.write(b) != 1) writeFailed = true;
-    };
-
-    while (in.available() && !writeFailed) {
-        int n = in.readBytesUntil('\n', line, sizeof(line) - 1);
-        if (n <= 0) continue;
-        line[n] = '\0';
-        while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
-        if (n == 0) continue;
-
-        // Split at last comma: everything before = [time,country,name,message],
-        // everything after = status. Insert ",id" between them.
-        int last = -1;
-        for (int i = n - 1; i >= 0; i--) if (line[i] == ',') { last = i; break; }
-        if (last < 0) {
-            // malformed row: carry forward unchanged so the admin can inspect.
-            Serial.printf("[migrate] skipping malformed row: %s\n", line);
-            writeAll((const uint8_t*)line, n);
-            writeByte('\n');
-            continue;
-        }
-
-        char id[9];
-        generateGuestbookId(id);
-        writeAll((const uint8_t*)line, last);              // [time,country,name,message]
-        writeByte(',');
-        writeAll((const uint8_t*)id, 8);                   // id
-        writeAll((const uint8_t*)(line + last), n - last); // ,status
-        writeByte('\n');
-        migrated++;
-    }
-    in.close();
-    out.close();
-
-    if (writeFailed) {
-        // Tmp is incomplete, discard it. Original csv is still intact.
-        SD.remove("/guestbook.csv.tmp");
-        migrationAbort("v2 rewrite failed (SD full or write error); original kept");
-        return;
-    }
-
-    // Swap. Each rename checked so we can restore if something fails midway.
-    if (SD.exists("/guestbook.csv.bak")) SD.remove("/guestbook.csv.bak");
-    if (!SD.rename("/guestbook.csv", "/guestbook.csv.bak")) {
-        SD.remove("/guestbook.csv.tmp");
-        migrationAbort("rename csv -> csv.bak failed; original kept");
-        return;
-    }
-    if (!SD.rename("/guestbook.csv.tmp", "/guestbook.csv")) {
-        SD.rename("/guestbook.csv.bak", "/guestbook.csv");
-        SD.remove("/guestbook.csv.tmp");
-        migrationAbort("rename tmp -> guestbook.csv failed; original restored from .bak");
-        return;
-    }
-
-    // Bump the schema marker last. If anything before failed the sidecar
-    // stays at v1 and we retry next boot.
-    if (!writeGuestbookSchemaVersion(2)) {
-        migrationAbort("wrote new csv but failed to write schema marker");
-        return;
-    }
-
-    char msg[72];
-    snprintf(msg, sizeof(msg), "guestbook: migrated %d entries to v2 schema", migrated);
-    Serial.printf("[migrate] %s\n", msg);
-    logError("migrate", msg);
-}
-
-// v3: time,country,name,message,id,reply_to,status
-// reply_to is empty for top-level entries, or the 8-char id of the parent.
-// Only one level of nesting is allowed (enforced at submit time, not here).
-static void migrateGuestbookCsvToV3() {
-    if (readGuestbookSchemaVersion() >= 3) return;
-
-    // Mid-rename crash recovery, same shape as v2.
-    if (!SD.exists("/guestbook.csv")) {
-        if (SD.exists("/guestbook.csv.tmp")) {
-            if (SD.rename("/guestbook.csv.tmp", "/guestbook.csv")) {
-                Serial.println("[migrate] recovered csv from .tmp (prior crash)");
-            }
-        }
-        if (!SD.exists("/guestbook.csv") && SD.exists("/guestbook.csv.bak")) {
-            if (SD.rename("/guestbook.csv.bak", "/guestbook.csv")) {
-                Serial.println("[migrate] recovered csv from .bak (prior crash)");
-            }
-        }
-    }
-
-    if (!SD.exists("/guestbook.csv")) {
-        writeGuestbookSchemaVersion(3);
-        return;
-    }
-
-    int commas = -1;
-    {
-        File probe = SD.open("/guestbook.csv", FILE_READ);
-        if (!probe) { migrationAbort("cannot read guestbook.csv to probe schema"); return; }
-        char line[400];
-        while (probe.available()) {
-            int n = probe.readBytesUntil('\n', line, sizeof(line) - 1);
-            if (n <= 0) continue;
-            line[n] = '\0';
-            while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) n--;
-            if (n == 0) continue;
-            commas = 0;
-            for (int i = 0; i < n; i++) if (line[i] == ',') commas++;
-            break;
-        }
-        probe.close();
-    }
-
-    if (commas < 0) {
-        writeGuestbookSchemaVersion(3);
-        return;
-    }
-    if (commas == 6) {
-        writeGuestbookSchemaVersion(3);
-        Serial.println("[migrate] guestbook.csv already v3, stamped marker");
-        return;
-    }
-    if (commas != 5) {
-        char buf[72];
-        snprintf(buf, sizeof(buf), "guestbook.csv unexpected commas=%d for v3", commas);
-        migrationAbort(buf);
-        return;
-    }
-
-    Serial.println("[migrate] guestbook.csv is v2, migrating to v3 (adds reply_to column)");
-
-    if (!SD.exists("/guestbook.csv.v2")) {
-        File src = SD.open("/guestbook.csv", FILE_READ);
-        File dst = SD.open("/guestbook.csv.v2", FILE_WRITE);
-        if (!src || !dst) {
-            if (src) src.close();
-            if (dst) dst.close();
-            migrationAbort("cannot open files for v2 backup copy");
-            return;
-        }
-        uint8_t buf[1024];
-        int rd;
-        while ((rd = src.read(buf, sizeof(buf))) > 0) {
-            if (dst.write(buf, rd) != (size_t)rd) {
-                src.close(); dst.close();
-                migrationAbort("v2 backup write failed");
-                return;
-            }
-        }
-        src.close();
-        dst.close();
-    }
-
-    File in  = SD.open("/guestbook.csv", FILE_READ);
-    File out = SD.open("/guestbook.csv.tmp", FILE_WRITE);
-    if (!in || !out) {
-        if (in) in.close();
-        if (out) out.close();
-        migrationAbort("cannot open files for v3 rewrite");
-        return;
-    }
-
-    int migrated = 0;
-    bool writeFailed = false;
-    char line[400];
-
-    auto writeAll = [&](const uint8_t* data, size_t len) {
-        if (writeFailed) return;
-        if (out.write(data, len) != len) writeFailed = true;
-    };
-    auto writeByte = [&](uint8_t b) {
-        if (writeFailed) return;
-        if (out.write(b) != 1) writeFailed = true;
-    };
-
-    while (in.available() && !writeFailed) {
-        int n = in.readBytesUntil('\n', line, sizeof(line) - 1);
-        if (n <= 0) continue;
-        line[n] = '\0';
-        while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
-        if (n == 0) continue;
-
-        // Split at last comma: [time,country,name,message,id],status. Insert "," (empty reply_to) between them.
-        int last = -1;
-        for (int i = n - 1; i >= 0; i--) if (line[i] == ',') { last = i; break; }
-        if (last < 0) {
-            Serial.printf("[migrate] skipping malformed row: %s\n", line);
-            writeAll((const uint8_t*)line, n);
-            writeByte('\n');
-            continue;
-        }
-
-        writeAll((const uint8_t*)line, last);              // [time,country,name,message,id]
-        writeByte(',');                                    // empty reply_to
-        writeAll((const uint8_t*)(line + last), n - last); // ,status
-        writeByte('\n');
-        migrated++;
-    }
-    in.close();
-    out.close();
-
-    if (writeFailed) {
-        SD.remove("/guestbook.csv.tmp");
-        migrationAbort("v3 rewrite failed (SD full or write error); original kept");
-        return;
-    }
-
-    if (SD.exists("/guestbook.csv.bak")) SD.remove("/guestbook.csv.bak");
-    if (!SD.rename("/guestbook.csv", "/guestbook.csv.bak")) {
-        SD.remove("/guestbook.csv.tmp");
-        migrationAbort("rename csv -> csv.bak failed; original kept");
-        return;
-    }
-    if (!SD.rename("/guestbook.csv.tmp", "/guestbook.csv")) {
-        SD.rename("/guestbook.csv.bak", "/guestbook.csv");
-        SD.remove("/guestbook.csv.tmp");
-        migrationAbort("rename tmp -> guestbook.csv failed; original restored from .bak");
-        return;
-    }
-
-    if (!writeGuestbookSchemaVersion(3)) {
-        migrationAbort("wrote new csv but failed to write schema marker");
-        return;
-    }
-
-    char msg[72];
-    snprintf(msg, sizeof(msg), "guestbook: migrated %d entries to v3 schema", migrated);
-    Serial.printf("[migrate] %s\n", msg);
-    logError("migrate", msg);
-}
-
-// One-time migration of today's sensor log to v2 schema (adds power_w
-// column at the end). v1 = the original 16-col schema. Older daily files
-// keep their v1 columns; the chart frontend tolerates the missing column.
-// Per-file versioning (matches guestbook's marker scheme); the global
-// firmware version is unrelated. Only migrates today's file
-// because that's the one about to be appended to; recursing over all
-// historical files would block boot indefinitely on long-running devices.
-// Called lazily from logStats() with a static guard, not at boot, because
-// boot runs before NTP sync and getLogFilename() would resolve to the
-// fallback path before the proper YYYY-MM-DD path is known.
-//
-// Failure handling mirrors migrateGuestbookCsvToV2/V3: crash recovery
-// from prior failed runs, per-write failure tracking via lambdas, and a
-// two-step rename so the original is preserved as .bak until the swap
-// commits. On any failure the original file stays intact for the next
-// boot's retry. Sensor log loss is recoverable (we'd lose today's data
-// points), so unlike guestbook migration this doesn't migrationAbort.
-void migrateTodaysSensorLogToV2() {
-    String path = getLogFilename();
-    String tmp  = path + ".tmp";
-    String bak  = path + ".bak";
-
-    // Crash recovery from a prior failed migration: if the original file
-    // is gone but .tmp or .bak survives, restore before checking schema
-    // (so we don't silently start a new file and orphan today's data).
-    if (!SD.exists(path)) {
-        if (SD.exists(tmp) && SD.rename(tmp, path)) {
-            Serial.println("[migrate] recovered today's sensor log from .tmp (prior crash)");
-        } else if (SD.exists(bak) && SD.rename(bak, path)) {
-            Serial.println("[migrate] recovered today's sensor log from .bak (prior crash)");
-        }
-    }
-    if (!SD.exists(path)) return;  // first write of today, will get v2 header
-
-    // Idempotency guard: header line tells us whether the file is already v2.
-    File r = SD.open(path, FILE_READ);
-    if (!r) return;
-    String header = r.readStringUntil('\n');
-    r.close();
-    if (header.indexOf("power_w") >= 0) return;  // already v2
-
-    Serial.printf("[migrate] migrating sensor log to v2 (adds power_w): %s\n", path.c_str());
-
-    // Clean up any stale .tmp from a prior failed attempt before starting.
-    if (SD.exists(tmp)) SD.remove(tmp);
-
-    File src = SD.open(path, FILE_READ);
-    File dst = SD.open(tmp, FILE_WRITE);
-    if (!src || !dst) {
-        if (src) src.close();
-        if (dst) dst.close();
-        if (SD.exists(tmp)) SD.remove(tmp);
-        logError("migrate", "sensor log v2: could not open files");
-        return;
-    }
-
-    // Per-write failure tracking. Short writes (SD full, transient error)
-    // would otherwise silently truncate the new file before the swap.
-    bool writeFailed = false;
-    auto writeAll = [&](const char* data, size_t len) {
-        if (writeFailed) return;
-        if (dst.write((const uint8_t*)data, len) != len) writeFailed = true;
-    };
-    auto writeByte = [&](char b) {
-        if (writeFailed) return;
-        if (dst.write((uint8_t)b) != 1) writeFailed = true;
-    };
-
-    int rowsRewritten = 0;
-    bool first = true;
-    while (src.available() && !writeFailed) {
-        String line = src.readStringUntil('\n');
-        if (line.endsWith("\r")) line.remove(line.length() - 1);
-        if (first) {
-            writeAll(line.c_str(), line.length());
-            writeAll(",power_w", 8);
-            writeByte('\n');
-            first = false;
-        } else if (line.length() > 0) {
-            // Append empty power_w cell for pre-migration rows.
-            writeAll(line.c_str(), line.length());
-            writeByte(',');
-            writeByte('\n');
-            rowsRewritten++;
-        }
-        yield();
-        esp_task_wdt_reset();
-    }
-    src.close();
-    dst.close();
-
-    if (writeFailed) {
-        SD.remove(tmp);
-        logError("migrate", "sensor log v2 rewrite failed (SD full or write error); original kept");
-        return;
-    }
-
-    // Atomic swap: original -> .bak, then tmp -> original. If the second
-    // rename fails we restore from .bak so the file isn't lost.
-    if (SD.exists(bak)) SD.remove(bak);
-    if (!SD.rename(path, bak)) {
-        SD.remove(tmp);
-        logError("migrate", "sensor log v2: rename csv -> .bak failed; original kept");
-        return;
-    }
-    if (!SD.rename(tmp, path)) {
-        SD.rename(bak, path);   // best-effort restore
-        SD.remove(tmp);
-        logError("migrate", "sensor log v2: rename tmp -> csv failed; original restored");
-        return;
-    }
-    SD.remove(bak);
-
-    char msg[80];
-    snprintf(msg, sizeof(msg), "sensor log: migrated %d rows to v2 schema", rowsRewritten);
-    Serial.printf("[migrate] %s\n", msg);
-    logError("migrate", msg);
-}
+// Current guestbook schema (v3): time,country,name,message,id,reply_to,status
+// In-firmware migrations were stripped in v1.4 to free flash. Stale SD cards
+// from pre-v1.3 firmware must flash v1.3 first to run v1->v2->v3 migrations,
+// then upgrade. The boot-time guard in setup() (readGuestbookSchemaVersion)
+// halts the device with a clear OLED + serial message when stale data is
+// detected, rather than serving corrupted rows.
 
 // Recompute guestbook counts (pendingGuestbook, gbCountApproved, gbCountDenied,
 // gbCountAll) by streaming through guestbook.csv. Avoids loading the whole file
@@ -2785,16 +2477,6 @@ void logStats() {
     struct tm tCheck;
     if (!getLocalTime(&tCheck, 0)) return;
 
-    // First-write-after-boot guard: migrate today's file to v2 schema if
-    // it predates this firmware. Idempotent (no-op if already v2 or
-    // file doesn't exist yet). Static bool prevents the disk read on
-    // every subsequent logStats call.
-    static bool migrationCheckedThisBoot = false;
-    if (!migrationCheckedThisBoot) {
-        migrateTodaysSensorLogToV2();
-        migrationCheckedThisBoot = true;
-    }
-
     String filename = getLogFilename();
     bool isNew = !SD.exists(filename);
 
@@ -2850,6 +2532,7 @@ void logStats() {
     aggregateSample(currentYear,  d.temp_c, d.humidity, cached_co2, cached_voc, intervalRequests);
     checkPeriodBoundaries();
     updateRecords(d.temp_f, cached_co2, dailyVisitors);
+    evalSensorHealth();
 }
 
 // Build the /stats JSON payload. Used by the /stats route and the 5s SSE push.
@@ -2862,6 +2545,18 @@ String buildStatsJson() {
     uint32_t free_heap = ESP.getFreeHeap();
     uint32_t total_heap= ESP.getHeapSize();
     uint32_t used_bytes= total_heap - free_heap;
+
+    // Chip-local YYYY-MM-DD per cfgTimezone. Worker uses this to bucket the
+    // chronicle snapshot so /chronicle/<date> aligns with the chip's lived
+    // day rather than UTC. Empty when NTP hasn't synced yet; worker falls
+    // back to UTC date in that case.
+    char today_local[11] = "";
+    int  today_local_hour = -1;
+    struct tm tlNow;
+    if (getLocalTime(&tlNow, 0)) {
+        strftime(today_local, sizeof(today_local), "%Y-%m-%d", &tlNow);
+        today_local_hour = tlNow.tm_hour;
+    }
 
     // Build into a stack char buffer with snprintf
     char buf[1536];
@@ -2888,6 +2583,8 @@ String buildStatsJson() {
         ",\"countries\":%d"
         ",\"guestbook_approved\":%d"
         ",\"sensors\":{\"bme_ok\":%s,\"ccs_ok\":%s,\"oled_ok\":%s,\"rtc_ok\":%s}"
+        ",\"today_local\":\"%s\""
+        ",\"today_local_hour\":%d"
         "}",
         responseMs,
         ts.c_str(),
@@ -2911,7 +2608,9 @@ String buildStatsJson() {
         bmeDegraded() ? "false" : "true",
         ccsDegraded() ? "false" : "true",
         oledOk ? "true" : "false",
-        rtcOk ? "true" : "false");
+        rtcOk ? "true" : "false",
+        today_local,
+        today_local_hour);
 
     // Optional Shelly power fields, appended only when shelly_url is set
     // and a successful poll happened within SHELLY_STALE_MS. Insert before
@@ -3333,6 +3032,160 @@ void handleWsRelay(String& data) {
             data = "";
             return;
         }
+        if (data.indexOf("\"event\":\"chronicle_seal\"") >= 0) {
+            // Worker pushes a sealed Chronicle entry for SD persistence so
+            // the chip owns its own diary (and the existing daily SD->R2
+            // backup loop catches it for free). The "entry" field is the
+            // full entry as a stringified JSON value (escapes preserve the
+            // inner quotes) so we can extract and write it without parsing
+            // the nested object structure.
+            int dStart = data.indexOf("\"date\":\"");
+            if (dStart < 0) { data = ""; return; }
+            dStart += 8;
+            int dEnd = data.indexOf("\"", dStart);
+            if (dEnd < 0 || dEnd - dStart != 10) { data = ""; return; }
+            String date = data.substring(dStart, dEnd);
+            // Strict YYYY-MM-DD digit check before using the date in a path.
+            bool dateOk = true;
+            for (int i = 0; i < 10 && dateOk; i++) {
+                char c = date[i];
+                if (i == 4 || i == 7) { if (c != '-') dateOk = false; }
+                else if (c < '0' || c > '9') dateOk = false;
+            }
+            if (!dateOk) { data = ""; return; }
+
+            // Walk past escape sequences to find the unescaped closing quote.
+            int eStart = data.indexOf("\"entry\":\"", dEnd);
+            if (eStart < 0) { data = ""; return; }
+            eStart += 9;
+            int eEnd = -1;
+            for (int i = eStart; i < (int)data.length(); i++) {
+                char c = data[i];
+                if (c == '\\' && i + 1 < (int)data.length()) { i++; continue; }
+                if (c == '"') { eEnd = i; break; }
+            }
+            if (eEnd < 0) { data = ""; return; }
+
+            // Unescape standard JSON string escapes. \uXXXX is decoded to
+            // UTF-8 so owner notes with unicode survive the round trip.
+            String entryJson;
+            entryJson.reserve(eEnd - eStart);
+            for (int i = eStart; i < eEnd; i++) {
+                char c = data[i];
+                if (c != '\\' || i + 1 >= eEnd) { entryJson += c; continue; }
+                char n = data[++i];
+                if (n == '"')      entryJson += '"';
+                else if (n == '\\') entryJson += '\\';
+                else if (n == '/')  entryJson += '/';
+                else if (n == 'n')  entryJson += '\n';
+                else if (n == 'r')  entryJson += '\r';
+                else if (n == 't')  entryJson += '\t';
+                else if (n == 'b')  entryJson += '\b';
+                else if (n == 'f')  entryJson += '\f';
+                else if (n == 'u' && i + 4 < eEnd) {
+                    unsigned int cp = 0;
+                    bool hexOk = true;
+                    for (int k = 0; k < 4 && hexOk; k++) {
+                        char h = data[i + 1 + k];
+                        cp <<= 4;
+                        if      (h >= '0' && h <= '9') cp |= h - '0';
+                        else if (h >= 'a' && h <= 'f') cp |= h - 'a' + 10;
+                        else if (h >= 'A' && h <= 'F') cp |= h - 'A' + 10;
+                        else hexOk = false;
+                    }
+                    if (hexOk) {
+                        i += 4;
+                        // Surrogate pair: 0xD800-0xDBFF must be followed by
+                        // a low surrogate \uDC00-\uDFFF to form a non-BMP
+                        // codepoint (emoji etc.). Without this combine,
+                        // each half encodes as invalid UTF-8.
+                        if (cp >= 0xD800 && cp <= 0xDBFF
+                            && i + 6 < eEnd
+                            && data[i + 1] == '\\' && data[i + 2] == 'u') {
+                            unsigned int low = 0;
+                            bool lowOk = true;
+                            for (int k = 0; k < 4 && lowOk; k++) {
+                                char h = data[i + 3 + k];
+                                low <<= 4;
+                                if      (h >= '0' && h <= '9') low |= h - '0';
+                                else if (h >= 'a' && h <= 'f') low |= h - 'a' + 10;
+                                else if (h >= 'A' && h <= 'F') low |= h - 'A' + 10;
+                                else lowOk = false;
+                            }
+                            if (lowOk && low >= 0xDC00 && low <= 0xDFFF) {
+                                cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+                                i += 6; // skip "\uXXXX" of the low surrogate
+                            }
+                        }
+                        if (cp < 0x80) entryJson += (char)cp;
+                        else if (cp < 0x800) {
+                            entryJson += (char)(0xC0 | (cp >> 6));
+                            entryJson += (char)(0x80 | (cp & 0x3F));
+                        } else if (cp < 0x10000) {
+                            entryJson += (char)(0xE0 | (cp >> 12));
+                            entryJson += (char)(0x80 | ((cp >> 6) & 0x3F));
+                            entryJson += (char)(0x80 | (cp & 0x3F));
+                        } else {
+                            entryJson += (char)(0xF0 | (cp >> 18));
+                            entryJson += (char)(0x80 | ((cp >> 12) & 0x3F));
+                            entryJson += (char)(0x80 | ((cp >> 6) & 0x3F));
+                            entryJson += (char)(0x80 | (cp & 0x3F));
+                        }
+                    } else {
+                        entryJson += '\\';
+                        entryJson += n;
+                    }
+                }
+                else { entryJson += '\\'; entryJson += n; }
+            }
+
+            // Atomic write using the project-standard tmp + bak + rename
+            // pattern (matches flushPeriod and other critical writes). Any
+            // mid-write power loss either keeps the previous version (.bak
+            // is the previous good copy until rename succeeds) or leaves
+            // the worker's next sync request as the recovery path. Never
+            // a window where the entry is permanently gone.
+            if (!SD.exists("/chronicle") && !SD.mkdir("/chronicle")) {
+                logError("chronicle", "mkdir /chronicle failed");
+                data = "";
+                return;
+            }
+            // Year-subdirectory grouping keeps each chronicle dir bounded at
+            // ~366 entries so FAT32 traversal stays fast for decades. Year is
+            // the first 4 chars of the validated YYYY-MM-DD date.
+            String yearDir = "/chronicle/" + date.substring(0, 4);
+            if (!SD.exists(yearDir.c_str()) && !SD.mkdir(yearDir.c_str())) {
+                logError("chronicle", ("mkdir " + yearDir + " failed").c_str());
+                data = "";
+                return;
+            }
+            String path = yearDir + "/" + date + ".json";
+            String tmpPath = path + ".tmp";
+            String bakPath = path + ".bak";
+            File f = SD.open(tmpPath.c_str(), FILE_WRITE);
+            if (!f) {
+                logError("chronicle", "open .tmp for chronicle write failed");
+                data = "";
+                return;
+            }
+            f.print(entryJson);
+            f.close();
+            // Stash existing .json as .bak so the previous version stays
+            // recoverable until the new rename succeeds.
+            if (SD.exists(bakPath.c_str())) SD.remove(bakPath.c_str());
+            if (SD.exists(path.c_str())) SD.rename(path.c_str(), bakPath.c_str());
+            if (!SD.rename(tmpPath.c_str(), path.c_str())) {
+                logError("chronicle", "rename .tmp to .json failed");
+                // Recovery: restore the previous version we just stashed.
+                if (SD.exists(bakPath.c_str())) SD.rename(bakPath.c_str(), path.c_str());
+                data = "";
+                return;
+            }
+            // New version is in place, drop the stash.
+            if (SD.exists(bakPath.c_str())) SD.remove(bakPath.c_str());
+            data = "";
+            return;
+        }
         if (data.indexOf("\"event\":\"backup_committed\"") >= 0) {
             // Best-effort field extraction; a malformed event leaves fields zero/empty.
             int d1 = data.indexOf("\"date\":\"");
@@ -3583,6 +3436,273 @@ static void hmacSha256Hex(const char* key, const char* msg, char* outHex65) {
 // failures at the WiFi layer almost always need a fresh association.
 volatile bool wsLastFailWasDns = false;
 
+// One-shot boot migration: moves legacy <parentDir>/<base>.json files into
+// <parentDir>/<YYYY>/<base>.json so each year subdir stays bounded (FAT32
+// traversal slows past ~500 entries in a single directory). Used by both
+// /chronicle/ and /stats/weekly/ + /stats/monthly/ (anything whose label
+// starts with a 4-digit year).
+//
+// Idempotent: a file already at the new path causes the legacy duplicate
+// at root to be removed; a file only at the legacy path is renamed in
+// place. Cap at 64 collected names per call. Current archives are tiny
+// (<60 entries) so this covers any realistic restore-from-old-SD scenario.
+// Year subdirs themselves are skipped (isDir branch) so re-running is a
+// no-op once migration has completed.
+static void migrateLegacyToYearSubdir(const char* parentDir, const char* logTag) {
+    if (!SD.exists(parentDir)) return;
+    File dir = SD.open(parentDir);
+    if (!dir) return;
+    if (!dir.isDirectory()) { dir.close(); return; }
+    const int MAX_MIGRATE = 64;
+    String legacy[MAX_MIGRATE];
+    int n = 0;
+    File entry = dir.openNextFile();
+    while (entry) {
+        String name = entry.name();
+        int slash = name.lastIndexOf('/');
+        String base = (slash >= 0) ? name.substring(slash + 1) : name;
+        bool isDir = entry.isDirectory();
+        entry.close();
+        if (!isDir && base.endsWith(".json") && base.length() > 4) {
+            bool yearOk = true;
+            for (int i = 0; i < 4 && yearOk; i++) {
+                if (base[i] < '0' || base[i] > '9') yearOk = false;
+            }
+            if (yearOk && n < MAX_MIGRATE) legacy[n++] = base;
+        }
+        entry = dir.openNextFile();
+    }
+    dir.close();
+    for (int i = 0; i < n; i++) {
+        const String& base = legacy[i];
+        String yearDir = String(parentDir) + "/" + base.substring(0, 4);
+        if (!SD.exists(yearDir.c_str()) && !SD.mkdir(yearDir.c_str())) {
+            logError(logTag, ("migrate mkdir " + yearDir + " failed").c_str());
+            continue;
+        }
+        String oldPath = String(parentDir) + "/" + base;
+        String newPath = yearDir + "/" + base;
+        if (SD.exists(newPath.c_str())) {
+            SD.remove(oldPath.c_str());
+            Serial.printf("[%s] migrate: dup removed %s\n", logTag, oldPath.c_str());
+        } else if (SD.rename(oldPath.c_str(), newPath.c_str())) {
+            Serial.printf("[%s] migrate: %s -> %s\n", logTag, oldPath.c_str(), newPath.c_str());
+        } else {
+            logError(logTag, ("migrate rename failed for " + base).c_str());
+        }
+    }
+}
+
+// Boot-time orphan cleanup for /chronicle/. Mirrors the recovery logic
+// the other tmp+bak+rename writers do on first access. Called once after
+// SD init in setup(). For each leftover from an interrupted write:
+//   - .tmp files: incomplete writes from a power loss mid-write. Discard;
+//     the worker's catch-up sync will re-push the entry next reconnect.
+//   - .bak files: stash of the previous version. If matching .json exists,
+//     the rename succeeded and .bak is just stale cleanup. If no .json,
+//     a mid-rename crash left only .bak; restore it as .json so the entry
+//     survives even without worker connectivity.
+//
+// Walks both year subdirs (/chronicle/YYYY/) and the root (legacy entries
+// pre-migration) so a crash during migration leaves no orphans behind.
+static void chronicleStartupRecovery() {
+    if (!SD.exists("/chronicle")) return;
+    // Cap at 64 each: more than enough for realistic crash patterns (typical
+    // is 0 or 1) without unbounded heap growth on a corrupted directory.
+    const int MAX_RECOVERY = 64;
+    String tmpPaths[MAX_RECOVERY];
+    String bakPaths[MAX_RECOVERY];
+    int tmpCount = 0, bakCount = 0;
+
+    auto collectFromDir = [&](const String& dirPath) {
+        File dir = SD.open(dirPath.c_str());
+        if (!dir) return;
+        if (!dir.isDirectory()) { dir.close(); return; }
+        File entry = dir.openNextFile();
+        while (entry) {
+            String name = entry.name();
+            int slash = name.lastIndexOf('/');
+            String base = (slash >= 0) ? name.substring(slash + 1) : name;
+            bool isDir = entry.isDirectory();
+            entry.close();
+            if (!isDir) {
+                String full = dirPath + "/" + base;
+                if (base.endsWith(".tmp") && tmpCount < MAX_RECOVERY) tmpPaths[tmpCount++] = full;
+                else if (base.endsWith(".bak") && bakCount < MAX_RECOVERY) bakPaths[bakCount++] = full;
+            }
+            entry = dir.openNextFile();
+        }
+        dir.close();
+    };
+
+    // Collect from year subdirs first, then root (legacy stragglers).
+    File root = SD.open("/chronicle");
+    if (root) {
+        if (root.isDirectory()) {
+            File entry = root.openNextFile();
+            while (entry) {
+                String name = entry.name();
+                int slash = name.lastIndexOf('/');
+                String base = (slash >= 0) ? name.substring(slash + 1) : name;
+                bool isDir = entry.isDirectory();
+                entry.close();
+                if (isDir) {
+                    bool yearOk = (base.length() == 4);
+                    for (int i = 0; i < 4 && yearOk; i++) {
+                        if (base[i] < '0' || base[i] > '9') yearOk = false;
+                    }
+                    if (yearOk) collectFromDir("/chronicle/" + base);
+                }
+                entry = root.openNextFile();
+            }
+        }
+        root.close();
+    }
+    collectFromDir(String("/chronicle"));
+
+    for (int i = 0; i < tmpCount; i++) {
+        SD.remove(tmpPaths[i].c_str());
+        Serial.printf("[chronicle] recovery: discarded orphan %s\n", tmpPaths[i].c_str());
+    }
+    for (int i = 0; i < bakCount; i++) {
+        const String& bakPath = bakPaths[i];
+        // Strip ".bak" to get the canonical .json path.
+        String jsonPath = bakPath.substring(0, bakPath.length() - 4);
+        if (SD.exists(jsonPath.c_str())) {
+            SD.remove(bakPath.c_str());
+            Serial.printf("[chronicle] recovery: cleaned stale %s\n", bakPath.c_str());
+        } else {
+            if (SD.rename(bakPath.c_str(), jsonPath.c_str())) {
+                Serial.printf("[chronicle] recovery: restored %s from .bak\n", jsonPath.c_str());
+            } else {
+                logError("chronicle", "recovery: bak->json rename failed");
+            }
+        }
+    }
+}
+
+// Walk /chronicle/ and return the max date the chip has on SD as a
+// "YYYY-MM-DD" string (lexically sortable). Empty string when chip has
+// nothing. The catch-up sync sends this so the worker can push every
+// entry newer than max_date.
+//
+// Trade-off vs the previous "send all dates" protocol: gives up
+// mid-history gap detection (an entry N+1 sealed before entry N would
+// not be back-filled). In practice gaps don't happen (sealing is
+// strictly chronological), and the protocol now sends 80 bytes per
+// reconnect instead of growing 13 bytes per chronicle day, which would
+// have hit ~50 KB and OOM'd the chip past year 5.
+//
+// Layout: entries live at /chronicle/YYYY/YYYY-MM-DD.json. Any
+// pre-migration stragglers at /chronicle/YYYY-MM-DD.json are also
+// considered so a half-migrated state still reports the true max.
+//
+// O(1)-stack design: tracks the running greatest year subdir name during
+// pass 1 (no array, no cap, so chip can run for centuries without the
+// function losing precision). Pass 2 walks that year for the max date.
+// On the rare empty-year-subdir fallback (year-rollover crash mid-write),
+// re-scan root for the next-greatest year strictly less than the one we
+// just visited, and try again. Each re-scan is O(years) so the worst
+// case (every year subdir empty) is O(years²); steady state is one scan
+// + one walk = O(years + N/years).
+static String chronicleMaxDate() {
+    String maxDate = "";
+    if (!SD.exists("/chronicle")) return maxDate;
+
+    auto considerDateFile = [&](const String& base) {
+        if (base.length() != 15 || !base.endsWith(".json")) return;
+        String d = base.substring(0, 10);
+        for (int i = 0; i < 10; i++) {
+            char c = d[i];
+            if (i == 4 || i == 7) { if (c != '-') return; }
+            else if (c < '0' || c > '9') return;
+        }
+        if (d > maxDate) maxDate = d;
+    };
+
+    // Returns lex-greatest 4-digit year subdir name in /chronicle/. When
+    // `exclusiveUpper` is non-empty, the result is strictly less than it
+    // (used for the empty-year fallback). Returns "" if no match.
+    auto findMaxYear = [&](const String& exclusiveUpper) -> String {
+        String found = "";
+        File r = SD.open("/chronicle");
+        if (!r) return found;
+        if (!r.isDirectory()) { r.close(); return found; }
+        File e = r.openNextFile();
+        while (e) {
+            String name = e.name();
+            int slash = name.lastIndexOf('/');
+            String base = (slash >= 0) ? name.substring(slash + 1) : name;
+            bool isDir = e.isDirectory();
+            e.close();
+            if (isDir) {
+                bool yearOk = (base.length() == 4);
+                for (int i = 0; i < 4 && yearOk; i++) {
+                    if (base[i] < '0' || base[i] > '9') yearOk = false;
+                }
+                if (yearOk
+                    && (exclusiveUpper.length() == 0 || base < exclusiveUpper)
+                    && base > found) {
+                    found = base;
+                }
+            }
+            e = r.openNextFile();
+        }
+        r.close();
+        return found;
+    };
+
+    // Pass 1: combined root scan. Find greatest year subdir AND fold
+    // any legacy root-level files. Saves a separate scan in the common
+    // case (which is the steady-state post-migration layout).
+    File root = SD.open("/chronicle");
+    if (!root) return maxDate;
+    if (!root.isDirectory()) { root.close(); return maxDate; }
+    String currentYear = "";
+    File entry = root.openNextFile();
+    while (entry) {
+        String name = entry.name();
+        int slash = name.lastIndexOf('/');
+        String base = (slash >= 0) ? name.substring(slash + 1) : name;
+        bool isDir = entry.isDirectory();
+        entry.close();
+        if (isDir) {
+            bool yearOk = (base.length() == 4);
+            for (int i = 0; i < 4 && yearOk; i++) {
+                if (base[i] < '0' || base[i] > '9') yearOk = false;
+            }
+            if (yearOk && base > currentYear) currentYear = base;
+        } else {
+            considerDateFile(base);
+        }
+        entry = root.openNextFile();
+    }
+    root.close();
+
+    // Pass 2: walk the latest year subdir for max date. If empty (year
+    // rollover crash, manual dir creation), re-scan root for the next
+    // year less than this one and try again until something yields.
+    while (currentYear.length() > 0) {
+        String yearPath = "/chronicle/" + currentYear;
+        File yearDir = SD.open(yearPath.c_str());
+        if (yearDir) {
+            File f = yearDir.openNextFile();
+            while (f) {
+                String fname = f.name();
+                int s = fname.lastIndexOf('/');
+                String fbase = (s >= 0) ? fname.substring(s + 1) : fname;
+                f.close();
+                considerDateFile(fbase);
+                f = yearDir.openNextFile();
+            }
+            yearDir.close();
+        }
+        if (maxDate.length() > 0) break;
+        currentYear = findMaxYear(currentYear);
+    }
+    return maxDate;
+}
+
 bool connectWorker() {
     if (strlen(cfgWorkerUrl) == 0 || strlen(cfgWorkerKey) == 0) {
         Serial.println("[ws] skipped: worker_url or worker_key blank");
@@ -3590,6 +3710,14 @@ bool connectWorker() {
     }
 
     wsClient.setInsecure();
+    // Bound the TLS handshake and per-read timeouts. Defaults are 120s
+    // and 30s respectively, which means a slow CF edge response (DO
+    // eviction, edge network blip, congestion) can block the main loop
+    // for the full default while the chip waits on a stalled handshake.
+    // 5s/5s is plenty for a healthy connect; bounds the worst case so
+    // the loop-stall watchdog at ~30s never gets a chance to trigger.
+    wsClient.setHandshakeTimeout(5);   // seconds
+    wsClient.setTimeout(5000);          // milliseconds (read timeout)
 
     Serial.printf("[ws] connecting to %s:443\n", cfgWorkerUrl);
 
@@ -3680,6 +3808,28 @@ bool connectWorker() {
     Serial.println("[ws] connected");
     wsConnected = true;
     lastWsActivity = millis();
+
+    // Catch-up sync: send the worker the max chronicle date we have on
+    // SD (or empty when we have nothing). Worker pushes every entry
+    // strictly newer than max_date via existing chronicle_seal events.
+    // Idempotent on both sides; fires every reconnect so a long offline
+    // window doesn't leave silent gaps. Payload is constant-size (~80
+    // bytes) regardless of archive depth; previous "send all dates"
+    // form would have OOM'd the chip past year 5 (~50 KB+ message).
+    String maxDate = chronicleMaxDate();
+    String syncMsg = "{\"type\":\"event\",\"event\":\"chronicle_sync_request\",\"data\":{\"max_date\":\"";
+    syncMsg += maxDate;
+    syncMsg += "\"}}";
+    wsSendText(wsClient, syncMsg);
+
+    // Re-emit retired-sensor events for any sensors already retired on SD.
+    // Covers the 1-in-a-million case where a sensor crossed the retire
+    // threshold while the WS was down: the original transition emit was
+    // lost, but the chip's SD record is correct. Worker dedups by
+    // sensor_retired/<name> key so re-emits are idempotent.
+    if (bmeHealth.retired) emitChronicleSensorRetired("BME280", bmeHealth.retired_unix);
+    if (ccsHealth.retired) emitChronicleSensorRetired("CCS811", ccsHealth.retired_unix);
+
     return true;
 }
 
@@ -3736,6 +3886,15 @@ void setup() {
     snprintf(verBuf, sizeof(verBuf), "[sys] v%s", FIRMWARE_VERSION);
     bootLog(verBuf);
     Serial.println(verBuf);
+
+    // Year 2038 audit: time_t must be 64-bit so Chronicle / weekly / records
+    // dates keep working past 2038-01-19 03:14:07 UTC. A 32-bit time_t silently
+    // wraps to negative values past that instant, corrupting any new archive
+    // writes. If this trips, add `-D_TIME_BITS=64 -D_FILE_OFFSET_BITS=64` to
+    // platformio.ini build_flags and reflash.
+    Serial.printf("[sys] time_t = %u bytes (Year 2038 %s)\n",
+                  (unsigned)sizeof(time_t),
+                  sizeof(time_t) >= 8 ? "safe" : "VULNERABLE");
 
     // SD card at 10MHz SPI. Briefly dropped to 4MHz when SI issues surfaced
     // (CS line crossing I2C SDA/SCL caused capacitive crosstalk + bus
@@ -3871,14 +4030,54 @@ void setup() {
     }
     cachedVisitorCount = readVisitorCount();
     loadCountries();
+    // Migrate legacy flat /chronicle/YYYY-MM-DD.json paths into year subdirs
+    // before recovery + sync run, so the rest of the boot operates on the
+    // canonical layout. Idempotent + a no-op once migration has completed.
+    migrateLegacyToYearSubdir("/chronicle", "chronicle");
+    chronicleStartupRecovery();
     // SD.usedBytes() scans the entire FAT and can take seconds on large cards;
     // the main loop refreshes it every 5 min, so skip the boot-time hit.
     cachedSdUsedMB = 0;
-    // Run CSV migrations before anything reads the file or the server starts.
-    // Already-migrated boots return almost immediately via the version check.
-    bootLog("[mig] guestbook");
-    migrateGuestbookCsvToV2();
-    migrateGuestbookCsvToV3();
+    // Schema guard: refuse to start if the on-disk guestbook is from a
+    // pre-v3 firmware. v1.4 stripped the in-firmware migrations to claw
+    // back flash; users with stale SD data must flash v1.3 first to run
+    // the migrations, then upgrade. Fresh installs stamp v3 here.
+    // Missing-marker-on-v3-csv (accidentally deleted marker, FS corruption)
+    // is recovered by probing the csv shape: 6 commas = v3, stamp marker;
+    // anything else halts with the same flash-v1.3-first message.
+    bootLog("[mig] schema");
+    int gbSchema = readGuestbookSchemaVersion();
+    if (gbSchema > 0 && gbSchema < 3) {
+        migrationAbort("guestbook schema v<3. Flash v1.3 first to migrate, then upgrade.");
+    }
+    if (gbSchema == 0 && SD.exists("/guestbook.csv")) {
+        int commas = -1;
+        bool probeOpened = false;
+        File probe = SD.open("/guestbook.csv", FILE_READ);
+        if (probe) {
+            probeOpened = true;
+            char line[400];
+            while (probe.available()) {
+                int n = probe.readBytesUntil('\n', line, sizeof(line) - 1);
+                if (n <= 0) continue;
+                line[n] = '\0';
+                while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) n--;
+                if (n == 0) continue;
+                commas = 0;
+                for (int i = 0; i < n; i++) if (line[i] == ',') commas++;
+                break;
+            }
+            probe.close();
+        }
+        if (probeOpened && (commas == 6 || commas < 0)) {
+            // v3 shape (6 commas) or empty/whitespace file: safe to stamp.
+            writeGuestbookSchemaVersion(3);
+            Serial.println("[migrate] schema marker missing; csv shape compatible, stamped v3");
+        } else {
+            migrationAbort("guestbook.csv with no schema marker. Flash v1.3 first.");
+        }
+    }
+    if (gbSchema == 0 && !SD.exists("/guestbook.csv")) writeGuestbookSchemaVersion(3);
     countPendingGuestbook();
     lastNotifiedPending = pendingGuestbook; // don't email for pre-existing pending entries on boot
 
@@ -3890,8 +4089,14 @@ void setup() {
         SD.mkdir("/stats/monthly");
         SD.mkdir("/stats/yearly");
     }
+    // Migrate legacy flat archives into year subdirs. Same year-grouping
+    // rationale as chronicle. Idempotent. Yearly is intentionally not
+    // migrated; 1 file/year stays trivially small even at year 1000.
+    migrateLegacyToYearSubdir("/stats/weekly",  "stats");
+    migrateLegacyToYearSubdir("/stats/monthly", "stats");
     loadCheckpoint();
     loadRecords();
+    loadSensorHealth();
 
     bootLog("[hw] init sensors");
 
@@ -4143,6 +4348,19 @@ void setup() {
         logConsole(request, 200);
     });
 
+    server.on("/chronicle", HTTP_GET, [](AsyncWebServerRequest *request) {
+        // Chronicle data lives in the Worker's DO storage (accumulated from
+        // stats_update events, sealed at UTC midnight). The chip just serves
+        // the SPA shell here; the page fetches /chronicle.json client-side.
+        // Permalinks like /chronicle/YYYY-MM-DD are rewritten worker-side to
+        // hit this same handler, so all chronicle URLs serve chronicle.html.
+        if (redirectLanToWorker(request)) return;
+        AsyncWebServerResponse *r = beginResponseGzipOrRaw(request, "/chronicle.html", "text/html");
+        r->addHeader("Cache-Control", "public, max-age=300");
+        request->send(r);
+        logConsole(request, 200);
+    });
+
     server.on("/console.json", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (redirectLanToWorker(request)) return;
         String json;
@@ -4320,6 +4538,8 @@ void setup() {
             "  <url><loc>https://helloesp.com/console</loc><changefreq>always</changefreq><priority>0.5</priority></url>\n"
             "  <url><loc>https://helloesp.com/about</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>\n"
             "  <url><loc>https://helloesp.com/snake</loc><changefreq>weekly</changefreq><priority>0.5</priority></url>\n"
+            "  <url><loc>https://helloesp.com/chronicle</loc><changefreq>daily</changefreq><priority>0.7</priority></url>\n"
+            "  <url><loc>https://helloesp.com/chronicle.rss</loc><changefreq>daily</changefreq><priority>0.4</priority></url>\n"
             "  <url><loc>https://helloesp.com/changelog.rss</loc><changefreq>monthly</changefreq><priority>0.4</priority></url>\n"
             "  <url><loc>https://helloesp.com/guestbook.rss</loc><changefreq>daily</changefreq><priority>0.4</priority></url>\n"
             "</urlset>\n");
@@ -4348,6 +4568,10 @@ void setup() {
             rss += text;
             rss += "</description></item>";
         };
+        item("May 6, 2026", "Wed, 06 May 2026 12:00:00 GMT",
+             "Chronicle entries now align to the chip's local timezone instead of UTC, so each day's entry covers the chip's actual day from where it's running. The chip also notices when one of its sensors stops working, retires it, and writes a chronicle entry about the loss. Behind the scenes, archive folders moved to a year-grouped layout so the chip can run for decades without slowing down. Firmware 1.4 also drops the boot-time CSV migrations to free flash for future features; pre-1.3 installs need to flash 1.3 first.");
+        item("May 4, 2026", "Mon, 04 May 2026 12:00:00 GMT",
+             "Added /chronicle: a daily entry the chip writes about itself. Auto-generated from sensor readings, visitors, and weather, archived from today onward. Each midnight the day's snapshot freezes into a permanent entry. Five starter templates pick the right shape for the day (busy, quiet, anomaly, milestone, generic), and there's a permalink for every entry. Each new entry also crossposts to X.");
         item("May 3, 2026", "Sun, 03 May 2026 12:00:00 GMT",
              "Snake got its own page. Same game, with two leaderboards now: today's top scores and the all-time top ten. Strong scores cross to all-time on their own. Each top entry has a watch button that plays back the actual game. Past quarters move to a Hall of Fame archive so the leaderboard stays fresh.");
         item("May 1, 2026", "Fri, 01 May 2026 12:00:00 GMT",
@@ -4546,7 +4770,10 @@ void setup() {
 
         if (url == "/history.json") {
             String json;
-            json.reserve(2048);
+            // Reserve 8KB up front: covers ~10 years of weekly+monthly+yearly
+            // labels (each ~13 bytes) before the underlying String triggers a
+            // realloc-and-copy. Beyond that the String resizes naturally.
+            json.reserve(8192);
             json = "{";
             const char* sections[] = {"weekly", "monthly", "yearly"};
             for (int s = 0; s < 3; s++) {
@@ -4554,26 +4781,52 @@ void setup() {
                 json += "\""; json += sections[s]; json += "\":[";
                 String dirPath = "/stats/" + String(sections[s]);
                 bool first = true;
+                // Walk both flat files (monthly/yearly always; weekly during
+                // any post-migration transition) and 4-digit year subdirs
+                // (weekly canonical layout). One open-handle at a time so
+                // we stay well under VFS concurrent-handle limits.
+                auto emitFile = [&](const String& fname) {
+                    if (!fname.endsWith(".json")) return;
+                    if (!first) json += ",";
+                    json += "\"" + jsonEscape(fname.substring(0, fname.length() - 5)) + "\"";
+                    first = false;
+                };
                 if (SD.exists(dirPath)) {
                     File dir = SD.open(dirPath);
-                    while (true) {
-                        File f = dir.openNextFile();
-                        if (!f) break;
-                        String n = String(f.name());
-                        // openNextFile() returns full path on this library
-                        // version; strip directory prefix so labels in
-                        // history.json are bare (e.g. "2026-W17", not
-                        // "/stats/weekly/2026-W17").
-                        int lastSlash = n.lastIndexOf('/');
-                        if (lastSlash >= 0) n = n.substring(lastSlash + 1);
-                        if (n.endsWith(".json")) {
-                            if (!first) json += ",";
-                            json += "\"" + jsonEscape(n.substring(0, n.length() - 5)) + "\"";
-                            first = false;
+                    if (dir && dir.isDirectory()) {
+                        while (true) {
+                            File f = dir.openNextFile();
+                            if (!f) break;
+                            String n = String(f.name());
+                            int lastSlash = n.lastIndexOf('/');
+                            if (lastSlash >= 0) n = n.substring(lastSlash + 1);
+                            bool isDir = f.isDirectory();
+                            f.close();
+                            if (isDir) {
+                                bool yearOk = (n.length() == 4);
+                                for (int i = 0; i < 4 && yearOk; i++) {
+                                    if (n[i] < '0' || n[i] > '9') yearOk = false;
+                                }
+                                if (!yearOk) continue;
+                                File yearDir = SD.open(dirPath + "/" + n);
+                                if (yearDir) {
+                                    while (true) {
+                                        File yf = yearDir.openNextFile();
+                                        if (!yf) break;
+                                        String yn = String(yf.name());
+                                        int ys = yn.lastIndexOf('/');
+                                        if (ys >= 0) yn = yn.substring(ys + 1);
+                                        yf.close();
+                                        emitFile(yn);
+                                    }
+                                    yearDir.close();
+                                }
+                            } else {
+                                emitFile(n);
+                            }
                         }
-                        f.close();
                     }
-                    dir.close();
+                    if (dir) dir.close();
                 }
                 json += "]";
             }
@@ -4594,7 +4847,15 @@ void setup() {
                 request->send(400, "text/plain", "bad label");
                 return;
             }
-            String path = "/stats/weekly/" + label + ".json";
+            // Year-subdir layout: /stats/weekly/YYYY/YYYY-WNN.json. Fall back
+            // to legacy flat path for any straggler that escaped migration.
+            String path;
+            if (label.length() >= 4) {
+                path = "/stats/weekly/" + label.substring(0, 4) + "/" + label + ".json";
+                if (!SD.exists(path)) path = "/stats/weekly/" + label + ".json";
+            } else {
+                path = "/stats/weekly/" + label + ".json";
+            }
             if (SD.exists(path)) {
                 AsyncWebServerResponse *r = request->beginResponse(SD, path, "application/json");
                 r->addHeader("Cache-Control", "public, max-age=31536000, immutable");
@@ -4611,7 +4872,15 @@ void setup() {
                 request->send(400, "text/plain", "bad label");
                 return;
             }
-            String path = "/stats/monthly/" + label + ".json";
+            // Year-subdir layout (matches weekly). Falls back to legacy flat
+            // path for any pre-migration straggler.
+            String path;
+            if (label.length() >= 4) {
+                path = "/stats/monthly/" + label.substring(0, 4) + "/" + label + ".json";
+                if (!SD.exists(path)) path = "/stats/monthly/" + label + ".json";
+            } else {
+                path = "/stats/monthly/" + label + ".json";
+            }
             if (SD.exists(path)) {
                 AsyncWebServerResponse *r = request->beginResponse(SD, path, "application/json");
                 r->addHeader("Cache-Control", "public, max-age=31536000, immutable");
@@ -4670,9 +4939,11 @@ void setup() {
                 // re-opens the file internally and null-derefs under
                 // VFS FD pool exhaustion. The helper opens manually,
                 // null-checks, and returns 503 if SD is saturated.
-                // CSVs aren't pre-gzipped so the helper falls through
-                // to its raw-file path.
-                request->send(beginResponseGzipOrRaw(request, filename.c_str(), "text/csv"));
+                // text/plain (not text/csv) so CF's edge brotli kicks
+                // in. text/csv isn't on CF's auto-compress MIME list
+                // and the body is plaintext either way; admin XHR
+                // reads it as text regardless.
+                request->send(beginResponseGzipOrRaw(request, filename.c_str(), "text/plain"));
             } else {
                 AsyncWebServerResponse *r = beginResponseGzipOrRaw(request, "/404.html", "text/html");
                 r->setCode(404);
@@ -4734,8 +5005,9 @@ void setup() {
                 String filename = "/logs/" + year + "/" + date + ".csv";
                 if (!SD.exists(filename)) filename = "/logs/" + date + ".csv";
                 if (SD.exists(filename)) {
-                    // Same FD-safe pattern as /logs/today above.
-                    request->send(beginResponseGzipOrRaw(request, filename.c_str(), "text/csv"));
+                    // Same FD-safe pattern + text/plain content-type as
+                    // /logs/today above.
+                    request->send(beginResponseGzipOrRaw(request, filename.c_str(), "text/plain"));
                 } else {
                     AsyncWebServerResponse *r = beginResponseGzipOrRaw(request, "/404.html", "text/html");
                     r->setCode(404);
@@ -6147,6 +6419,7 @@ void setup() {
             json += "\"cpu_freq_mhz\":" + String(ESP.getCpuFreqMHz()) + ",";
             json += "\"flash_size_mb\":" + String(ESP.getFlashChipSize() / (1024.0f * 1024.0f), 1) + ",";
             json += "\"sdk_version\":\"" + String(ESP.getSdkVersion()) + "\",";
+            json += "\"time_t_bytes\":" + String((unsigned)sizeof(time_t)) + ",";
             json += "\"mac_address\":\"" + WiFi.macAddress() + "\",";
             json += "\"local_ip\":\"" + WiFi.localIP().toString() + "\",";
             json += "\"gateway\":\"" + WiFi.gatewayIP().toString() + "\",";
@@ -6519,6 +6792,40 @@ void setup() {
             return;
         }
 
+        if (url == "/admin/sensor-health") {
+            if (!adminAuth(request)) return;
+            // POST ?clear=bme280|ccs811 un-retires that sensor in place.
+            // Both methods return the (possibly-updated) state JSON.
+            if (request->method() == HTTP_POST && request->hasParam("clear")) {
+                String s = request->getParam("clear")->value();
+                SensorHealth* h = (s == "bme280") ? &bmeHealth
+                                : (s == "ccs811") ? &ccsHealth : nullptr;
+                if (h && h->retired) {
+                    h->retired = false; h->retired_unix = 0; h->consecutive_bad = 0;
+                    saveSensorHealth();
+                    logError("sensor", (s + " un-retired by admin").c_str());
+                }
+            }
+            String json;
+            json.reserve(256);
+            auto emit = [&](const char* name, const SensorHealth& h, bool degradedNow) {
+                json += "\""; json += name; json += "\":{";
+                json += "\"retired\":";       json += h.retired ? "true" : "false";
+                json += ",\"retired_unix\":"; json += String(h.retired_unix);
+                json += ",\"consecutive_bad\":"; json += String(h.consecutive_bad);
+                json += ",\"degraded_now\":"; json += degradedNow ? "true" : "false";
+                json += "}";
+            };
+            json  = "{";
+            emit("bme280", bmeHealth, bmeDegraded()); json += ",";
+            emit("ccs811", ccsHealth, ccsDegraded());
+            json += ",\"retire_threshold\":" + String(SENSOR_RETIRE_THRESHOLD) + "}";
+            AsyncWebServerResponse *r = request->beginResponse(200, "application/json", json);
+            r->addHeader("Cache-Control", "no-store");
+            request->send(r);
+            return;
+        }
+
         if (url == "/admin/repair-periods" && request->method() == HTTP_POST) {
             if (!adminAuth(request)) return;
             struct tm now;
@@ -6545,50 +6852,76 @@ void setup() {
             if (yearStarted  > 0) currentYear.started_unix  = yearStarted;
 
             int weeksYear = 0, weeksMonth = 0;
+            // Helper: aggregate one weekly archive file (full path) into the
+            // year and (if applicable) month accumulators. Skips files whose
+            // year prefix doesn't match curYearStr.
+            auto aggregateWeeklyFile = [&](const String& fullPath, const String& fname) {
+                if (!fname.endsWith(".json")) return;
+                if (!fname.startsWith(curYearStr)) return;
+                File f = SD.open(fullPath);
+                if (!f) return;
+                String content;
+                content.reserve(f.size() + 1);
+                while (f.available()) content += (char)f.read();
+                f.close();
+                yield();
+                esp_task_wdt_reset();
+
+                PeriodStats wk;
+                time_t wkStarted = 0;
+                if (!parseWeeklyJson(content, wk, wkStarted)) return;
+
+                aggregatePeriodInto(currentYear, wk);
+                weeksYear++;
+
+                // Month determination via ISO week math (don't trust started_unix
+                // from the JSON; archives written before NTP synced will have 0).
+                int dashW = fname.indexOf("-W");
+                if (dashW > 0 && (int)fname.length() > dashW + 2) {
+                    int wkYear = fname.substring(0, dashW).toInt();
+                    int wkNum  = fname.substring(dashW + 2, fname.length() - 5).toInt();
+                    int wkMonth = 0;
+                    if (wkYear == curYear && isoWeekMonth(wkYear, wkNum, wkMonth)
+                        && wkMonth == curMonth) {
+                        aggregatePeriodInto(currentMonth, wk);
+                        weeksMonth++;
+                    }
+                }
+            };
+
+            // Canonical layout: /stats/weekly/<curYearStr>/<label>.json. Walk
+            // the year subdir directly so we don't iterate other-year dirs.
+            String yearDirPath = "/stats/weekly/" + String(curYearStr);
+            if (SD.exists(yearDirPath)) {
+                File yearDir = SD.open(yearDirPath);
+                if (yearDir && yearDir.isDirectory()) {
+                    while (true) {
+                        File f = yearDir.openNextFile();
+                        if (!f) break;
+                        String name = String(f.name());
+                        int lastSlash = name.lastIndexOf('/');
+                        String base = (lastSlash >= 0) ? name.substring(lastSlash + 1) : name;
+                        f.close();
+                        aggregateWeeklyFile(yearDirPath + "/" + base, base);
+                    }
+                }
+                if (yearDir) yearDir.close();
+            }
+            // Legacy stragglers at the flat root, in case migration didn't
+            // cover everything (cap miss, partial run, etc).
             File dir = SD.open("/stats/weekly");
             if (dir) {
-                while (true) {
-                    File f = dir.openNextFile();
-                    if (!f) break;
-                    String name = String(f.name());
-                    int lastSlash = name.lastIndexOf('/');
-                    if (lastSlash >= 0) name = name.substring(lastSlash + 1);
-                    if (!name.endsWith(".json")) { f.close(); continue; }
-                    // Year filter via filename prefix (faster than parsing).
-                    if (!name.startsWith(curYearStr)) { f.close(); continue; }
-
-                    String content;
-                    content.reserve(f.size() + 1);
-                    while (f.available()) content += (char)f.read();
-                    f.close();
-                    // /stats/weekly/ can hold a year's worth of files; keep
-                    // async_tcp alive between archive parses.
-                    yield();
-                    esp_task_wdt_reset();
-
-                    PeriodStats wk;
-                    time_t wkStarted = 0;
-                    if (!parseWeeklyJson(content, wk, wkStarted)) continue;
-
-                    // Always aggregate into yearly (year matched via filename).
-                    aggregatePeriodInto(currentYear, wk);
-                    weeksYear++;
-
-                    // Month determination: parse week number from the filename
-                    // ("2026-W16.json" → year=2026, week=16) and compute the
-                    // Monday's calendar month via ISO week math. This avoids
-                    // relying on started_unix in the JSON, which may be 0 in
-                    // archives created before NTP synced (e.g. Week 16 here).
-                    int dashW = name.indexOf("-W");
-                    if (dashW > 0 && (int)name.length() > dashW + 2) {
-                        int wkYear = name.substring(0, dashW).toInt();
-                        int wkNum  = name.substring(dashW + 2, name.length() - 5).toInt();
-                        int wkMonth = 0;
-                        if (wkYear == curYear && isoWeekMonth(wkYear, wkNum, wkMonth)
-                            && wkMonth == curMonth) {
-                            aggregatePeriodInto(currentMonth, wk);
-                            weeksMonth++;
-                        }
+                if (dir.isDirectory()) {
+                    while (true) {
+                        File f = dir.openNextFile();
+                        if (!f) break;
+                        String name = String(f.name());
+                        int lastSlash = name.lastIndexOf('/');
+                        String base = (lastSlash >= 0) ? name.substring(lastSlash + 1) : name;
+                        bool isDir = f.isDirectory();
+                        f.close();
+                        if (isDir) continue;  // year subdirs handled above
+                        aggregateWeeklyFile(String("/stats/weekly/") + base, base);
                     }
                 }
                 dir.close();
@@ -6950,6 +7283,50 @@ void setup() {
             AsyncWebServerResponse *r = request->beginResponse(200, "application/json", json);
             r->addHeader("Cache-Control", "no-store");
             request->send(r);
+            return;
+        }
+
+        if (url == "/admin/chronicle/note" && request->method() == HTTP_POST) {
+            // Owner curatorial note for a Chronicle entry. Body is form-
+            // encoded with `date=YYYY-MM-DD&note=...`. The chip just
+            // validates and forwards via the authenticated WS event channel
+            // to the worker DO, which holds the actual entry storage.
+            // Empty note clears any existing note for that date.
+            if (!adminAuth(request)) return;
+            if (!request->hasParam("date", true)) {
+                request->send(400, "text/plain", "date required");
+                return;
+            }
+            String date = request->getParam("date", true)->value();
+            // Strict YYYY-MM-DD validation. Length+dash-position alone would
+            // accept things like `1234-56-7"` which would break the JSON
+            // sent to the worker. Require digits in the other 8 positions.
+            bool dateOk = date.length() == 10
+                       && date.charAt(4) == '-' && date.charAt(7) == '-';
+            for (int i = 0; dateOk && i < 10; i++) {
+                if (i == 4 || i == 7) continue;
+                char c = date.charAt(i);
+                if (c < '0' || c > '9') dateOk = false;
+            }
+            if (!dateOk) {
+                request->send(400, "text/plain", "date must be YYYY-MM-DD");
+                return;
+            }
+            String note = "";
+            if (request->hasParam("note", true)) {
+                note = request->getParam("note", true)->value();
+                if (note.length() > 1000) note = note.substring(0, 1000);
+            }
+            if (!wsConnected || !wsClient.connected()) {
+                request->send(503, "text/plain", "Worker link offline");
+                return;
+            }
+            String msg = "{\"type\":\"event\",\"event\":\"chronicle_note_set\",\"data\":{";
+            msg += "\"date\":\"" + date + "\",";
+            msg += "\"note\":\"" + jsonEscape(note) + "\"";
+            msg += "}}";
+            wsSendText(wsClient, msg);
+            request->send(200, "text/plain", "ok");
             return;
         }
 
@@ -7570,7 +7947,7 @@ void loop() {
 
     display.display();
 
-    if (ccs.available()) {
+    if (!ccsHealth.retired && ccs.available()) {
         ccs.setEnvironmentalData(safeBmeHumidity(), safeBmeTemp());
         if (!ccs.readData()) {
             uint16_t co2 = ccs.geteCO2();

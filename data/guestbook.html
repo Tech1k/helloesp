@@ -19,6 +19,7 @@
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://helloesp.com/guestbook">
     <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:site" content="@HelloESP32">
     <meta name="twitter:title" content="Guestbook / HelloESP">
     <meta name="twitter:description" content="Sign the guestbook on a public website hosted by a single ESP32 microcontroller.">
     <meta name="twitter:image" content="https://helloesp.com/og-banner.jpg">
@@ -820,6 +821,7 @@
         <a class="site-name" href="/"><img src="/favicon.png" alt="" style="height:14px;vertical-align:-1px;margin-right:4px;">HelloESP</a>
         <ul class="top-links">
             <li><a href="/history">History</a></li>
+            <li><a href="/chronicle">Chronicle</a></li>
             <li><a href="/console">Console</a></li>
             <li><a href="/about">About</a></li>
         </ul>
@@ -907,6 +909,7 @@
         <li><a href="/console"><i class="fa-solid fa-terminal"></i> Console</a></li>
         <li><a href="/about"><i class="fa-solid fa-circle-info"></i> About</a></li>
         <li><a href="/snake"><i class="fa-solid fa-gamepad"></i> Snake</a></li>
+        <li><a href="/chronicle"><i class="fa-solid fa-book-open"></i> Chronicle</a></li>
         <li><a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener"><i class="fa-brands fa-github"></i> GitHub</a></li>
     </ul>
 </footer>
@@ -1099,7 +1102,29 @@
         if (/[ñ¿¡]/.test(text))       return 'es';
         if (/[àâæçéèêëîïôœùû]/i.test(text)) return 'fr';
         if (/[ãõ]/i.test(text))       return 'pt';
+        // Italian via word-pattern detection: Italian shares accented chars
+        // with French (à, è, ì, ò, ù) so diacritics alone can't separate them,
+        // and casual messages often drop accents entirely. These short
+        // Italian function/content words don't appear in English/French/etc.
+        if (/\b(che|sono|anche|perché|quando|amico|amici|piccolo|grande|molto|sempre|adesso|tenere|duro|niente)\b/i.test(text)) return 'it';
         return null;
+    }
+
+    // Returns true if the text has strong English markers: -ing/-ed/-ly
+    // suffixes or common content/function words. Used as a gate before
+    // the last-resort no-stopwords heuristic so casual English without
+    // articles ("Keep going strong little guy") doesn't trigger translate.
+    // Conservative: false positives here mean missing a translate offer
+    // for diacritic-less foreign messages, which is acceptable (browser
+    // translate covers it). False negatives here mean offering translate
+    // on English, which is more visibly wrong.
+    function looksLikeEnglish(text) {
+        if (!text) return false;
+        if (/\b\w{2,}ing\b/.test(text)) return true;
+        if (/\b\w{2,}ed\b/.test(text))  return true;
+        if (/\b\w{2,}ly\b/.test(text))  return true;
+        if (/\b(keep|get|make|take|come|see|look|let|got|going|gone|been|will|would|could|should|might|may|just|like|good|bad|nice|cool|love|hate|hi|hey|hello|thanks|please|strong|weak|big|small|little|great|best|worst|new|old)\b/i.test(text)) return true;
+        return false;
     }
 
     function hasLatinDiacritics(text) {
@@ -1110,20 +1135,39 @@
         }
         return false;
     }
+    // Common English stop-words. Used as a presence test: a multi-word
+    // Latin-script message with NONE of these is almost certainly not
+    // English. Catches keyboard-typed Czech/Polish/Slovak/Hungarian where
+    // the writer dropped diacritics (e.g. "Plzen zdravi sveho bratrance!"
+    // instead of "Plzeň zdraví svého bratrance!").
+    function hasNoEnglishStopwords(text) {
+        var re = /\b(the|a|an|is|are|was|were|be|been|being|of|to|in|on|at|for|with|by|and|or|but|not|no|this|that|these|those|i|you|he|she|it|we|they|my|your|his|her|its|our|their|me|him|us|them|do|does|did|have|has|had|can|could|will|would|should|may|might|so|if|when|where|why|how|what|who|which|all|some|any|each|every|few|many|more|most|much|other|same|than|then|too|very|just|now|out|up|down|over|under|here|there|hello|hi|hey|thanks|thx|cool|nice|love|like|from)\b/i;
+        return !re.test(text);
+    }
     function shouldOfferTranslate(message) {
         if (detectScript(message) !== userScript) return true;
         // Same-script fallback: if we can guess a specific Latin language
-        // from diacritics (Polish ł, German ß, French ç, etc.) and it
-        // differs from the user's locale, offer the button. Catches
-        // Polish→English, German→English, English→French etc. Won't catch
-        // unaccented same-script pairs, but those are the accepted limit.
+        // from diacritics or word patterns (Polish ł, German ß, French ç,
+        // Italian "amico/piccolo/che" etc.) and it differs from the user's
+        // locale, offer the button.
         var guess = guessLatinLang(message);
         if (guess && guess !== userLocale) return true;
         // Wider fallback for diacritic-rich Latin languages whose marker chars
         // don't match a specific pattern above (Czech ě/ý, Slovak ľ,
-        // Hungarian ő/ű, Croatian č/š, etc). m2m100 takes 'auto' source_lang
-        // gracefully, so don't gate the button on knowing the exact language.
+        // Hungarian ő/ű, Croatian č/š, etc).
         if (userScript === 'latin' && hasLatinDiacritics(message)) return true;
+        // Last-resort heuristic: Latin-script with no common English stop-
+        // words AND no English suffix/word markers is probably not English.
+        // Gated by length + word count so short or trivial messages don't
+        // trigger spuriously. The looksLikeEnglish check prevents casual
+        // English messages without articles ("Keep going strong little guy")
+        // from being misclassified as foreign.
+        if (userScript === 'latin' && message && message.length >= 15) {
+            var words = (message.match(/\b\w+\b/g) || []).filter(function (w) {
+                return /[a-zA-Z]/.test(w);
+            });
+            if (words.length >= 3 && hasNoEnglishStopwords(message) && !looksLikeEnglish(message)) return true;
+        }
         return false;
     }
 
@@ -1695,12 +1739,18 @@
         xhr.ontimeout = function() { btn.classList.remove('translating'); };
         xhr.open('POST', translateUrl, true);
         xhr.setRequestHeader('Content-Type', 'application/json');
-        // Prefer the character-based Latin-lang guess (pl/de/fr/es/pt) when
-        // it hits, m2m100 produces much better output when source_lang is
-        // right. Fall back to the script-based map for non-Latin scripts.
-        var sourceLang = guessLatinLang(original)
-                      || scriptToLang[detectScript(original)]
-                      || 'en';
+        // Prefer the character-based Latin-lang guess (pl/de/fr/es/pt/it)
+        // when it hits; m2m100 produces much better output when source_lang
+        // is right. Fall back to the script-based map for non-Latin scripts.
+        // For Latin script with no specific guess, send 'auto' so the worker
+        // tries a fallback chain (diacritic-less Czech, Polish, etc. that
+        // can't be confidently identified client-side).
+        var sourceLang = guessLatinLang(original);
+        if (!sourceLang) {
+            var s = detectScript(original);
+            if (s !== 'latin') sourceLang = scriptToLang[s] || 'en';
+            else sourceLang = 'auto';
+        }
         xhr.send(JSON.stringify({ id: id, text: original, target: userLocale, source: sourceLang }));
     }
 

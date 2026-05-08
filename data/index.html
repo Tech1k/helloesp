@@ -19,6 +19,7 @@
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://helloesp.com/">
     <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:site" content="@HelloESP32">
     <meta name="twitter:title" content="HelloESP">
     <meta name="twitter:description" content="This entire site runs on a chip with 520 KB of RAM. Every page, every sensor reading, served by a microcontroller.">
     <meta name="twitter:image" content="https://helloesp.com/og-banner.jpg">
@@ -915,6 +916,7 @@
         <ul class="top-links">
             <li><a href="/guestbook">Guestbook</a></li>
             <li><a href="/history">History</a></li>
+            <li><a href="/chronicle">Chronicle</a></li>
             <li><a href="/console">Console</a></li>
             <li><a href="/about">About</a></li>
         </ul>
@@ -1158,6 +1160,14 @@
     <div class="log">
         <div class="section-label"><i class="fa-solid fa-list"></i> Changelog <a class="section-rss" href="/changelog.rss" aria-label="Subscribe to changelog via RSS" title="Subscribe via RSS"><i class="fa-solid fa-rss"></i></a></div>
         <div class="log-entry">
+            <div class="log-date">May 6, 2026</div>
+            <div class="log-text">Chronicle entries now align to the chip's local timezone instead of UTC, so each day's entry covers the chip's actual day from where it's running. The chip also notices when one of its sensors stops working, retires it, and writes a chronicle entry about the loss. Behind the scenes, archive folders moved to a year-grouped layout so the chip can run for decades without slowing down. Firmware 1.4 also drops the boot-time CSV migrations to free flash for future features; pre-1.3 installs need to flash 1.3 first.</div>
+        </div>
+        <div class="log-entry">
+            <div class="log-date">May 4, 2026</div>
+            <div class="log-text">Added /chronicle: a daily entry the chip writes about itself. Auto-generated from sensor readings, visitors, and weather, archived from today onward. Each midnight the day's snapshot freezes into a permanent entry. Five starter templates pick the right shape for the day (busy, quiet, anomaly, milestone, generic), and there's a permalink for every entry. Each new entry also crossposts to X.</div>
+        </div>
+        <div class="log-entry">
             <div class="log-date">May 3, 2026</div>
             <div class="log-text">Snake got its own page. Same game, with two leaderboards now: today's top scores and the all-time top ten. Strong scores cross to all-time on their own. Each top entry has a watch button that plays back the actual game. Past quarters move to a Hall of Fame archive so the leaderboard stays fresh.</div>
         </div>
@@ -1241,6 +1251,7 @@
         <li><a href="/console"><i class="fa-solid fa-terminal"></i> Console</a></li>
         <li><a href="/about"><i class="fa-solid fa-circle-info"></i> About</a></li>
         <li><a href="/snake"><i class="fa-solid fa-gamepad"></i> Snake</a></li>
+        <li><a href="/chronicle"><i class="fa-solid fa-book-open"></i> Chronicle</a></li>
         <li><a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener"><i class="fa-brands fa-github"></i> GitHub</a></li>
     </ul>
 </footer>
@@ -1752,38 +1763,51 @@
                     // magnitude reads honestly, matching the about page
                     // placard: sub-penny → mils ("$0.002"), cents range
                     // → 2 decimals ("$0.04"), dollars → integer ("$32").
+                    // Cost segment: show real value when energy data is in;
+                    // keep placeholder visible when rates are configured but
+                    // energy hasn't accumulated yet (chip just powered, Shelly
+                    // not polled). Only hide entirely when rates aren't set.
                     var costWrap = document.getElementById('power-cost-wrap');
-                    if (lifetimeCostPerKwh > 0 && Number.isFinite(s.energy_total_wh)) {
-                        var dollars = (s.energy_total_wh / 1000) * lifetimeCostPerKwh;
-                        if (dollars > 0) {
+                    var costEl = document.getElementById('power-cost');
+                    if (lifetimeCostPerKwh > 0) {
+                        if (Number.isFinite(s.energy_total_wh) && s.energy_total_wh > 0) {
+                            var dollars = (s.energy_total_wh / 1000) * lifetimeCostPerKwh;
                             var costStr;
                             if (dollars >= 1)         costStr = '$' + Math.round(dollars);
                             else if (dollars >= 0.01) costStr = '$' + dollars.toFixed(2);
                             else                       costStr = '$' + dollars.toFixed(3);
-                            document.getElementById('power-cost').textContent = costStr;
-                            costWrap.style.display = '';
-                        } else {
-                            costWrap.style.display = 'none';
+                            if (costEl) costEl.textContent = costStr;
+                        } else if (costEl && !costEl.textContent) {
+                            costEl.textContent = '…';
                         }
+                        if (costWrap) costWrap.style.display = '';
                     } else if (costWrap) {
                         costWrap.style.display = 'none';
                     }
                     // Lifetime CO2 segment. Tiered: sub-1 kg shows in
                     // grams ("141 g"), 1+ kg shows integer ("4 kg").
                     // Unit only, the CO₂ label sits above the value.
+                    // CO₂ segment: same shape as cost, keep placeholder
+                    // visible when rates configured but no energy yet, only
+                    // hide entirely when rates aren't set.
                     var co2Wrap = document.getElementById('power-co2-wrap');
-                    if (lifetimeCo2PerKwh > 0 && Number.isFinite(s.energy_total_wh)) {
-                        var co2_kg = (s.energy_total_wh / 1000) * lifetimeCo2PerKwh;
-                        var co2_g  = co2_kg * 1000;
-                        if (co2_g >= 1) {
-                            var co2Str = (co2_g < 1000)
-                                ? Math.round(co2_g) + ' g'
-                                : Math.round(co2_kg) + ' kg';
-                            document.getElementById('power-co2').textContent = co2Str;
-                            co2Wrap.style.display = '';
-                        } else {
-                            co2Wrap.style.display = 'none';
+                    var co2El = document.getElementById('power-co2');
+                    if (lifetimeCo2PerKwh > 0) {
+                        if (Number.isFinite(s.energy_total_wh) && s.energy_total_wh > 0) {
+                            var co2_kg = (s.energy_total_wh / 1000) * lifetimeCo2PerKwh;
+                            var co2_g  = co2_kg * 1000;
+                            if (co2_g >= 1) {
+                                var co2Str = (co2_g < 1000)
+                                    ? Math.round(co2_g) + ' g'
+                                    : Math.round(co2_kg) + ' kg';
+                                if (co2El) co2El.textContent = co2Str;
+                            } else if (co2El && !co2El.textContent) {
+                                co2El.textContent = '…';
+                            }
+                        } else if (co2El && !co2El.textContent) {
+                            co2El.textContent = '…';
                         }
+                        if (co2Wrap) co2Wrap.style.display = '';
                     } else if (co2Wrap) {
                         co2Wrap.style.display = 'none';
                     }
@@ -2083,6 +2107,29 @@
             }
             if (Number.isFinite(data.co2_per_kwh) && data.co2_per_kwh > 0) {
                 lifetimeCo2PerKwh = data.co2_per_kwh;
+            }
+            // Reveal cost/CO₂ wraps with a placeholder as soon as we know
+            // they're configured, so visitors see them even before the
+            // first /stats event fires (or when the chip is offline). The
+            // /stats render path overwrites the placeholder with the real
+            // value when energy_total_wh arrives. Without this, forks with
+            // rates configured still showed nothing for several seconds
+            // post-load while waiting for SSE; visitors mostly missed it.
+            if (lifetimeCostPerKwh > 0) {
+                var costWrap = document.getElementById('power-cost-wrap');
+                var costEl = document.getElementById('power-cost');
+                if (costWrap && costEl && !costEl.textContent) {
+                    costEl.textContent = '…';
+                    costWrap.style.display = '';
+                }
+            }
+            if (lifetimeCo2PerKwh > 0) {
+                var co2Wrap = document.getElementById('power-co2-wrap');
+                var co2El = document.getElementById('power-co2');
+                if (co2Wrap && co2El && !co2El.textContent) {
+                    co2El.textContent = '…';
+                    co2Wrap.style.display = '';
+                }
             }
             var el = document.getElementById('uptime_sub');
             if (!el) return;

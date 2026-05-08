@@ -21,6 +21,13 @@ preview_urls = false
 # (optional) R2 backup bucket. If not bound, Worker falls back to emailing the bundle as an
 # attachment. Create the bucket once before deploying:
 #   wrangler r2 bucket create helloesp-backup
+#
+# (optional) X / Twitter auto-post for Chronicle entries. All 4 must be set or the
+# post path silently skips. Use a dedicated app with read+write permission:
+#   wrangler secret put X_API_KEY        # consumer key
+#   wrangler secret put X_API_SECRET     # consumer secret
+#   wrangler secret put X_ACCESS_TOKEN   # access token
+#   wrangler secret put X_ACCESS_SECRET  # access token secret
 
 routes = [
   { pattern = "helloesp.com", custom_domain = true }

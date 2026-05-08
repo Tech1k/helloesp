@@ -1,0 +1,1615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>The Chronicle / HelloESP</title>
+    <meta name="description" content="A daily entry HelloESP writes about itself: visitors, sensor extremes, weather, and milestones, archived from launch onward.">
+    <meta name="author" content="Tech1k">
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#2686e6">
+    <meta property="og:title" content="The Chronicle / HelloESP">
+    <meta property="og:site_name" content="HelloESP">
+    <meta property="og:description" content="A daily entry HelloESP writes about itself: visitors, sensor extremes, weather, and milestones, archived from launch onward.">
+    <meta property="og:image" content="https://helloesp.com/og-banner.jpg">
+    <meta property="og:image:type" content="image/jpeg">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="HelloESP: a website running on an ESP32">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://helloesp.com/chronicle">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:site" content="@HelloESP32">
+    <meta name="twitter:title" content="The Chronicle / HelloESP">
+    <meta name="twitter:description" content="A daily entry HelloESP writes about itself: visitors, sensor extremes, weather, and milestones, archived from launch onward.">
+    <meta name="twitter:image" content="https://helloesp.com/og-banner.jpg">
+    <meta name="twitter:image:alt" content="HelloESP: a website running on an ESP32">
+    <link rel="canonical" href="https://helloesp.com/chronicle">
+    <link rel="alternate" type="application/rss+xml" title="HelloESP Chronicle" href="/chronicle.rss">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
+          integrity="sha384-/o6I2CkkWC//PSjvWC/eYN7l3xM3tJm8ZzVkCOfp//W05QcE3mlGskpoHB6XqI+B"
+          crossorigin="anonymous" referrerpolicy="no-referrer"
+          media="print" onload="this.media='all'">
+    <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
+          integrity="sha384-/o6I2CkkWC//PSjvWC/eYN7l3xM3tJm8ZzVkCOfp//W05QcE3mlGskpoHB6XqI+B"
+          crossorigin="anonymous" referrerpolicy="no-referrer"></noscript>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg: #f8f7f4;
+            --ink: #1a1a1a;
+            --mid: #888;
+            --faint: #ccc;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--ink);
+            font-family: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", monospace;
+            min-height: 100vh;
+            display: grid;
+            grid-template-rows: 1fr auto;
+        }
+
+        a:focus-visible,
+        button:focus-visible {
+            outline: 2px solid var(--ink);
+            outline-offset: 2px;
+            border-radius: 2px;
+        }
+
+        main {
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 80px 24px 64px;
+            width: 100%;
+        }
+
+        .top-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            row-gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 24px;
+        }
+        @media (max-width: 480px) {
+            .top-links { gap: 14px; font-size: 10px; }
+        }
+        .site-name {
+            font-size: 13px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--mid);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+        .site-name:hover { color: var(--ink); }
+        .top-links {
+            display: flex;
+            gap: 16px;
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+        .top-links a {
+            color: var(--mid);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+        .top-links a:hover { color: var(--ink); }
+
+        h1 {
+            font-size: clamp(28px, 5vw, 42px);
+            font-weight: 400;
+            letter-spacing: -0.02em;
+            line-height: 1.1;
+            margin-bottom: 16px;
+        }
+        h1 .rss-link,
+        h1 .x-link {
+            font-size: 0.4em;
+            vertical-align: middle;
+            margin-left: 8px;
+            color: var(--mid);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+        h1 .rss-link:hover { color: #f26522; }
+        h1 .x-link:hover { color: var(--ink); }
+
+        .desc {
+            font-size: 13px;
+            line-height: 1.8;
+            color: var(--mid);
+            margin-bottom: 32px;
+            max-width: 540px;
+        }
+
+        .began {
+            font-size: 11px;
+            color: var(--mid);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        .began-sep {
+            margin: 0 4px;
+        }
+        .began-countdown {
+            opacity: 0.7;
+        }
+
+        #began-countdown-tick {
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Year + month accordion. Most-recent year auto-expanded; within
+           that year, most-recent month auto-expanded. Older sections
+           collapse by default and reveal on click. Mirrors /history's
+           collapsible structure so repeat visitors recognize the pattern. */
+        .year-section {
+            border-bottom: 1px solid var(--faint);
+        }
+        .year-section:last-child {
+            border-bottom: none;
+        }
+        .year-section > summary {
+            cursor: pointer;
+            list-style: none;
+            user-select: none;
+            padding: 16px 0;
+            font-size: 18px;
+            font-weight: 500;
+            letter-spacing: 0.02em;
+            color: var(--ink);
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+        }
+        .year-section > summary::-webkit-details-marker { display: none; }
+        .year-section > summary::before {
+            content: '\25B8';
+            font-size: 0.7em;
+            color: var(--mid);
+            transition: transform 0.15s;
+            display: inline-block;
+        }
+        .year-section[open] > summary::before {
+            transform: rotate(90deg);
+        }
+        .year-count {
+            font-size: 11px;
+            color: var(--mid);
+            letter-spacing: 0.05em;
+            font-weight: 400;
+        }
+        .month-section {
+            border-top: 1px dashed var(--faint);
+        }
+        .month-section:first-of-type {
+            border-top: none;
+        }
+        .month-section > summary {
+            cursor: pointer;
+            list-style: none;
+            user-select: none;
+            padding: 12px 0 12px 14px;
+            font-size: 12px;
+            color: var(--mid);
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+        }
+        .month-section > summary::-webkit-details-marker { display: none; }
+        .month-section > summary::before {
+            content: '\25B8';
+            font-size: 0.85em;
+            transition: transform 0.15s;
+            display: inline-block;
+        }
+        .month-section[open] > summary::before {
+            transform: rotate(90deg);
+        }
+        .month-section[open] > summary {
+            color: var(--ink);
+        }
+        .month-section .entry {
+            padding-left: 14px;
+        }
+        .month-count {
+            font-size: 10px;
+            letter-spacing: 0.05em;
+        }
+
+        .loading,
+        .empty,
+        .err {
+            font-size: 13px;
+            color: var(--mid);
+            padding: 24px 0;
+            text-align: center;
+        }
+        .err { color: #b02030; }
+
+        /* Single entry block */
+        .entry {
+            padding: 24px 0;
+            border-bottom: 1px solid var(--faint);
+        }
+        .entry:last-child { border-bottom: none; }
+
+        .entry-head {
+            display: flex;
+            align-items: baseline;
+            gap: 12px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+        .entry-date {
+            font-size: 11px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--ink);
+            font-weight: 500;
+        }
+        a.entry-date {
+            text-decoration: none;
+            border-bottom: 1px solid var(--faint);
+            padding-bottom: 1px;
+            transition: border-color 0.15s;
+        }
+        a.entry-date:hover {
+            border-bottom-color: var(--ink);
+        }
+        .entry-day {
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--mid);
+        }
+        .entry-template {
+            font-size: 9px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--mid);
+            border: 1px solid var(--faint);
+            padding: 2px 6px;
+            border-radius: 2px;
+            margin-left: auto;
+        }
+        .entry-kind {
+            font-size: 9px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            padding: 2px 7px;
+            border-radius: 2px;
+            font-weight: 500;
+        }
+        .entry-kind.kind-weekly {
+            background: rgba(38, 134, 230, 0.12);
+            color: #2467b8;
+            border: 1px solid rgba(38, 134, 230, 0.3);
+        }
+        .entry-kind.kind-monthly {
+            background: rgba(160, 90, 200, 0.12);
+            color: #7b3fa6;
+            border: 1px solid rgba(160, 90, 200, 0.3);
+        }
+        .entry-kind.kind-quarterly {
+            background: rgba(220, 120, 60, 0.12);
+            color: #b25a25;
+            border: 1px solid rgba(220, 120, 60, 0.3);
+        }
+        .entry-retire-badges {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin: 4px 0 10px;
+        }
+        .entry-retire {
+            font-size: 10px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #b04030;
+            border: 1px solid rgba(176, 64, 48, 0.35);
+            background: rgba(176, 64, 48, 0.06);
+            padding: 3px 8px;
+            border-radius: 2px;
+        }
+        @media (prefers-color-scheme: dark) {
+            .entry-kind.kind-weekly {
+                background: rgba(38, 134, 230, 0.18);
+                color: #6cb0f0;
+            }
+            .entry-kind.kind-monthly {
+                background: rgba(180, 110, 220, 0.18);
+                color: #c891e8;
+            }
+            .entry-kind.kind-quarterly {
+                background: rgba(232, 152, 96, 0.18);
+                color: #e8a878;
+            }
+            .entry-retire {
+                color: #e87878;
+                background: rgba(232, 120, 120, 0.08);
+                border-color: rgba(232, 120, 120, 0.35);
+            }
+        }
+
+        .entry-note {
+            font-style: italic;
+            font-size: 13px;
+            color: var(--ink);
+            white-space: pre-line;
+            line-height: 1.7;
+            margin-bottom: 12px;
+            padding: 8px 12px;
+            border-left: 2px solid var(--mid);
+            background: rgba(0, 0, 0, 0.02);
+        }
+
+        .entry-body {
+            font-size: 14px;
+            line-height: 1.7;
+            margin-bottom: 16px;
+            white-space: pre-line;
+        }
+
+        .entry-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 8px 18px;
+            font-size: 11px;
+            margin-top: 14px;
+            padding-top: 12px;
+            border-top: 1px dashed var(--faint);
+        }
+        .entry-stats .k {
+            color: var(--mid);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            font-size: 9px;
+        }
+        .entry-stats .v {
+            color: var(--ink);
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Today (in progress) preview card. Rendered above the section
+           divider so "today" sits visually outside the archive list.
+           Dashed border + live dot signals: this is in motion, not sealed. */
+        .preview-card {
+            border: 1px dashed var(--faint);
+            border-radius: 3px;
+            padding: 18px 20px;
+            margin: 20px 0 10px;
+            background: rgba(0, 0, 0, 0.015);
+        }
+        @media (prefers-color-scheme: dark) {
+            .preview-card {
+                background: rgba(255, 255, 255, 0.025);
+            }
+        }
+        .preview-eyebrow {
+            font-size: 9px;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--mid);
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .preview-live-dot {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #4a9870;
+            box-shadow: 0 0 0 0 rgba(74, 152, 112, 0.55);
+            animation: previewPulse 2.4s ease-out infinite;
+        }
+        @keyframes previewPulse {
+            0%   { box-shadow: 0 0 0 0   rgba(74, 152, 112, 0.55); }
+            70%  { box-shadow: 0 0 0 7px rgba(74, 152, 112, 0); }
+            100% { box-shadow: 0 0 0 0   rgba(74, 152, 112, 0); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .preview-live-dot { animation: none; }
+        }
+        .preview-body {
+            font-size: 14px;
+            line-height: 1.7;
+            color: var(--ink);
+            white-space: pre-line;
+            margin-top: 10px;
+        }
+        .preview-stats {
+            font-size: 11px;
+            letter-spacing: 0.04em;
+            color: var(--mid);
+            margin-top: 14px;
+            padding-top: 10px;
+            border-top: 1px dashed var(--faint);
+            font-variant-numeric: tabular-nums;
+        }
+        .preview-foot {
+            font-size: 10px;
+            color: var(--mid);
+            margin-top: 8px;
+            font-style: italic;
+        }
+
+        .page-subhead {
+            font-size: 12px;
+            color: var(--mid);
+            line-height: 1.6;
+            margin: -20px 0 16px;
+            max-width: 540px;
+        }
+        hr.section-divider {
+            border: 0;
+            border-top: 1px solid var(--faint);
+            margin: 0 0 8px;
+        }
+
+        .page-jump {
+            margin: 0 0 12px;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .page-jump label {
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--mid);
+        }
+        .page-jump input[type="date"] {
+            font-family: inherit;
+            font-size: 12px;
+            background: var(--bg);
+            color: var(--ink);
+            border: 1px solid var(--faint);
+            padding: 4px 6px;
+        }
+        .page-subhead a {
+            color: var(--mid);
+            text-decoration: underline;
+            text-decoration-color: rgba(127, 127, 127, 0.3);
+            transition: color 0.15s, text-decoration-color 0.15s;
+        }
+        .page-subhead a:hover {
+            color: var(--ink);
+            text-decoration-color: var(--ink);
+        }
+
+        /* Detail view nav */
+        .detail-nav {
+            display: flex;
+            justify-content: space-between;
+            margin: 24px 0;
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+        .detail-nav a,
+        .detail-nav span {
+            color: var(--mid);
+            text-decoration: none;
+            transition: color 0.15s;
+        }
+        .detail-nav a:hover { color: var(--ink); }
+        .detail-nav .nav-spacer { flex: 1; }
+        .detail-nav .next-countdown {
+            opacity: 0.7;
+        }
+        .detail-nav #next-countdown-tick {
+            font-variant-numeric: tabular-nums;
+        }
+
+        .back-link {
+            display: inline-block;
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--mid);
+            text-decoration: none;
+            margin-bottom: 8px;
+            transition: color 0.15s;
+        }
+        .back-link:hover { color: var(--ink); }
+
+        /* Top bar for detail view: back link on left, share button on right.
+           Layout flexes so the share button right-aligns without collapsing
+           on narrow viewports. */
+        .detail-top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+            flex-wrap: wrap;
+        }
+        .detail-top-bar .back-link { margin-bottom: 0; }
+        .entry-share-btn {
+            font: inherit;
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--mid);
+            background: transparent;
+            border: 1px solid var(--faint);
+            border-radius: 3px;
+            padding: 5px 10px;
+            cursor: pointer;
+            transition: color 0.15s, border-color 0.15s;
+        }
+        .entry-share-btn i { margin-right: 4px; font-size: 0.95em; }
+        .entry-share-btn:hover { color: var(--ink); border-color: var(--mid); }
+        .entry-share-btn:active { transform: translateY(1px); }
+
+        /* Toast for share-link copied confirmation. Lives bottom-center,
+           fades in/out so it doesn't fight the page. Polite aria-live so
+           screen readers announce the copy. */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--ink);
+            color: var(--bg);
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            padding: 10px 18px;
+            border-radius: 3px;
+            z-index: 1000;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.18s;
+        }
+        .toast.show { opacity: 1; }
+
+        /* Filter bar above the accordion. Pills toggle the accordion to
+           show only entries matching a category (milestones, records,
+           anomalies, busy/quiet days, reflection summaries). Hidden when
+           there's nothing to filter (no entries, detail view). */
+        .filter-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin: 4px 0 16px;
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+        .filter-pill {
+            font: inherit;
+            font-size: inherit;
+            letter-spacing: inherit;
+            text-transform: inherit;
+            color: var(--mid);
+            background: transparent;
+            border: 1px solid var(--faint);
+            border-radius: 2px;
+            padding: 5px 10px;
+            cursor: pointer;
+            transition: color 0.15s, border-color 0.15s, background 0.15s;
+        }
+        .filter-pill:hover {
+            color: var(--ink);
+            border-color: var(--mid);
+        }
+        .filter-pill.active {
+            color: var(--ink);
+            background: rgba(0, 0, 0, 0.04);
+            border-color: var(--mid);
+        }
+        @media (prefers-color-scheme: dark) {
+            .filter-pill.active {
+                background: rgba(255, 255, 255, 0.05);
+            }
+        }
+        .filter-empty {
+            font-size: 12px;
+            color: var(--mid);
+            font-style: italic;
+            text-align: center;
+            padding: 24px 0;
+        }
+
+        /* Skip-to-content link for keyboard / screen-reader users. Visible
+           only when focused; jumps past the nav directly into the entry
+           list. Standard a11y pattern. */
+        .skip-link {
+            position: absolute;
+            top: -40px;
+            left: 8px;
+            background: var(--ink);
+            color: var(--bg);
+            padding: 8px 14px;
+            text-decoration: none;
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            z-index: 1001;
+            border-radius: 3px;
+            transition: top 0.15s;
+        }
+        .skip-link:focus { top: 8px; }
+
+        main > *:last-child { margin-bottom: 0; }
+
+        footer {
+            max-width: 640px;
+            margin: 0 auto;
+            padding: 16px 24px 32px;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            border-top: 1px solid var(--faint);
+            font-size: 11px;
+            color: var(--mid);
+            gap: 14px;
+            text-align: center;
+        }
+
+        footer a {
+            color: var(--mid);
+            text-decoration: none;
+            letter-spacing: 0.08em;
+            transition: color 0.15s;
+        }
+
+        footer a:hover { color: var(--ink); }
+
+        .footer-links {
+            order: 1;
+            display: flex;
+            gap: 15px;
+            list-style: none;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .served {
+            color: var(--mid);
+            opacity: 0.7;
+        }
+        .served:not(:empty)::before {
+            content: ' • ';
+            margin: 0 4px;
+        }
+        .footer-meta {
+            order: 2;
+        }
+        .footer-meta a {
+            text-decoration: underline;
+            text-underline-offset: 2px;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #111110;
+                --ink: #e8e6e1;
+                --mid: #8a8a87;
+                --faint: #2a2a28;
+            }
+            .entry-note { background: rgba(255, 255, 255, 0.03); }
+        }
+    </style>
+</head>
+<body>
+<a class="skip-link" href="#content">Skip to entries</a>
+<div class="toast" id="copy-toast" role="status" aria-live="polite" aria-atomic="true"></div>
+<main>
+    <nav class="top-nav" aria-label="Primary">
+        <a class="site-name" href="/"><img src="/favicon.png" alt="" style="height:14px;vertical-align:-1px;margin-right:4px;">HelloESP</a>
+        <ul class="top-links">
+            <li><a href="/guestbook">Guestbook</a></li>
+            <li><a href="/history">History</a></li>
+            <li><a href="/console">Console</a></li>
+            <li><a href="/about">About</a></li>
+        </ul>
+    </nav>
+
+    <h1>The Chronicle<a class="rss-link" href="/chronicle.rss" aria-label="Subscribe to Chronicle via RSS" title="Subscribe via RSS"><i class="fa-solid fa-rss"></i></a><a class="x-link" href="https://x.com/HelloESP32" target="_blank" rel="noopener" aria-label="Follow Chronicle on X" title="Follow on X"><i class="fa-brands fa-x-twitter"></i></a></h1>
+    <p class="desc">A daily entry the chip writes about itself. Auto-generated from sensor readings, visitor counts, and weather, archived from launch onward.</p>
+    <p class="page-subhead">New entries also post to <a href="https://x.com/HelloESP32" target="_blank" rel="noopener">@HelloESP32</a> on X.</p>
+
+    <div class="page-jump">
+        <label for="chronicle-jump">Jump to date:</label>
+        <input type="date" id="chronicle-jump" min="2026-05-04">
+    </div>
+
+    <hr class="section-divider">
+
+    <p id="began-line" class="began" hidden></p>
+    <div id="preview-card" class="preview-card" hidden></div>
+
+    <div id="filter-bar" class="filter-bar" hidden role="group" aria-label="Filter entries by type">
+        <button type="button" class="filter-pill active" data-filter="all" aria-pressed="true">All</button>
+        <button type="button" class="filter-pill" data-filter="milestone" aria-pressed="false">Milestones</button>
+        <button type="button" class="filter-pill" data-filter="record" aria-pressed="false">Records</button>
+        <button type="button" class="filter-pill" data-filter="anomaly" aria-pressed="false">Anomalies</button>
+        <button type="button" class="filter-pill" data-filter="busy" aria-pressed="false">Busy</button>
+        <button type="button" class="filter-pill" data-filter="quiet" aria-pressed="false">Quiet</button>
+        <button type="button" class="filter-pill" data-filter="reflection" aria-pressed="false">Reflections</button>
+    </div>
+
+    <div id="content" tabindex="-1">
+        <div class="loading">Loading...</div>
+    </div>
+</main>
+
+<footer>
+    <div class="footer-meta">
+        <span>Made by <a href="https://tech1k.com" target="_blank" rel="noopener">Tech1k</a></span>
+        <span class="served" id="served-time"></span>
+    </div>
+    <ul class="footer-links">
+        <li><a href="/"><i class="fa-solid fa-house"></i> Home</a></li>
+        <li><a href="/about"><i class="fa-solid fa-circle-info"></i> About</a></li>
+        <li><a href="/guestbook"><i class="fa-solid fa-pen"></i> Guestbook</a></li>
+        <li><a href="/history"><i class="fa-solid fa-clock-rotate-left"></i> History</a></li>
+        <li><a href="/console"><i class="fa-solid fa-terminal"></i> Console</a></li>
+        <li><a href="/snake"><i class="fa-solid fa-gamepad"></i> Snake</a></li>
+        <li><a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener"><i class="fa-brands fa-github"></i> GitHub</a></li>
+    </ul>
+</footer>
+
+<script>
+(function () {
+    var contentEl = document.getElementById('content');
+    var API = (location.host === 'helloesp.com' || location.host === 'www.helloesp.com')
+        ? '' : 'https://helloesp.com';
+
+    function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+    }
+
+    function fmtDateLong(yyyymmdd) {
+        // "2026-05-04" -> "May 4, 2026"
+        var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(yyyymmdd || '');
+        if (!m) return yyyymmdd;
+        var y = parseInt(m[1], 10),
+            mo = parseInt(m[2], 10) - 1,
+            d = parseInt(m[3], 10);
+        try {
+            return new Date(Date.UTC(y, mo, d)).toLocaleDateString(undefined, {
+                year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC'
+            });
+        } catch (e) { return yyyymmdd; }
+    }
+
+    function fmtMonthLong(yyyymm) {
+        // "2026-05" -> "May 2026"
+        var m = /^(\d{4})-(\d{2})$/.exec(yyyymm || '');
+        if (!m) return yyyymm;
+        var y = parseInt(m[1], 10), mo = parseInt(m[2], 10) - 1;
+        try {
+            return new Date(Date.UTC(y, mo, 1)).toLocaleDateString(undefined, {
+                year: 'numeric', month: 'long', timeZone: 'UTC'
+            });
+        } catch (e) { return yyyymm; }
+    }
+
+    function fmtWeekLong(yyyyWnn) {
+        // "2026-W18" -> "Week 18 of 2026"
+        var m = /^(\d{4})-W(\d{2})$/.exec(yyyyWnn || '');
+        if (!m) return yyyyWnn;
+        return 'Week ' + parseInt(m[2], 10) + ' of ' + m[1];
+    }
+
+    function fmtQuarterLong(yyyyQn) {
+        // "2026-Q2" -> "Q2 2026"
+        var m = /^(\d{4})-Q(\d)$/.exec(yyyyQn || '');
+        if (!m) return yyyyQn;
+        return 'Q' + m[2] + ' ' + m[1];
+    }
+
+    // Kind-aware label for an entry's date string. Used in cards, detail
+    // headers, and OG-style display. Daily uses fmtDateLong; weekly and
+    // monthly use their own formats.
+    function entryKindOf(entry) {
+        if (entry && entry.kind) return entry.kind;
+        var d = (entry && entry.date) || '';
+        if (/^\d{4}-W\d{2}$/.test(d)) return 'weekly';
+        if (/^\d{4}-Q\d$/.test(d)) return 'quarterly';
+        if (/^\d{4}-\d{2}$/.test(d)) return 'monthly';
+        return 'daily';
+    }
+    function fmtEntryDateLong(entry) {
+        var k = entryKindOf(entry);
+        if (k === 'weekly') return fmtWeekLong(entry.date);
+        if (k === 'quarterly') return fmtQuarterLong(entry.date);
+        if (k === 'monthly') return fmtMonthLong(entry.date);
+        return fmtDateLong(entry.date);
+    }
+    // Bucket key for groupEntries: which year+month does this entry sit
+    // under? Daily and monthly use entry.date directly; weekly uses
+    // entry.period_start (Monday of the week) so a Mon-Sun span that
+    // crosses a month boundary lands under the month containing its
+    // Monday, matching the chronicle.json sort order.
+    function entryBucketKey(entry) {
+        var k = entryKindOf(entry);
+        // Weekly + quarterly span months. Bucket by their period_start
+        // (Monday for weekly, 1st-of-quarter for quarterly) so they land
+        // in the month containing their start date.
+        if ((k === 'weekly' || k === 'quarterly') && entry.period_start) return entry.period_start;
+        return entry.date;
+    }
+
+    // Strip the kind prefix from the displayed template_id so the pill
+    // doesn't repeat what the kind pill already says. weekly_summary →
+    // summary; monthly_milestone → milestone. Then map internal daily
+    // IDs to human-friendly labels (busy_rel was internal jargon for
+    // "relative-to-baseline busy day"). Returns empty string for
+    // generic/ordinary days so the pill is hidden entirely; the pill
+    // only appears when the day is genuinely categorical.
+    function displayTemplateId(entry) {
+        var raw = (entry && entry.template_id) || 'generic';
+        if (raw.indexOf('weekly_') === 0) raw = raw.substring(7);
+        else if (raw.indexOf('monthly_') === 0) raw = raw.substring(8);
+        else if (raw.indexOf('quarterly_') === 0) raw = raw.substring(10);
+        var friendly = {
+            busy_rel:  'busy',
+            quiet_rel: 'quiet',
+            generic:   '',
+        };
+        return friendly.hasOwnProperty(raw) ? friendly[raw] : raw;
+    }
+
+    // Group reverse-chrono entries into year > month buckets. Yields
+    // yearOrder/monthOrder lists already in reverse-chronological order
+    // because the input array is. Bucketing uses entry.period_start when
+    // present (weekly entries) so a week spanning a month boundary lands
+    // in the month of its Monday. Daily and monthly fall back to date.
+    // Skips entries with malformed bucket keys instead of breaking layout.
+    function groupEntries(entries) {
+        var byYear = {};
+        var yearOrder = [];
+        var monthOrder = {};
+        for (var i = 0; i < entries.length; i++) {
+            var e = entries[i];
+            var bucketKey = entryBucketKey(e) || '';
+            var m = /^(\d{4})-(\d{2})/.exec(bucketKey);
+            if (!m) continue;
+            var year = m[1];
+            var monthKey = year + '-' + m[2];
+            if (!byYear[year]) {
+                byYear[year] = {};
+                yearOrder.push(year);
+                monthOrder[year] = [];
+            }
+            if (!byYear[year][monthKey]) {
+                byYear[year][monthKey] = [];
+                monthOrder[year].push(monthKey);
+            }
+            byYear[year][monthKey].push(e);
+        }
+        return { byYear: byYear, yearOrder: yearOrder, monthOrder: monthOrder };
+    }
+
+    function fmtNum(n, suffix) {
+        if (n == null || !isFinite(n)) return null;
+        var s = (Math.abs(n) >= 100 || Math.round(n) === n) ? Math.round(n) : n.toFixed(1);
+        return s + (suffix || '');
+    }
+
+    // Build the stats grid for an entry. Skips fields that are null so the
+    // grid doesn't render empty cells for sensors that weren't online.
+    function statsBlock(stats) {
+        if (!stats) return '';
+        var rows = [];
+        function row(k, v) { if (v != null && v !== '') rows.push({ k: k, v: v }); }
+        function aqiLabel(aqi) {
+            // EPA AQI categories (0-500 scale).
+            if (aqi <= 50)  return aqi + ' (good)';
+            if (aqi <= 100) return aqi + ' (moderate)';
+            if (aqi <= 150) return aqi + ' (sensitive groups)';
+            if (aqi <= 200) return aqi + ' (unhealthy)';
+            if (aqi <= 300) return aqi + ' (very unhealthy)';
+            return aqi + ' (hazardous)';
+        }
+
+        // Activity
+        row('Visitors', fmtNum(stats.visitors));
+
+        // Indoor environment
+        if (stats.temp_min_f != null && stats.temp_max_f != null) {
+            row('Indoor', fmtNum(stats.temp_min_f) + '–' + fmtNum(stats.temp_max_f) + '°F');
+        }
+        if (stats.humidity_min != null && stats.humidity_max != null) {
+            row('Humidity', fmtNum(stats.humidity_min) + '–' + fmtNum(stats.humidity_max) + '%');
+        }
+        if (stats.pressure_min_hpa != null && stats.pressure_max_hpa != null) {
+            row('Pressure', Math.round(stats.pressure_min_hpa) + '–' + Math.round(stats.pressure_max_hpa) + ' hPa');
+        }
+        if (stats.co2_min != null && stats.co2_max != null) {
+            row('CO₂', stats.co2_min + ' to ' + stats.co2_max + ' ppm');
+        } else if (stats.co2_max != null) {
+            row('CO₂ peak', stats.co2_max + ' ppm');
+        }
+        if (stats.voc_min != null && stats.voc_max != null) {
+            row('VOC', stats.voc_min + ' to ' + stats.voc_max + ' ppb');
+        } else if (stats.voc_max != null) {
+            row('VOC peak', stats.voc_max + ' ppb');
+        }
+
+        // Power
+        if (stats.power_max_w != null) {
+            row('Peak draw', fmtNum(stats.power_max_w, ' W'));
+        }
+        if (stats.energy_today_wh != null && stats.energy_today_wh > 0) {
+            var wh = stats.energy_today_wh;
+            row('Energy', wh >= 1000 ? (wh / 1000).toFixed(2) + ' kWh' : Math.round(wh) + ' Wh');
+        }
+
+        // Outdoor
+        if (stats.outdoor_temp_min_f != null && stats.outdoor_temp_max_f != null) {
+            row('Outdoor', fmtNum(stats.outdoor_temp_min_f) + '–' + fmtNum(stats.outdoor_temp_max_f) + '°F');
+        } else if (stats.outdoor && typeof stats.outdoor.temp_f === 'number') {
+            // Backfill for entries written before per-day outdoor range was tracked.
+            row('Outdoor', fmtNum(stats.outdoor.temp_f, '°F'));
+        }
+        if (stats.outdoor_aqi_max != null) {
+            row('AQI peak', aqiLabel(stats.outdoor_aqi_max));
+        }
+
+        // Chip vitals
+        if (stats.rssi_min != null && stats.rssi_max != null) {
+            row('WiFi signal', stats.rssi_min + ' to ' + stats.rssi_max + ' dBm');
+        }
+        if (stats.heap_free_min_kb != null) {
+            row('Min heap free', Math.round(stats.heap_free_min_kb) + ' KB');
+        }
+        if (stats.reboots != null && stats.reboots > 0) {
+            row('Reboots', stats.reboots);
+        }
+
+        if (rows.length === 0) return '';
+        var html = '<div class="entry-stats">';
+        for (var i = 0; i < rows.length; i++) {
+            html += '<div><div class="k">' + esc(rows[i].k) + '</div>'
+                  + '<div class="v">' + esc(rows[i].v) + '</div></div>';
+        }
+        return html + '</div>';
+    }
+
+    function entryBlock(entry, opts) {
+        opts = opts || {};
+        var kind = entryKindOf(entry);
+        var dayLabel = entry.day_number ? 'Day ' + entry.day_number : '';
+        var permalink = '/chronicle/' + entry.date;
+        var dateLabel = esc(fmtEntryDateLong(entry));
+        var dateEl = opts.linkToPermalink !== false
+            ? '<a class="entry-date" href="' + esc(permalink) + '">' + dateLabel + '</a>'
+            : '<span class="entry-date">' + dateLabel + '</span>';
+        var kindLabels = { weekly: 'Weekly', monthly: 'Monthly', quarterly: 'Quarterly' };
+        var kindPill = kindLabels[kind]
+            ? '<span class="entry-kind kind-' + kind + '">' + kindLabels[kind] + '</span>'
+            : '';
+        var tplLabel = displayTemplateId(entry);
+        var title = '<div class="entry-head">'
+                  + dateEl
+                  + kindPill
+                  + (dayLabel ? '<span class="entry-day">' + esc(dayLabel) + '</span>' : '')
+                  + (tplLabel ? '<span class="entry-template">' + esc(tplLabel) + '</span>' : '')
+                  + '</div>';
+        // Sensor-retire badges: when a daily entry coincides with a sensor
+        // retirement, surface it just under the date row. The chip's diary
+        // narrating its own degradation is the museum-curated payoff.
+        var retireRow = '';
+        if (entry.sensor_retired && entry.sensor_retired.length) {
+            var pills = entry.sensor_retired.map(function (r) {
+                var name = String(r.sensor || '').toUpperCase();
+                return '<span class="entry-retire" title="The chip retired this sensor on this day">'
+                     + esc(name) + ' retired</span>';
+            }).join('');
+            retireRow = '<div class="entry-retire-badges">' + pills + '</div>';
+        }
+        var note = entry.owner_note
+            ? '<div class="entry-note">' + esc(entry.owner_note) + '</div>'
+            : '';
+        var body = '<div class="entry-body">' + esc(entry.body || '') + '</div>';
+        var stats = statsBlock(entry.stats);
+        var rawTpl = (entry.template_id || 'generic');
+        return '<article class="entry" data-template-id="' + esc(rawTpl)
+             + '" data-kind="' + esc(kind) + '">'
+             + title + retireRow + note + body + stats + '</article>';
+    }
+
+    function showError(msg) {
+        contentEl.innerHTML = '<div class="err">' + esc(msg) + '</div>';
+    }
+
+    function renderIndex(data) {
+        var entries = data && data.entries;
+        if (!entries || entries.length === 0) {
+            // Began line is rendered separately in the static slot above
+            // so the empty-case body just notes that the archive is bare.
+            var emptyNote = data && data.started
+                ? 'No archived entries yet.'
+                : 'No entries yet. The first will be sealed at the next UTC midnight.';
+            contentEl.innerHTML = '<div class="empty">' + esc(emptyNote) + '</div>';
+            return;
+        }
+        var html = '';
+        // Year + month accordion. Most-recent year + month auto-expanded
+        // (first in reverse-chrono order). Older sections collapse and
+        // expand on click via native <details>; no JS toggle plumbing
+        // needed. Within an expanded month, entries render as cards in
+        // reverse-chrono order (the same shape as the previous flat list).
+        var grouped = groupEntries(entries);
+        for (var i = 0; i < grouped.yearOrder.length; i++) {
+            var year = grouped.yearOrder[i];
+            var yearOpen = (i === 0);
+            var months = grouped.monthOrder[year];
+            var yearTotal = 0;
+            for (var jj = 0; jj < months.length; jj++) {
+                yearTotal += grouped.byYear[year][months[jj]].length;
+            }
+            html += '<details class="year-section"' + (yearOpen ? ' open' : '') + '>';
+            html += '<summary><span>' + esc(year) + '</span>'
+                  + '<span class="year-count">' + yearTotal + (yearTotal === 1 ? ' entry' : ' entries') + '</span></summary>';
+            for (var j = 0; j < months.length; j++) {
+                var monthKey = months[j];
+                var monthEntries = grouped.byYear[year][monthKey];
+                var monthOpen = yearOpen && (j === 0);
+                html += '<details class="month-section"' + (monthOpen ? ' open' : '') + '>';
+                html += '<summary><span>' + esc(fmtMonthLong(monthKey)) + '</span>'
+                      + '<span class="month-count">(' + monthEntries.length + ')</span></summary>';
+                for (var k = 0; k < monthEntries.length; k++) {
+                    html += entryBlock(monthEntries[k]);
+                }
+                html += '</details>';
+            }
+            html += '</details>';
+        }
+        contentEl.innerHTML = html;
+    }
+
+    // Populate the began-line static slot above the preview card. Held
+    // separately from renderIndex so it sits above preview-card in DOM
+    // order (context first, then today's in-progress, then archive).
+    var beganEl = document.getElementById('began-line');
+    // Cached unix timestamp of next chip-local midnight, populated from
+    // /chronicle.json + /chronicle/preview responses. Both countdown
+    // functions read it. Falls back to UTC midnight when null (e.g., on
+    // older firmware that doesn't emit today_local_hour, or right after
+    // worker restart before any chip stats have arrived).
+    var nextSealUnix = null;
+    function setNextSealUnix(v) {
+        if (typeof v === 'number' && v > 0) nextSealUnix = v;
+    }
+    // Compute ms remaining until next seal. Prefers chip-local midnight
+    // when known; falls back to UTC midnight (which is wrong by TZ offset
+    // for non-UTC chips, but better than nothing while transitioning).
+    function msUntilNextSeal() {
+        if (nextSealUnix) {
+            return (nextSealUnix * 1000) - Date.now();
+        }
+        var now = new Date();
+        var next = new Date();
+        next.setUTCHours(24, 0, 0, 0);
+        return next - now;
+    }
+    function renderBegan(data) {
+        if (!beganEl) return;
+        if (!data || !data.started) { beganEl.hidden = true; beganEl.innerHTML = ''; return; }
+        setNextSealUnix(data.next_seal_unix);
+        beganEl.innerHTML = 'Chronicle began ' + esc(fmtDateLong(data.started))
+            + ' <span class="began-sep">·</span> '
+            + '<span class="began-countdown">Next entry in <span id="began-countdown-tick">--h --m</span></span>';
+        beganEl.hidden = false;
+        startBeganCountdown();
+    }
+    function hideBegan() {
+        if (beganEl) { beganEl.hidden = true; beganEl.innerHTML = ''; }
+    }
+
+    var beganCountdownInterval = null;
+    function startBeganCountdown() {
+        if (beganCountdownInterval) clearInterval(beganCountdownInterval);
+        function tick() {
+            var el = document.getElementById('began-countdown-tick');
+            if (!el) {
+                clearInterval(beganCountdownInterval);
+                beganCountdownInterval = null;
+                return;
+            }
+            var ms = msUntilNextSeal();
+            if (ms <= 0) {
+                el.textContent = 'sealing...';
+                return;
+            }
+            var totalMinutes = Math.floor(ms / 60000);
+            var h = Math.floor(totalMinutes / 60);
+            var m = totalMinutes % 60;
+            el.textContent = h + 'h ' + m + 'm';
+        }
+        tick();
+        // Update once a minute since the display rounds to minutes.
+        beganCountdownInterval = setInterval(tick, 60000);
+    }
+
+    function fmtKeyLong(key) {
+        // Key-aware formatting: dispatches on the date string shape since
+        // the standalone function gets a key without the entry context.
+        if (/^\d{4}-W\d{2}$/.test(key)) return fmtWeekLong(key);
+        if (/^\d{4}-Q\d$/.test(key)) return fmtQuarterLong(key);
+        if (/^\d{4}-\d{2}$/.test(key)) return fmtMonthLong(key);
+        return fmtDateLong(key);
+    }
+
+    // Cached prev/next keys for the current detail view, used by the
+    // global keyboard nav handler. Cleared when leaving detail view via
+    // hidePreview/hideBegan paths or the index render.
+    var detailPrevKey = null;
+    var detailNextKey = null;
+    function renderDetail(data) {
+        if (!data || !data.entry) {
+            contentEl.innerHTML = '<a class="back-link" href="/chronicle">&larr; All entries</a>'
+                + '<div class="empty">Entry not found.</div>';
+            detailPrevKey = null;
+            detailNextKey = null;
+            return;
+        }
+        var entry = data.entry;
+        var kind = entryKindOf(entry);
+        detailPrevKey = data.prev || null;
+        detailNextKey = data.next || null;
+        var prevLink = data.prev
+            ? '<a href="/chronicle/' + esc(data.prev) + '" aria-label="Previous entry: ' + esc(fmtKeyLong(data.prev)) + '">&larr; ' + esc(fmtKeyLong(data.prev)) + '</a>'
+            : '';
+        // Countdown to next entry seal only makes sense for the newest
+        // daily entry (next seal is at chip-local midnight). Weekly and
+        // monthly seals are days/weeks away; show a static label instead.
+        var nextSide;
+        if (data.next) {
+            nextSide = '<a href="/chronicle/' + esc(data.next) + '" aria-label="Next entry: ' + esc(fmtKeyLong(data.next)) + '">' + esc(fmtKeyLong(data.next)) + ' &rarr;</a>';
+        } else if (kind === 'daily') {
+            nextSide = '<span class="next-countdown">Next entry in <span id="next-countdown-tick">--:--:--</span></span>';
+        } else {
+            var latestLabel = { weekly: 'week', monthly: 'month', quarterly: 'quarter' }[kind] || 'period';
+            nextSide = '<span class="next-countdown">Latest ' + latestLabel + '</span>';
+        }
+        var nav = '<div class="detail-nav">'
+            + (prevLink || '<span class="nav-spacer"></span>')
+            + nextSide
+            + '</div>';
+        var shareBtn = '<button type="button" class="entry-share-btn" data-share-date="'
+            + esc(entry.date) + '" aria-label="Share this entry">'
+            + '<i class="fa-solid fa-link" aria-hidden="true"></i> Share'
+            + '</button>';
+        contentEl.innerHTML = '<div class="detail-top-bar">'
+            + '<a class="back-link" href="/chronicle">&larr; All entries</a>'
+            + shareBtn
+            + '</div>'
+            + entryBlock(entry, { linkToPermalink: false })
+            + nav;
+        if (!data.next && kind === 'daily') startNextCountdown();
+    }
+
+    var countdownInterval = null;
+    function startNextCountdown() {
+        if (countdownInterval) clearInterval(countdownInterval);
+        function tick() {
+            var el = document.getElementById('next-countdown-tick');
+            if (!el) {
+                clearInterval(countdownInterval);
+                countdownInterval = null;
+                return;
+            }
+            var ms = msUntilNextSeal();
+            if (ms <= 0) {
+                el.textContent = 'sealing...';
+                return;
+            }
+            var s = Math.floor(ms / 1000);
+            var h = Math.floor(s / 3600);
+            var m = Math.floor((s % 3600) / 60);
+            var sec = s % 60;
+            function pad(n) { return n < 10 ? '0' + n : '' + n; }
+            el.textContent = pad(h) + ':' + pad(m) + ':' + pad(sec);
+        }
+        tick();
+        countdownInterval = setInterval(tick, 1000);
+    }
+
+    function loadIndex() {
+        contentEl.innerHTML = '<div class="loading">Loading...</div>';
+        detailPrevKey = null;
+        detailNextKey = null;
+        showFilterBar();
+        loadPreview();
+        fetch(API + '/chronicle.json', { cache: 'no-cache' })
+            .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+            .then(function (data) {
+                renderBegan(data);
+                renderIndex(data);
+                // Re-apply active filter after re-render so navigating back
+                // from a detail view preserves the pill state.
+                applyFilter(activeFilter);
+            })
+            .catch(function () { showError('Could not load Chronicle.'); });
+    }
+
+    function loadDetail(date) {
+        contentEl.innerHTML = '<div class="loading">Loading...</div>';
+        hidePreview();
+        hideBegan();
+        hideFilterBar();
+        fetch(API + '/chronicle/' + encodeURIComponent(date) + '.json', { cache: 'no-cache' })
+            .then(function (r) {
+                if (r.status === 404) return { entry: null };
+                if (!r.ok) return Promise.reject(r.status);
+                return r.json();
+            })
+            .then(function (data) {
+                if (data && data.entry) { renderDetail(data); return; }
+                // No sealed entry. If the requested date matches the
+                // chip's current in-progress day, render the preview as
+                // an in-progress detail view instead of "not found."
+                // Lets visitors permalink to today and see the live
+                // narration without bouncing them to a 404.
+                return fetch(API + '/chronicle/preview', { cache: 'no-store' })
+                    .then(function (r) { return r.ok ? r.json() : null; })
+                    .then(function (p) {
+                        if (p && p.body && p.date === date) {
+                            renderInProgressDetail(p);
+                        } else {
+                            renderDetail({ entry: null });
+                        }
+                    })
+                    .catch(function () { renderDetail({ entry: null }); });
+            })
+            .catch(function () { showError('Could not load that entry.'); });
+    }
+
+    // Render the in-progress preview as a focused single-entry detail
+    // view. Reuses the .preview-card styles from the index card. The
+    // countdown rides inside the eyebrow so the user sees the seal
+    // time directly (vs the index card where the eyebrow is a static
+    // "seals at chip-local midnight" line).
+    function renderInProgressDetail(p) {
+        setNextSealUnix(p.next_seal_unix);
+        var dayLabel = p.day_number ? 'Day ' + p.day_number + ' · ' : '';
+        var stats = p.stats || {};
+        var bits = [];
+        if (stats.visitors != null) bits.push(stats.visitors + ' visitors');
+        if (stats.countries != null) bits.push(stats.countries + ' countries');
+        if (stats.co2_max != null) bits.push('CO₂ ' + (stats.co2_min || 0) + '–' + stats.co2_max + ' ppm');
+        if (stats.temp_max_f != null && stats.temp_min_f != null) {
+            bits.push(Math.round(stats.temp_min_f) + '–' + Math.round(stats.temp_max_f) + '°F');
+        }
+        var statBar = bits.length
+            ? '<div class="preview-stats">' + bits.map(esc).join(' · ') + '</div>'
+            : '';
+        var ageStr = p.snapshot_age_seconds != null
+            ? 'Updated ' + p.snapshot_age_seconds + 's since last sample'
+            : '';
+        var tplLabel = displayTemplateId(p);
+        var tplPill = tplLabel
+            ? '<span class="entry-template">' + esc(tplLabel) + '</span>'
+            : '';
+        var card = '<div class="preview-card">'
+          + '<div class="preview-eyebrow"><span class="preview-live-dot" aria-hidden="true"></span>'
+          + 'Today &middot; in progress &middot; seals in <span id="next-countdown-tick">--:--:--</span></div>'
+          + '<div class="entry-head" style="margin-bottom:0;">'
+          + '<span class="entry-date">' + esc(dayLabel + fmtDateLong(p.date)) + '</span>'
+          + tplPill
+          + '</div>'
+          + '<div class="preview-body">' + esc(p.body) + '</div>'
+          + statBar
+          + (ageStr ? '<div class="preview-foot">' + esc(ageStr) + '</div>' : '')
+          + '</div>';
+        var shareBtn = '<button type="button" class="entry-share-btn" data-share-date="'
+            + esc(p.date) + '" aria-label="Share today\'s in-progress entry">'
+            + '<i class="fa-solid fa-link" aria-hidden="true"></i> Share'
+            + '</button>';
+        contentEl.innerHTML = '<div class="detail-top-bar">'
+            + '<a class="back-link" href="/chronicle">&larr; All entries</a>'
+            + shareBtn
+            + '</div>'
+            + card;
+        startNextCountdown();
+    }
+
+    // Today (in progress) preview. Surfaces /chronicle/preview to public
+    // visitors so the chip's in-progress narration is visible above the
+    // archive list. Re-renders on each navigation back to the index.
+    // Hidden on detail views (one-entry pages) so the preview doesn't
+    // confuse "what you're reading" vs "what's happening now."
+    var previewEl = document.getElementById('preview-card');
+    function hidePreview() {
+        if (previewEl) { previewEl.hidden = true; previewEl.innerHTML = ''; }
+    }
+    function loadPreview() {
+        if (!previewEl) return;
+        fetch(API + '/chronicle/preview', { cache: 'no-store' })
+            .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+            .then(function (p) {
+                if (!p || !p.body) { hidePreview(); return; }
+                setNextSealUnix(p.next_seal_unix);
+                var dayLabel = p.day_number ? 'Day ' + p.day_number + ' · ' : '';
+                var stats = p.stats || {};
+                var bits = [];
+                if (stats.visitors != null) bits.push(stats.visitors + ' visitors');
+                if (stats.countries != null) bits.push(stats.countries + ' countries');
+                if (stats.co2_max != null) bits.push('CO₂ ' + (stats.co2_min || 0) + '–' + stats.co2_max + ' ppm');
+                if (stats.temp_max_f != null && stats.temp_min_f != null) {
+                    bits.push(Math.round(stats.temp_min_f) + '–' + Math.round(stats.temp_max_f) + '°F');
+                }
+                var statBar = bits.length
+                    ? '<div class="preview-stats">' + bits.map(esc).join(' · ') + '</div>'
+                    : '';
+                var ageStr = p.snapshot_age_seconds != null
+                    ? 'Updated ' + p.snapshot_age_seconds + 's since last sample'
+                    : '';
+                var tplLabel = displayTemplateId(p);
+        var tplPill = tplLabel
+            ? '<span class="entry-template">' + esc(tplLabel) + '</span>'
+            : '';
+                previewEl.innerHTML =
+                    '<div class="preview-eyebrow"><span class="preview-live-dot" aria-hidden="true"></span>'
+                  + 'Today &middot; in progress (seals at chip-local midnight)</div>'
+                  + '<div class="entry-head" style="margin-bottom:0;">'
+                  + '<span class="entry-date">' + esc(dayLabel + fmtDateLong(p.date)) + '</span>'
+                  + tplPill
+                  + '</div>'
+                  + '<div class="preview-body">' + esc(p.body) + '</div>'
+                  + statBar
+                  + (ageStr ? '<div class="preview-foot">' + esc(ageStr) + '</div>' : '');
+                previewEl.hidden = false;
+            })
+            .catch(function () { hidePreview(); });
+    }
+
+    // Match daily (YYYY-MM-DD), weekly (YYYY-WNN), or monthly (YYYY-MM)
+    // permalinks. Most-specific pattern first so a daily key doesn't
+    // accidentally match the shorter monthly pattern.
+    var ROUTE_KEY_RE = /^\/chronicle\/(\d{4}-\d{2}-\d{2}|\d{4}-W\d{2}|\d{4}-Q\d|\d{4}-\d{2})$/;
+    function route() {
+        var m = ROUTE_KEY_RE.exec(location.pathname);
+        if (m) loadDetail(m[1]);
+        else loadIndex();
+    }
+
+    // Intercept clicks on internal /chronicle SPA routes so navigation
+    // happens without a full reload. Strict pattern match so the RSS
+    // link, /chronicle.json, and any future chronicle.* assets fall
+    // through to default browser navigation.
+    function isSpaRoute(href) {
+        return href === '/chronicle' || ROUTE_KEY_RE.test(href);
+    }
+    document.addEventListener('click', function (e) {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        var a = e.target.closest && e.target.closest('a[href^="/chronicle"]');
+        if (!a) return;
+        var href = a.getAttribute('href');
+        if (!href || a.target === '_blank') return;
+        if (!isSpaRoute(href)) return;
+        e.preventDefault();
+        if (href !== location.pathname) history.pushState(null, '', href);
+        route();
+        window.scrollTo(0, 0);
+    });
+    window.addEventListener('popstate', route);
+
+    // Date jumper: native date input that navigates to /chronicle/<date>
+    // permalink on change. Uses existing per-date routing, no new endpoint
+    // needed. If the date has no entry, the SPA's renderDetail shows
+    // "Entry not found". Max set to today's UTC date so future dates can't
+    // be picked.
+    var jumpEl = document.getElementById('chronicle-jump');
+    if (jumpEl) {
+        jumpEl.max = new Date().toISOString().substring(0, 10);
+        jumpEl.addEventListener('change', function (ev) {
+            var date = ev.target.value;
+            if (!date) return;
+            var href = '/chronicle/' + date;
+            history.pushState(null, '', href);
+            route();
+            window.scrollTo(0, 0);
+        });
+    }
+
+    // Template-id filter bar. Shown on the index, hidden on detail views.
+    // Pills toggle the accordion to surface only entries matching a
+    // category. "Reflections" matches any non-daily kind (weekly/monthly/
+    // quarterly summaries). The other pills match the daily template_id
+    // suffix-stripped (so weekly_milestone / monthly_milestone are also
+    // included under "Milestones"). Empty year/month sections collapse
+    // when their visible-children count drops to zero.
+    var filterBarEl = document.getElementById('filter-bar');
+    var activeFilter = 'all';
+    function showFilterBar() {
+        if (filterBarEl) filterBarEl.hidden = false;
+    }
+    function hideFilterBar() {
+        if (filterBarEl) filterBarEl.hidden = true;
+    }
+    function entryMatchesFilter(article, filter) {
+        if (filter === 'all') return true;
+        var tplId = article.getAttribute('data-template-id') || '';
+        var kind = article.getAttribute('data-kind') || 'daily';
+        if (filter === 'reflection') return kind !== 'daily';
+        // Strip kind prefix so daily 'milestone' AND 'weekly_milestone' /
+        // 'monthly_milestone' / 'quarterly_milestone' all match the
+        // "Milestones" pill. Same shape as displayTemplateId's stripping.
+        var bare = tplId.replace(/^(weekly_|monthly_|quarterly_)/, '');
+        // Daily template ids: milestone, record, anomaly, busy_rel,
+        // quiet_rel, generic, launch. Filter values: milestone, record,
+        // anomaly, busy, quiet (mapped here to match the pill labels).
+        if (filter === 'busy')  return bare === 'busy_rel';
+        if (filter === 'quiet') return bare === 'quiet_rel';
+        return bare === filter;
+    }
+    function applyFilter(filter) {
+        activeFilter = filter;
+        // Update pill active state + ARIA
+        if (filterBarEl) {
+            var pills = filterBarEl.querySelectorAll('.filter-pill');
+            for (var i = 0; i < pills.length; i++) {
+                var on = pills[i].getAttribute('data-filter') === filter;
+                pills[i].classList.toggle('active', on);
+                pills[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+            }
+        }
+        // Show/hide entries
+        var anyVisible = false;
+        var entries = contentEl.querySelectorAll('.entry');
+        for (var j = 0; j < entries.length; j++) {
+            var match = entryMatchesFilter(entries[j], filter);
+            entries[j].style.display = match ? '' : 'none';
+            if (match) anyVisible = true;
+        }
+        // Collapse empty month sections
+        var months = contentEl.querySelectorAll('.month-section');
+        for (var k = 0; k < months.length; k++) {
+            var visible = 0;
+            var ms = months[k].querySelectorAll('.entry');
+            for (var l = 0; l < ms.length; l++) {
+                if (ms[l].style.display !== 'none') { visible++; break; }
+            }
+            months[k].style.display = visible > 0 ? '' : 'none';
+        }
+        // Collapse empty year sections
+        var years = contentEl.querySelectorAll('.year-section');
+        for (var y = 0; y < years.length; y++) {
+            var visibleMonths = 0;
+            var ys = years[y].querySelectorAll('.month-section');
+            for (var z = 0; z < ys.length; z++) {
+                if (ys[z].style.display !== 'none') { visibleMonths++; break; }
+            }
+            years[y].style.display = visibleMonths > 0 ? '' : 'none';
+        }
+        // Empty-state notice when filter matches nothing
+        var existing = contentEl.querySelector('.filter-empty');
+        if (existing) existing.remove();
+        if (!anyVisible && filter !== 'all') {
+            var emptyEl = document.createElement('div');
+            emptyEl.className = 'filter-empty';
+            emptyEl.textContent = 'No entries match this filter yet.';
+            contentEl.appendChild(emptyEl);
+        }
+    }
+    if (filterBarEl) {
+        filterBarEl.addEventListener('click', function (e) {
+            var btn = e.target.closest && e.target.closest('.filter-pill');
+            if (!btn) return;
+            var filter = btn.getAttribute('data-filter') || 'all';
+            applyFilter(filter);
+        });
+    }
+
+    // SPA keyboard nav for detail view: arrow keys (or vim h/l) step
+    // between prev/next sealed entries. Skipped when typing in inputs,
+    // when modifier keys are held (preserves browser shortcuts), and
+    // when not on a detail view. Cached prev/next keys come from the
+    // last renderDetail call.
+    document.addEventListener('keydown', function (e) {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        var t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+        if (!ROUTE_KEY_RE.test(location.pathname)) return;
+        var goKey = null;
+        if (e.key === 'ArrowLeft' || e.key === 'h') goKey = detailPrevKey;
+        else if (e.key === 'ArrowRight' || e.key === 'l') goKey = detailNextKey;
+        if (!goKey) return;
+        e.preventDefault();
+        var href = '/chronicle/' + goKey;
+        history.pushState(null, '', href);
+        route();
+        window.scrollTo(0, 0);
+    });
+
+    // Per-entry share. Uses the native share sheet on mobile (lets users
+    // send to messages/email/social naturally), falls back to clipboard
+    // copy on desktop with a brief toast confirmation. Delegated handler
+    // works across SPA route changes since it listens on contentEl.
+    var contentRoot = document.getElementById('content');
+    var toastEl = document.getElementById('copy-toast');
+    var toastTimer = null;
+    function showToast(msg) {
+        if (!toastEl) return;
+        toastEl.textContent = msg;
+        toastEl.classList.add('show');
+        if (toastTimer) clearTimeout(toastTimer);
+        toastTimer = setTimeout(function () { toastEl.classList.remove('show'); }, 1800);
+    }
+    if (contentRoot) {
+        contentRoot.addEventListener('click', function (e) {
+            var btn = e.target.closest && e.target.closest('.entry-share-btn');
+            if (!btn) return;
+            var date = btn.getAttribute('data-share-date');
+            if (!date) return;
+            var url = window.location.origin + '/chronicle/' + date;
+            var title = 'HelloESP Chronicle ' + fmtDateLong(date);
+            if (navigator.share) {
+                navigator.share({ title: title, url: url }).catch(function () {});
+            } else if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(url).then(function () {
+                    showToast('Link copied');
+                }, function () {
+                    showToast('Copy failed');
+                });
+            } else {
+                // Last-resort fallback: temporary textarea + execCommand.
+                // Triggers on browsers without Clipboard API (very old).
+                var ta = document.createElement('textarea');
+                ta.value = url;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                try { document.execCommand('copy'); showToast('Link copied'); } catch (_e) {}
+                document.body.removeChild(ta);
+            }
+        });
+    }
+
+    route();
+})();
+</script>
+
+<script>
+    window.addEventListener('load', function () {
+        try {
+            var nav = performance.getEntriesByType('navigation')[0];
+            if (!nav) return;
+            var ms = Math.round(nav.responseEnd - nav.requestStart);
+            var msValid = (ms >= 0 && ms <= 60000);
+            var totalBytes = nav.transferSize || nav.encodedBodySize || 0;
+            performance.getEntriesByType('resource').forEach(function (r) {
+                totalBytes += r.transferSize || r.encodedBodySize || 0;
+            });
+            var kb = totalBytes > 0 ? Math.round(totalBytes / 1024) + ' KB' : '';
+            var label = '';
+            if (kb && msValid)      label = kb + ' in ' + ms + ' ms';
+            else if (kb)            label = kb;
+            else if (msValid)       label = 'served in ' + ms + ' ms';
+            var el = document.getElementById('served-time');
+            if (el && label) el.textContent = label;
+        } catch (e) {}
+    });
+</script>
+</body>
+</html>

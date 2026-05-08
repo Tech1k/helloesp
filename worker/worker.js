@@ -182,6 +182,8 @@ export class EspRelay {
     this.lastBackupFailureEmailAt = 0;
     this.lastBackupMissedEmailAt = 0;
     this.firstSeenAt = 0;  // DO construction time, used as fallback floor for missed-backup alert
+    this.chronicleSnapshot = null;     // rolling daily stats accumulator; sealed at UTC midnight
+    this.chronicleLastPersistAt = 0;   // throttle for snapshot persistence (~once/min)
     this.state.blockConcurrencyWhile(async () => {
       const u = await state.storage.get('maintenanceUntil');
       const m = await state.storage.get('maintenanceMessage');
@@ -192,6 +194,7 @@ export class EspRelay {
       const lbd = await state.storage.get('lastBackupDate');
       const lact = await state.storage.get('lastActivity');
       const fseen = await state.storage.get('firstSeenAt');
+      const csnap = await state.storage.get('chronicleSnapshot');
       if (typeof u === 'number') this.maintenanceUntil = u;
       if (typeof m === 'string') this.maintenanceMessage = m;
       if (w && typeof w === 'object') this.lastWeather = w;
@@ -214,6 +217,30 @@ export class EspRelay {
         this.firstSeenAt = Date.now();
         await state.storage.put('firstSeenAt', this.firstSeenAt);
       }
+      // Restore in-flight Chronicle snapshot so isolate eviction mid-day
+      // doesn't drop the partial accumulator. The seal step in alarm()
+      // detects mismatched dates and recovers cleanly either way.
+      if (csnap && typeof csnap === 'object') {
+        this.chronicleSnapshot = csnap;
+        // Migrate older snapshots to the current shape: any field that was
+        // added in a later deploy and isn't in the loaded object gets its
+        // default value, so the strict-equality null checks in the
+        // accumulator work correctly. Without this, new fields would stay
+        // undefined and the min/max trackers would silently never update
+        // for the rest of the day.
+        const fresh = this._chronicleNewSnapshot(csnap.date);
+        for (const key in fresh) {
+          if (!(key in this.chronicleSnapshot)) {
+            this.chronicleSnapshot[key] = fresh[key];
+          }
+        }
+      }
+      // Idempotent backfill of skeleton entries for the gap between
+      // launch and Chronicle's first sealed day. ~15 storage gets on
+      // first run, ~15 fast misses on subsequent runs (existing entries
+      // short-circuit). Cost is negligible compared to a missed
+      // narrative for those days.
+      await this._chronicleBackfill();
     });
     this._ensureAlarm(30000);
   }
@@ -550,6 +577,2337 @@ export class EspRelay {
     await this.state.storage.put('snake/last-archived-quarter', current);
   }
 
+  // ===== Chronicle =====
+  // Auto-generated daily entries archiving the chip's existence. The DO
+  // accumulates fields from the chip's stats_update events into a rolling
+  // daily snapshot; at UTC midnight the snapshot freezes into a permanent
+  // entry under chronicle/YYYY-MM-DD. Templates are plain JS functions in
+  // this file, editable without firmware reflash.
+  //
+  // ===== Fork config =====
+  // If you're running this on your own ESP32, edit these values to your
+  // own deployment. Day-N counting, the launch entry's date, and the
+  // launch prose all hang off these constants.
+
+  _chronicleConfig() {
+    return {
+      // Day 1 = the day your chip went online. Used by "Day N" markers
+      // and the milestone template (day 1, 7, 30, 100, 365, 500, 1000).
+      launchYear:  2026,
+      launchMonth: 4,   // 1-indexed (April)
+      launchDay:   19,
+
+      // The day Chronicle itself started archiving. A locked launch
+      // entry gets seeded here on first DO startup; the seal at the
+      // following UTC midnight fills in real stats while preserving
+      // this body. To revise after first deploy: delete the
+      // chronicle/<firstEntryDate> key from DO storage and redeploy.
+      firstEntryDate: '2026-05-04',
+      firstEntryBody: "May the 4th be with you.\n\nToday the chip starts keeping a daily diary. Every day online becomes a permanent record: visitors, sensor extremes, weather, milestones.\n\nA small, slow archive of one device staying alive.",
+
+      // Day-500 milestone prose. The original deployment references
+      // its 2022-2023 ESP32's ~500-day lifespan; forks should change
+      // this to something meaningful (or generic) for their context.
+      day500Note: "matched the original chip's run",
+
+      // Curator/owner name. Used by self-aware-chip detectors that
+      // address the curator by name on long absences. Forks should
+      // set this to whoever maintains the device.
+      owner_name: 'Tech1k',
+
+      // Owner-defined personal milestones. Calendar-driven anchors that
+      // fire once per year on their month-day match. Each entry needs
+      // { month, day, clause }. Add more here without code changes
+      // (e.g., framing-day, first-guestbook-signing, etc.). April 19
+      // intentionally omitted: it's the chip's launch day, so every
+      // April 19 from year 1 onward already hits the milestone-template
+      // year-anniversary line ("one full year", "two full years", etc.)
+      // and a personal anchor would duplicate or fight for the slot.
+      ownerMilestones: [
+        { month: 6, day: 17, clause: 'The curator turns a year older today.' },
+      ],
+    };
+  }
+
+  _chronicleDayNumber(date) {
+    const cfg = this._chronicleConfig();
+    const launchUtc = Date.UTC(cfg.launchYear, cfg.launchMonth - 1, cfg.launchDay);
+    const [y, m, d] = date.split('-').map(Number);
+    const target = Date.UTC(y, m - 1, d);
+    return Math.floor((target - launchUtc) / 86400000) + 1;
+  }
+
+  // ===== X / Twitter auto-post =====
+  // Posts each sealed Chronicle entry to X. Skipped silently when the
+  // 4 OAuth 1.0a secrets are missing (X_API_KEY / X_API_SECRET /
+  // X_ACCESS_TOKEN / X_ACCESS_SECRET) so deploying without credentials
+  // doesn't break the seal path. Each entry is flagged posted_to_x:true
+  // after a successful tweet so re-seals + DO restarts don't double-post.
+
+  // RFC 3986 percent-encoding. Stricter than encodeURIComponent: also
+  // escapes !*'() per the OAuth 1.0a spec.
+  _rfc3986(s) {
+    return encodeURIComponent(String(s)).replace(/[!*'()]/g,
+      c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+  }
+
+  // Build the OAuth 1.0a Authorization header for an X API request.
+  // Body params are NOT included in the signature for v2 JSON endpoints
+  // (only URL query params + oauth_* params get signed).
+  async _oauth1aHeader(method, url, queryParams) {
+    const env = this.env;
+    if (!env.X_API_KEY || !env.X_API_SECRET || !env.X_ACCESS_TOKEN || !env.X_ACCESS_SECRET) {
+      return null;
+    }
+    const oauth = {
+      oauth_consumer_key: env.X_API_KEY,
+      oauth_nonce: crypto.randomUUID().replace(/-/g, ''),
+      oauth_signature_method: 'HMAC-SHA1',
+      oauth_timestamp: String(Math.floor(Date.now() / 1000)),
+      oauth_token: env.X_ACCESS_TOKEN,
+      oauth_version: '1.0',
+    };
+    const all = { ...(queryParams || {}), ...oauth };
+    const sorted = Object.keys(all).sort();
+    const paramString = sorted
+      .map(k => this._rfc3986(k) + '=' + this._rfc3986(all[k]))
+      .join('&');
+    const baseString = [
+      method.toUpperCase(),
+      this._rfc3986(url),
+      this._rfc3986(paramString),
+    ].join('&');
+    const signingKey = this._rfc3986(env.X_API_SECRET) + '&' + this._rfc3986(env.X_ACCESS_SECRET);
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw', enc.encode(signingKey),
+      { name: 'HMAC', hash: 'SHA-1' },
+      false, ['sign']
+    );
+    const sig = await crypto.subtle.sign('HMAC', key, enc.encode(baseString));
+    const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sig)));
+    oauth.oauth_signature = sigB64;
+    return 'OAuth ' + Object.keys(oauth).sort()
+      .map(k => this._rfc3986(k) + '="' + this._rfc3986(oauth[k]) + '"')
+      .join(', ');
+  }
+
+  // Post a single tweet via X API v2. Returns {ok, id?, status?, error?}.
+  // opts.replyTo: post as a reply to this tweet ID (threads under the original).
+  async _xPostTweet(text, opts) {
+    const url = 'https://api.twitter.com/2/tweets';
+    const auth = await this._oauth1aHeader('POST', url, {});
+    if (!auth) return { ok: false, error: 'no_credentials' };
+    const payload = { text };
+    if (opts && opts.replyTo) {
+      payload.reply = { in_reply_to_tweet_id: String(opts.replyTo) };
+    }
+    let resp;
+    try {
+      resp = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': auth,
+          'Content-Type': 'application/json',
+          'User-Agent': 'HelloESP-Chronicle/1.0',
+        },
+        body: JSON.stringify(payload),
+      });
+    } catch (e) {
+      return { ok: false, error: 'fetch_failed: ' + (e && e.message) };
+    }
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      return { ok: false, status: resp.status, error: errText.slice(0, 200) };
+    }
+    const data = await resp.json().catch(() => null);
+    return { ok: true, id: data && data.data && data.data.id };
+  }
+
+  // Build tweet text for a Chronicle entry. X's t.co shortener counts
+  // every URL as 23 chars regardless of actual length, so we budget for
+  // 23 + header + separators and truncate the body to fit. The 25000
+  // ceiling matches the X Premium per-tweet character limit; without
+  // Premium this would need to drop to 280 (and the truncation logic
+  // below kicks in at any cap). Most chronicle bodies sit under 500
+  // chars so truncation rarely fires; weekly/monthly summaries can run
+  // longer and Premium accommodates them in full.
+  _chronicleFormatTweet(entry) {
+    let dateLong = entry.date;
+    try {
+      dateLong = new Date(entry.date + 'T12:00:00Z').toLocaleDateString('en-US', {
+        year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC'
+      });
+    } catch (e) {}
+    const header = `Day ${entry.day_number || '?'} · ${dateLong}`;
+    const link   = `helloesp.com/chronicle/${entry.date}`;
+    const linkBudget = 23; // X t.co shortened length
+    const separators = 4;  // two "\n\n" pairs
+    const bodyMax = 25000 - header.length - linkBudget - separators;
+    let body = entry.body || '';
+    if (body.length > bodyMax) {
+      // Trim at last whitespace inside budget, then add ellipsis.
+      body = body.substring(0, bodyMax - 1).replace(/\s+\S*$/, '') + '…';
+    }
+    return header + '\n\n' + body + '\n\n' + link;
+  }
+
+  // Read entry, check posted flag, post, set flag on success. Idempotent
+  // and safe to call from any code path (won't double-post). The in-flight
+  // set is claimed synchronously before any await, so two concurrent calls
+  // for the same date can't both pass the check.
+  async _chronicleMaybePost(date) {
+    this.xPostInFlight = this.xPostInFlight || new Set();
+    if (this.xPostInFlight.has(date)) return;
+    this.xPostInFlight.add(date);
+    try {
+      const entry = await this.state.storage.get('chronicle/' + date);
+      if (!entry) return;
+      if (entry.posted_to_x) return;
+      const text = this._chronicleFormatTweet(entry);
+      const result = await this._xPostTweet(text);
+      if (result.ok) {
+        // Re-read entry: the X API call yielded, so admin note writes or
+        // other handlers may have modified the entry in the meantime. Writing
+        // our stale copy back would clobber those changes.
+        const fresh = await this.state.storage.get('chronicle/' + date);
+        if (!fresh || fresh.posted_to_x) return;
+        fresh.posted_to_x = true;
+        if (result.id) fresh.x_tweet_id = result.id;
+        await this.state.storage.put('chronicle/' + date, fresh);
+      } else if (result.error !== 'no_credentials') {
+        // Don't log the silent skip path; only real failures.
+        console.error('Chronicle X post failed:', result.status, result.error);
+      }
+    } finally {
+      this.xPostInFlight.delete(date);
+    }
+  }
+
+  // Format an owner-note as a reply tweet. No header (X threads it under
+  // the parent), permalink appended so long notes have a "see more" path.
+  // 25000 cap matches X Premium; without Premium this would need 280.
+  _chronicleFormatNoteReply(entry) {
+    const link = `helloesp.com/chronicle/${entry.date}`;
+    const linkBudget = 23;
+    const separator = 2; // one "\n\n"
+    const noteMax = 25000 - linkBudget - separator;
+    let note = entry.owner_note || '';
+    if (note.length > noteMax) {
+      note = note.substring(0, noteMax - 1).replace(/\s+\S*$/, '') + '…';
+    }
+    return note + '\n\n' + link;
+  }
+
+  // Post the owner_note as a reply to the entry's original tweet. Idempotent
+  // via note_x_tweet_id; first non-empty note posts, subsequent edits don't
+  // (X API v2 has no free tweet-edit). Skipped silently if there's no parent
+  // tweet to reply to or no note text. In-flight set is claimed synchronously
+  // before any await, so two rapid admin saves can't both pass the flag check
+  // and double-post.
+  async _chronicleMaybePostNote(date) {
+    this.notePostInFlight = this.notePostInFlight || new Set();
+    if (this.notePostInFlight.has(date)) return;
+    this.notePostInFlight.add(date);
+    try {
+      const entry = await this.state.storage.get('chronicle/' + date);
+      if (!entry) return;
+      if (!entry.x_tweet_id) return;       // original tweet never posted; nothing to reply to
+      if (!entry.owner_note) return;       // note cleared, or never set
+      if (entry.note_x_tweet_id) return;   // already replied
+      const text = this._chronicleFormatNoteReply(entry);
+      const result = await this._xPostTweet(text, { replyTo: entry.x_tweet_id });
+      if (result.ok) {
+        // Re-read to avoid clobbering any concurrent modifications during
+        // the X API call (e.g. another admin save changing the body).
+        const fresh = await this.state.storage.get('chronicle/' + date);
+        if (!fresh || fresh.note_x_tweet_id) return;
+        if (result.id) fresh.note_x_tweet_id = result.id;
+        await this.state.storage.put('chronicle/' + date, fresh);
+      } else if (result.error !== 'no_credentials') {
+        console.error('Chronicle note reply failed:', result.status, result.error);
+      }
+    } finally {
+      this.notePostInFlight.delete(date);
+    }
+  }
+
+  // ===== Durability =====
+  // DO storage is the live source of truth, but Chronicle is permanent
+  // narrative data we don't want to depend on a single backend. Two
+  // redundant copies fire after each seal/backfill: (1) immediate write to
+  // R2 at state/chronicle/<year>/<date>.json so the entry is durable within
+  // seconds, (2) push over WS to the chip which writes to its SD card at
+  // /chronicle/<year>/<date>.json (also picked up by the chip's daily SD→R2
+  // backup loop, so the SD path piggybacks on existing infrastructure).
+  // Year subdir on both surfaces keeps each year's entries grouped so
+  // human inspection of the R2 bucket and the chip's SD card stay clean
+  // as the archive grows past 1000+ entries.
+
+  // R2 backup. Skipped silently if BACKUP binding isn't configured (forks
+  // running without R2 still get the chip-side SD copy).
+  async _chronicleBackupToR2(entry) {
+    if (!this.env.BACKUP || !entry || !entry.date) return;
+    try {
+      const year = entry.date.slice(0, 4);
+      await this.env.BACKUP.put(
+        'state/chronicle/' + year + '/' + entry.date + '.json',
+        JSON.stringify(entry, null, 2),
+        { httpMetadata: { contentType: 'application/json' } }
+      );
+    } catch (e) {
+      console.error('chronicle R2 backup failed:', e && e.message);
+    }
+  }
+
+  // Push entry to chip via WS event. The inner entry JSON is encoded as a
+  // string-valued field on the event so the chip's indexOf-based parser
+  // can extract it without needing a real JSON parser. Skipped silently
+  // if the chip is offline; missed entries can be replayed manually or
+  // recovered from R2 if needed.
+  _chroniclePushToChip(entry) {
+    if (!this.espSocket || this.espSocket.readyState !== 1) return;
+    if (!entry || !entry.date) return;
+    // Reflections (weekly/monthly) live worker-only; chip's SD stores
+    // daily entries only. Reflections are aggregations of data already
+    // on the chip's SD, plus R2 backup, so a third copy isn't needed.
+    if (entry.kind && entry.kind !== 'daily') return;
+    try {
+      const entryJson = JSON.stringify(entry);
+      const msg = JSON.stringify({
+        type: 'event',
+        event: 'chronicle_seal',
+        data: { date: entry.date, entry: entryJson },
+      });
+      this.espSocket.send(msg);
+    } catch (e) {
+      console.error('chronicle push to chip failed:', e && e.message);
+    }
+  }
+
+  // Convenience: fire both backups for an entry. Called after every seal
+  // and backfill write so we never have a path that updates DO without
+  // also updating R2 + chip-SD. Both helpers no-op silently on failure
+  // so the seal flow is never blocked by backup issues.
+  async _chronicleBackup(entry) {
+    await this._chronicleBackupToR2(entry);
+    this._chroniclePushToChip(entry);
+  }
+
+  _chronicleNewSnapshot(date) {
+    return {
+      date,
+      samples: 0,
+      // visitors_today high-water-marks the chip's daily_visitors field
+      // (chip-side counter, chip resets at chip-local midnight). Earlier
+      // this was a lifetime-counter delta with a visitors_start anchor;
+      // see _chronicleAccumulate for the full rationale on the switch.
+      // visitors_total still uses the lifetime counter directly.
+      visitors_today: 0,
+      visitors_total: 0,
+      countries_total: 0,
+      guestbook_approved: 0,
+      co2_min: null, co2_max: null,
+      voc_min: null, voc_max: null,
+      temp_min_f: null, temp_max_f: null,
+      humidity_min: null, humidity_max: null,
+      pressure_min_hpa: null, pressure_max_hpa: null,
+      power_max_w: null,
+      energy_start_wh: null,   // anchor: stats.energy_total_wh at first sample of UTC day
+      energy_today_wh: 0,      // delta: stats.energy_total_wh - energy_start_wh
+      outdoor_latest: null,
+      outdoor_temp_min_f: null, outdoor_temp_max_f: null,
+      outdoor_aqi_max: null,
+      rssi_min: null, rssi_max: null,
+      heap_free_min_kb: null,
+      reboots: 0,
+      prev_uptime_s: null,
+      // Hourly buckets indexed 0-23 by chip-local hour. Each metric tracks
+      // min and max within the hour. visitors_min/max use the lifetime
+      // counter so per-hour visitor count is (max - min). Pre-allocated as
+      // null arrays so detectors can distinguish "no data this hour" from
+      // 0. Bucket data flows into the sealed entry's stats.hourly blob,
+      // unlocking future time-of-day detectors (peak-hour shifts, visitor
+      // pattern observations, intraday sensor texture). Only added 2026-05-06
+      // so prior entries lack it; consumers must null-check.
+      hourly: {
+        co2_min:        Array(24).fill(null),
+        co2_max:        Array(24).fill(null),
+        temp_min_f:     Array(24).fill(null),
+        temp_max_f:     Array(24).fill(null),
+        visitors_min:   Array(24).fill(null),
+        visitors_max:   Array(24).fill(null),
+      },
+    };
+  }
+
+  // Parse the chip's uptime string into seconds. The Uptime library emits
+  // the verbose format "X days, Y hours, Z minutes, W seconds"; this also
+  // handles compact forms like "5d 3h 12m". Independent regex per unit so
+  // the verbose format parses correctly (a single sequential pattern would
+  // greedy-match the days portion and skip the rest). Returns null if no
+  // unit found. Used for reboot detection via uptime decrement.
+  _parseUptimeToSeconds(s) {
+    if (typeof s !== 'string') return null;
+    const dMatch = s.match(/(\d+)\s*d/);
+    const hMatch = s.match(/(\d+)\s*h/);
+    const mMatch = s.match(/(\d+)\s*m/);
+    const sMatch = s.match(/(\d+)\s*s/);
+    const days = dMatch ? parseInt(dMatch[1]) : 0;
+    const hours = hMatch ? parseInt(hMatch[1]) : 0;
+    const mins = mMatch ? parseInt(mMatch[1]) : 0;
+    const secs = sMatch ? parseInt(sMatch[1]) : 0;
+    if (!dMatch && !hMatch && !mMatch && !sMatch) return null;
+    return days * 86400 + hours * 3600 + mins * 60 + secs;
+  }
+
+  async _chronicleAccumulate(stats) {
+    if (!stats) return;
+    // Prefer the chip-reported chip-local date (driven by config.txt's
+    // timezone field on the chip via tzset). This makes /chronicle/<date>
+    // align with the chip's lived day rather than UTC. The chronicle is
+    // the chip's diary, so a Mountain Time chip's "May 6" entry should
+    // cover MT 00:00–23:59, not UTC. Worker stays timezone-blind; the
+    // chip is the authority for its own day boundary. Falls back to UTC
+    // when the chip hasn't reported (legacy firmware) or NTP isn't synced
+    // yet on the chip (today_local arrives empty).
+    // Require chip-local time. Without it (chip's NTP and RTC both
+    // failed, or pre-1.4 firmware that didn't emit the field) we don't
+    // know the chip's day boundary. Defaulting to UTC could create a
+    // wrong-date snap when chip is in a UTC-offset timezone, which
+    // later corrects via mismatch + premature seal once chip-local time
+    // recovers. Skipping the sample is safer: snap waits, the next event
+    // with valid today_local picks up cleanly. Trade-off accepted: if
+    // chip's clock is permanently broken, no chronicle accumulation.
+    const reported = stats.today_local;
+    const today = (typeof reported === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(reported))
+      ? reported
+      : null;
+    if (!today) return;
+    // Refuse backward time travel. If incoming event's chip-local date is
+    // before the current snap.date, treat as stale (delayed, reordered,
+    // or spoofed) and skip. WebSocket guarantees in-order delivery within
+    // a session and reconnects don't replay messages, so this should
+    // never fire in normal operation; the warning log surfaces any real
+    // occurrence as evidence of a bug or architectural change.
+    if (this.chronicleSnapshot && today < this.chronicleSnapshot.date) {
+      console.warn('chronicle: ignoring stale stats event, today=' + today
+        + ' < snap.date=' + this.chronicleSnapshot.date);
+      return;
+    }
+    if (this.chronicleSnapshot && this.chronicleSnapshot.date !== today) {
+      // Day rolled over since the last sample. Seal yesterday's snapshot
+      // BEFORE we replace it, so the alarm's 30s tick can't lose those
+      // last samples (a stats_update can arrive within seconds of the
+      // chip's local midnight, well before the alarm fires).
+      await this._chronicleMaybeSeal();
+    }
+    if (!this.chronicleSnapshot || this.chronicleSnapshot.date !== today) {
+      this.chronicleSnapshot = this._chronicleNewSnapshot(today);
+    }
+    const s = this.chronicleSnapshot;
+    s.samples++;
+    // visitors_today mirrors the chip's daily_visitors counter (chip resets
+    // it at chip-local midnight via tzset). Earlier this was computed as a
+    // lifetime delta from a visitors_start anchor, but that approach drifted
+    // across worker restarts: a fresh isolate captured visitors_start at
+    // whatever the chip's lifetime counter happened to be when the first
+    // post-restart event arrived, dropping any visits between snap creation
+    // and that moment. The original motivation for the delta approach was a
+    // chip-local-vs-UTC timezone race that no longer exists now that the
+    // chronicle buckets by today_local. Trusting daily_visitors directly is
+    // simpler, self-healing across worker restarts, and uses the chip's own
+    // day boundary as the day boundary (which is the right one).
+    //
+    // High-water mark via Math.max so a momentary stats hiccup (zero or
+    // stale value mid-day) can't drop the count back to a smaller number.
+    if (typeof stats.daily_visitors === 'number' && stats.daily_visitors >= 0) {
+      s.visitors_today = Math.max(s.visitors_today, stats.daily_visitors);
+    }
+    if (typeof stats.visitors === 'number' && stats.visitors >= 0) {
+      s.visitors_total = Math.max(s.visitors_total, stats.visitors);
+    }
+    if (typeof stats.countries === 'number') {
+      s.countries_total = Math.max(s.countries_total, stats.countries);
+    }
+    if (typeof stats.guestbook_approved === 'number') {
+      s.guestbook_approved = Math.max(s.guestbook_approved, stats.guestbook_approved);
+    }
+    if (typeof stats.co2_ppm === 'number' && stats.co2_ppm > 0) {
+      if (s.co2_min === null || stats.co2_ppm < s.co2_min) s.co2_min = stats.co2_ppm;
+      if (s.co2_max === null || stats.co2_ppm > s.co2_max) s.co2_max = stats.co2_ppm;
+    }
+    if (typeof stats.voc_ppb === 'number' && stats.voc_ppb > 0) {
+      if (s.voc_min === null || stats.voc_ppb < s.voc_min) s.voc_min = stats.voc_ppb;
+      if (s.voc_max === null || stats.voc_ppb > s.voc_max) s.voc_max = stats.voc_ppb;
+    }
+    const tf = stats.temperature && stats.temperature.fahrenheit;
+    if (typeof tf === 'number' && isFinite(tf)) {
+      if (s.temp_min_f === null || tf < s.temp_min_f) s.temp_min_f = tf;
+      if (s.temp_max_f === null || tf > s.temp_max_f) s.temp_max_f = tf;
+    }
+    if (typeof stats.humidity_percent === 'number') {
+      if (s.humidity_min === null || stats.humidity_percent < s.humidity_min) s.humidity_min = stats.humidity_percent;
+      if (s.humidity_max === null || stats.humidity_percent > s.humidity_max) s.humidity_max = stats.humidity_percent;
+    }
+    if (typeof stats.pressure_hpa === 'number' && isFinite(stats.pressure_hpa) && stats.pressure_hpa > 0) {
+      if (s.pressure_min_hpa === null || stats.pressure_hpa < s.pressure_min_hpa) s.pressure_min_hpa = stats.pressure_hpa;
+      if (s.pressure_max_hpa === null || stats.pressure_hpa > s.pressure_max_hpa) s.pressure_max_hpa = stats.pressure_hpa;
+    }
+    if (typeof stats.power_w === 'number' && isFinite(stats.power_w)) {
+      if (s.power_max_w === null || stats.power_w > s.power_max_w) s.power_max_w = stats.power_w;
+    }
+    // Energy via lifetime delta (energy_total_wh). Same reasoning as
+    // visitors: energy_today_wh on the chip is daily and resets at chip-
+    // local midnight, so a high-water mark over the UTC day captures
+    // chip-local-day-end values and double-counts at the timezone
+    // boundary. energy_total_wh is the lifetime cumulative kWh from
+    // Shelly; only ever grows. Skipped silently when no Shelly is
+    // configured (energy_total_wh field absent from stats). Same
+    // high-water-mark protection as visitors: a counter decrement
+    // (Shelly reset; rare) freezes today's energy at pre-decrement peak
+    // rather than dropping to zero.
+    if (typeof stats.energy_total_wh === 'number' && isFinite(stats.energy_total_wh)
+        && stats.energy_total_wh >= 0) {
+      if (s.energy_start_wh == null) s.energy_start_wh = stats.energy_total_wh;
+      s.energy_today_wh = Math.max(s.energy_today_wh, stats.energy_total_wh - s.energy_start_wh);
+    }
+    // WiFi signal strength range (dBm; closer to 0 is stronger).
+    if (typeof stats.rssi === 'number' && isFinite(stats.rssi) && stats.rssi < 0) {
+      if (s.rssi_min === null || stats.rssi < s.rssi_min) s.rssi_min = stats.rssi;
+      if (s.rssi_max === null || stats.rssi > s.rssi_max) s.rssi_max = stats.rssi;
+    }
+    // Min free heap during the day. Derive from used_bytes + used_percent
+    // (chip publishes both; total = used_bytes / used_percent * 100).
+    if (stats.memory && typeof stats.memory.used_bytes === 'number'
+        && typeof stats.memory.used_percent === 'number'
+        && stats.memory.used_percent > 0 && stats.memory.used_percent < 100) {
+      const totalBytes = stats.memory.used_bytes / (stats.memory.used_percent / 100);
+      const freeKb = (totalBytes - stats.memory.used_bytes) / 1024;
+      if (isFinite(freeKb) && freeKb >= 0) {
+        if (s.heap_free_min_kb === null || freeKb < s.heap_free_min_kb) s.heap_free_min_kb = freeKb;
+      }
+    }
+    // Reboot detection via uptime decrement. If this sample's uptime is
+    // smaller than the prior one we saw, the chip restarted between samples.
+    const uptimeS = this._parseUptimeToSeconds(stats.uptime);
+    if (uptimeS !== null) {
+      if (s.prev_uptime_s !== null && uptimeS < s.prev_uptime_s) {
+        s.reboots = (s.reboots || 0) + 1;
+      }
+      s.prev_uptime_s = uptimeS;
+    }
+    if (stats.outdoor && typeof stats.outdoor === 'object') {
+      // Snapshot the most recent outdoor observation rather than averaging.
+      // Templates only need a representative number per day, and weather
+      // intra-day variation is its own narrative beat we can mine later.
+      s.outdoor_latest = {
+        temp_f:        stats.outdoor.temp_f,
+        humidity:      stats.outdoor.humidity,
+        weather_code:  stats.outdoor.weather_code,
+        us_aqi:        stats.outdoor.us_aqi,
+        pressure_hpa:  stats.outdoor.pressure_hpa,
+      };
+      // Per-day outdoor temp range and AQI peak. The "latest" snapshot above
+      // gives templates a representative point; these give the stats card
+      // the day's actual envelope.
+      if (typeof stats.outdoor.temp_f === 'number' && isFinite(stats.outdoor.temp_f)) {
+        if (s.outdoor_temp_min_f === null || stats.outdoor.temp_f < s.outdoor_temp_min_f) s.outdoor_temp_min_f = stats.outdoor.temp_f;
+        if (s.outdoor_temp_max_f === null || stats.outdoor.temp_f > s.outdoor_temp_max_f) s.outdoor_temp_max_f = stats.outdoor.temp_f;
+      }
+      if (typeof stats.outdoor.us_aqi === 'number' && isFinite(stats.outdoor.us_aqi) && stats.outdoor.us_aqi >= 0) {
+        if (s.outdoor_aqi_max === null || stats.outdoor.us_aqi > s.outdoor_aqi_max) s.outdoor_aqi_max = stats.outdoor.us_aqi;
+      }
+    }
+
+    // Hourly bucket update. Uses chip-local hour from stats.today_local_hour
+    // (emitted by chip via the same getLocalTime call that populates
+    // today_local) so buckets align with the chip's lived day. Validates
+    // the hour is in 0-23 range; if missing/invalid, the sample contributes
+    // to daily aggregates above but skips bucket update. Detectors can
+    // null-check each bucket slot to distinguish "no data this hour" from
+    // a real reading.
+    if (s.hourly && typeof stats.today_local_hour === 'number'
+        && stats.today_local_hour >= 0 && stats.today_local_hour < 24) {
+      const hr = stats.today_local_hour | 0;
+      const updateMin = (arr, val) => {
+        if (typeof val !== 'number' || !isFinite(val)) return;
+        if (arr[hr] === null || val < arr[hr]) arr[hr] = val;
+      };
+      const updateMax = (arr, val) => {
+        if (typeof val !== 'number' || !isFinite(val)) return;
+        if (arr[hr] === null || val > arr[hr]) arr[hr] = val;
+      };
+      if (typeof stats.co2_ppm === 'number' && stats.co2_ppm > 0) {
+        updateMin(s.hourly.co2_min, stats.co2_ppm);
+        updateMax(s.hourly.co2_max, stats.co2_ppm);
+      }
+      if (stats.temperature && typeof stats.temperature.fahrenheit === 'number') {
+        updateMin(s.hourly.temp_min_f, stats.temperature.fahrenheit);
+        updateMax(s.hourly.temp_max_f, stats.temperature.fahrenheit);
+      }
+      if (typeof stats.visitors === 'number' && stats.visitors >= 0) {
+        updateMin(s.hourly.visitors_min, stats.visitors);
+        updateMax(s.hourly.visitors_max, stats.visitors);
+      }
+    }
+  }
+
+  // Seed the launch entry on first DO startup. Earlier days the chip was
+  // alive but Chronicle wasn't watching; rather than retro-narrate routine
+  // days, the index honestly opens on the day archiving started. The
+  // entry is locked: at UTC midnight the seal preserves this body but
+  // fills in real stats from the day's accumulator. Idempotent: the entry
+  // write is skipped if it already exists, but the X post is always fired
+  // (gated by the posted_to_x flag) so a redeploy after creds-were-missing
+  // can still publish the launch tweet. To revise the prose, delete the
+  // chronicle/<firstEntryDate> key from DO storage and redeploy.
+  async _chronicleBackfill() {
+    const cfg = this._chronicleConfig();
+    const launchDate = cfg.firstEntryDate;
+    const existing = await this.state.storage.get('chronicle/' + launchDate);
+    if (!existing) {
+      await this.state.storage.put('chronicle/' + launchDate, {
+        date: launchDate,
+        day_number: this._chronicleDayNumber(launchDate),
+        template_id: 'launch',
+        body: cfg.firstEntryBody,
+        stats: {},
+        sealed_at: Math.floor(Date.now() / 1000),
+        locked: true,
+      });
+    }
+    // Always fire the post; _chronicleMaybePost is idempotent via the
+    // posted_to_x flag, so this is safe whether the entry was just written
+    // or already existed from a prior deploy that ran before X creds existed.
+    this._chronicleMaybePost(launchDate).catch(e =>
+      console.error('launch tweet failed:', e && e.message));
+    // Backup to R2 + push to chip on every backfill run, not just first
+    // write. Idempotent (R2 just overwrites the same key, chip overwrites
+    // the SD file), and means a redeploy after the chip was offline at
+    // launch time still gets the entry onto the SD card.
+    const fresh = await this.state.storage.get('chronicle/' + launchDate);
+    if (fresh) {
+      this._chronicleBackup(fresh).catch(e =>
+        console.error('chronicle backup failed:', e && e.message));
+    }
+  }
+
+  async _chronicleMaybeSeal() {
+    // Wrapped in blockConcurrencyWhile so the entry RMW (get existing,
+    // build merged entry, put) can't interleave with chronicle_note_set's
+    // own RMW. Without this, an admin note arriving mid-seal could either
+    // lose its write or clobber the seal's writes. fire-and-forget post +
+    // backup live OUTSIDE the lock so they don't extend it through the
+    // ~500 ms X API call.
+    const snap = this.chronicleSnapshot;
+    if (!snap) return;
+    // Require valid chip-local time. Without it (e.g., alarm fired right
+    // after isolate restart before any chip stats arrived) we don't know
+    // the chip's day boundary, and defaulting to UTC can prematurely seal
+    // a still-in-progress chip-local day when chip is in a UTC-offset
+    // timezone. Postpone: the next chip stats event triggers seal through
+    // the accumulator path with today_local guaranteed in scope. Trade-off:
+    // if chip's NTP never works, snap accumulates indefinitely; acceptable
+    // because the alternative (UTC-guess seals) corrupts entries.
+    let today = null;
+    if (this.lastStats) {
+      try {
+        const tl = JSON.parse(this.lastStats).today_local;
+        if (typeof tl === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(tl)) today = tl;
+      } catch (e) {}
+    }
+    if (!today) return;
+    let sealedEntry = null;
+    let didSeal = false;
+    let newToday = null;
+    await this.state.blockConcurrencyWhile(async () => {
+      if (snap.date === today) return; // still the same chip-local day
+      if (snap.samples === 0) {
+        // No stats events that day (chip offline all day or DO just spun
+        // up). Skip the entry; an empty Chronicle row would lie about the
+        // chip having been awake to notice anything. Still set newToday
+        // so reflection seals fire downstream: a chip-offline day shouldn't
+        // suppress the week's reflection if prior days had data.
+        this.chronicleSnapshot = this._chronicleNewSnapshot(today);
+        await this.state.storage.put('chronicleSnapshot', this.chronicleSnapshot);
+        newToday = today;
+        return;
+      }
+      const dayNum = this._chronicleDayNumber(snap.date);
+      const ctx = { dayNumber: dayNum };
+      const existing = await this.state.storage.get('chronicle/' + snap.date);
+      // Fully immutable entries: locked + stats_locked. Set on entries
+      // that were manually corrected after a bug surfaced wrong data.
+      // The seal short-circuits here, rotating the snapshot without
+      // writing a new entry. Without this guard, the night's seal would
+      // overwrite the corrected stats with whatever the snap accumulated.
+      // Distinct from plain `locked` (used by the launch seed): locked
+      // alone preserves body+template_id but lets stats refresh on each
+      // seal. stats_locked makes the entry fully sealed-in-stone.
+      if (existing && existing.locked && existing.stats_locked) {
+        this.chronicleSnapshot = this._chronicleNewSnapshot(today);
+        await this.state.storage.put('chronicleSnapshot', this.chronicleSnapshot);
+        newToday = today;
+        return;
+      }
+      const { template_id, body } = await this._chronicleRender(snap, ctx);
+      // Locked entries (the launch seed, future hand-curated anchors)
+      // keep their owner-authored body and template_id when the day's
+      // seal fires. Stats still get filled in from the day's accumulator,
+      // so the entry reads as "owner narrative + chip's real numbers."
+      const isLocked = existing && existing.locked;
+      const entry = {
+        date: snap.date,
+        day_number: dayNum,
+        template_id: isLocked ? existing.template_id : template_id,
+        body:        isLocked ? existing.body        : body,
+        stats: this._chronicleStatsSummary(snap),
+        sealed_at:   isLocked ? existing.sealed_at   : Math.floor(Date.now() / 1000),
+        // Preserve owner_note across re-seals (shouldn't happen normally,
+        // but a same-day reseal during clock skew shouldn't drop curatorial
+        // work). With blockConcurrencyWhile this is now belt-and-suspenders
+        // since the note handler can't write between our get and put.
+        ...(existing && existing.owner_note ? { owner_note: existing.owner_note } : {}),
+        // Preserve X-post idempotency flags so a reseal doesn't double-post.
+        ...(existing && existing.posted_to_x ? { posted_to_x: existing.posted_to_x } : {}),
+        ...(existing && existing.x_tweet_id ? { x_tweet_id: existing.x_tweet_id } : {}),
+        ...(existing && existing.note_x_tweet_id ? { note_x_tweet_id: existing.note_x_tweet_id } : {}),
+        ...(isLocked ? { locked: true } : {}),
+      };
+      await this.state.storage.put('chronicle/' + snap.date, entry);
+      this.chronicleSnapshot = this._chronicleNewSnapshot(today);
+      await this.state.storage.put('chronicleSnapshot', this.chronicleSnapshot);
+      sealedEntry = entry;
+      didSeal = true;
+      newToday = today;
+    });
+    if (didSeal && sealedEntry) {
+      this._chronicleMaybePost(sealedEntry.date).catch(e =>
+        console.error('chronicle tweet failed:', e && e.message));
+      this._chronicleBackup(sealedEntry).catch(e =>
+        console.error('chronicle backup failed:', e && e.message));
+    }
+    // Fire-and-forget: if today is Monday or 1st, seal previous week or
+    // month as a reflection. Reflections write to their own keys so they
+    // don't conflict with daily seal state and live outside the lock.
+    // Triggered on any chip-local-day rollover (newToday set), independent
+    // of whether yesterday's daily entry got written: a chip-offline day
+    // or a stats_locked entry shouldn't suppress the week's reflection,
+    // since the reflection aggregates from already-sealed prior days.
+    if (newToday) {
+      this._chronicleMaybeSealReflections(newToday).catch(e =>
+        console.error('reflection seal failed:', e && e.message));
+    }
+  }
+
+  _chronicleStatsSummary(snap) {
+    return {
+      visitors:           snap.visitors_today,
+      visitors_total:     snap.visitors_total,
+      countries:          snap.countries_total,
+      guestbook_approved: snap.guestbook_approved,
+      co2_min:            snap.co2_min,
+      co2_max:            snap.co2_max,
+      voc_min:            snap.voc_min,
+      voc_max:            snap.voc_max,
+      temp_min_f:         snap.temp_min_f,
+      temp_max_f:         snap.temp_max_f,
+      humidity_min:       snap.humidity_min,
+      humidity_max:       snap.humidity_max,
+      pressure_min_hpa:   snap.pressure_min_hpa,
+      pressure_max_hpa:   snap.pressure_max_hpa,
+      power_max_w:        snap.power_max_w,
+      energy_today_wh:    snap.energy_today_wh,
+      outdoor:            snap.outdoor_latest,
+      outdoor_temp_min_f: snap.outdoor_temp_min_f,
+      outdoor_temp_max_f: snap.outdoor_temp_max_f,
+      outdoor_aqi_max:    snap.outdoor_aqi_max,
+      rssi_min:           snap.rssi_min,
+      rssi_max:           snap.rssi_max,
+      heap_free_min_kb:   snap.heap_free_min_kb,
+      reboots:            snap.reboots,
+      samples:            snap.samples,
+      hourly:             snap.hourly || null,
+    };
+  }
+
+  // Compute the unix timestamp of the next chip-local midnight (the
+  // moment of the next chronicle seal). Derived from the chip's most
+  // recent today_local_hour reading: chip-local minutes/seconds match
+  // UTC's (whole-hour TZ assumption holds for all standard zones), so
+  // chip-local seconds-into-day = today_local_hour*3600 + UTC mins+secs.
+  // Returns null if no recent chip-local hour available; clients fall
+  // back to UTC midnight in that case. Used by chronicle.html countdowns
+  // so the displayed "next entry in HH:MM:SS" matches the actual seal
+  // time rather than the wrong-by-TZ-offset UTC midnight.
+  _nextSealUnix() {
+    if (!this.lastStats) return null;
+    let hour = null;
+    try {
+      const v = JSON.parse(this.lastStats).today_local_hour;
+      if (typeof v === 'number' && v >= 0 && v < 24) hour = v;
+    } catch (e) { return null; }
+    if (hour === null) return null;
+    const now = new Date();
+    const chipLocalSecondsToday = hour * 3600 + now.getUTCMinutes() * 60 + now.getUTCSeconds();
+    const secondsToMidnight = 86400 - chipLocalSecondsToday;
+    return Math.floor(now.getTime() / 1000) + secondsToMidnight;
+  }
+
+  // ===== Chronicle reflections (weekly + monthly) =====
+  // Auto-generated reflective entries that aggregate the prior week or
+  // month of daily Chronicle data into a "the chip looks back" narrative.
+  // Storage parallel to daily entries: chronicle/YYYY-WNN, chronicle/YYYY-MM.
+  // Triggered after the daily seal: when chip-local today is a Monday, the
+  // just-completed week (Mon-Sun ending yesterday) gets sealed; when it's
+  // the 1st, the just-completed month gets sealed. Reflections are
+  // worker-only (not pushed to chip's SD); chip has the daily entries on
+  // its own SD plus R2 backup, so reflections being aggregations of that
+  // data don't need a third copy.
+
+  _isoWeekOf(date) {
+    // Returns { year, week } for ISO week containing `date` (a Date object).
+    const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+    return { year: d.getUTCFullYear(), week: weekNum };
+  }
+
+  _dateStringToDate(s) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || '');
+    if (!m) return null;
+    return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  }
+
+  _fmtDateString(d) {
+    return d.getUTCFullYear() + '-' +
+      String(d.getUTCMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getUTCDate()).padStart(2, '0');
+  }
+
+  // Walk a date range (inclusive both ends) in chip-local-date space,
+  // pull each daily chronicle entry from DO storage, and fold into one
+  // aggregate. Returns null when no daily entries exist in the range
+  // (caller skips sealing on empty periods).
+  async _chronicleAggregateRange(startDate, endDate) {
+    const start = this._dateStringToDate(startDate);
+    const end   = this._dateStringToDate(endDate);
+    if (!start || !end) return null;
+    const agg = {
+      days_with_data: 0,
+      visitors_total: 0,
+      countries_max: 0,
+      co2_min: null, co2_max: null,
+      voc_min: null, voc_max: null,
+      temp_min_f: null, temp_max_f: null,
+      humidity_min: null, humidity_max: null,
+      pressure_min_hpa: null, pressure_max_hpa: null,
+      power_max_w: null,
+      energy_total_wh: 0,
+      outdoor_temp_min_f: null, outdoor_temp_max_f: null,
+      outdoor_aqi_max: null,
+      reboots_total: 0,
+      notes_count: 0,
+      // Notable-day pointers: which date inside the period hit each
+      // extreme. Used by weekly/monthly templates to surface "best day was
+      // Tuesday" style narrative texture instead of pure aggregate stats.
+      busiest_day: null,    // {date, visitors}
+      quietest_day: null,   // {date, visitors}
+      hottest_day: null,    // {date, temp_max_f}
+      coldest_day: null,    // {date, temp_min_f}
+      highest_co2_day: null,
+      reboot_dates: [],
+      note_dates: [],
+      // Notable daily-template hits within the period: drives weekly /
+      // monthly variant selection. milestone_days preserves day_number
+      // so the template can name the milestone ("Day 30 fell on Wed").
+      milestone_days: [],   // [{date, day_number}]
+      record_days: [],      // [{date, template_id}]
+      max_co2_under_streak: 0,
+      max_co2_over_streak: 0,
+    };
+    let curUnderStreak = 0, curOverStreak = 0;
+    const upd = (key, val, mode) => {
+      if (val == null || !isFinite(val)) return;
+      if (mode === 'min') agg[key] = (agg[key] === null) ? val : Math.min(agg[key], val);
+      else if (mode === 'max') agg[key] = (agg[key] === null) ? val : Math.max(agg[key], val);
+    };
+    for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+      const ds = this._fmtDateString(d);
+      const entry = await this.state.storage.get('chronicle/' + ds);
+      if (!entry || entry.kind && entry.kind !== 'daily') {
+        // Missing day or wrong kind breaks the streak counters too.
+        curUnderStreak = 0; curOverStreak = 0;
+        continue;
+      }
+      const s = entry.stats || {};
+      agg.days_with_data++;
+      if (typeof s.visitors === 'number') {
+        agg.visitors_total += s.visitors;
+        if (!agg.busiest_day || s.visitors > agg.busiest_day.visitors) {
+          agg.busiest_day = { date: ds, visitors: s.visitors };
+        }
+        if (!agg.quietest_day || s.visitors < agg.quietest_day.visitors) {
+          agg.quietest_day = { date: ds, visitors: s.visitors };
+        }
+      }
+      if (typeof s.countries === 'number' && s.countries > agg.countries_max) agg.countries_max = s.countries;
+      upd('co2_min', s.co2_min, 'min'); upd('co2_max', s.co2_max, 'max');
+      if (typeof s.co2_max === 'number' && (!agg.highest_co2_day || s.co2_max > agg.highest_co2_day.co2_max)) {
+        agg.highest_co2_day = { date: ds, co2_max: s.co2_max };
+      }
+      // Within-period CO₂ streak tracking. Resets on missing data or when
+      // a day's value crosses out of the streak threshold. Tracks the
+      // longest run seen in the period for weekly_streak template gating.
+      if (typeof s.co2_max === 'number') {
+        if (s.co2_max < 800) {
+          curUnderStreak++;
+          if (curUnderStreak > agg.max_co2_under_streak) agg.max_co2_under_streak = curUnderStreak;
+          curOverStreak = 0;
+        } else if (s.co2_max >= 1000) {
+          curOverStreak++;
+          if (curOverStreak > agg.max_co2_over_streak) agg.max_co2_over_streak = curOverStreak;
+          curUnderStreak = 0;
+        } else {
+          curUnderStreak = 0; curOverStreak = 0;
+        }
+      } else {
+        curUnderStreak = 0; curOverStreak = 0;
+      }
+      upd('voc_min', s.voc_min, 'min'); upd('voc_max', s.voc_max, 'max');
+      upd('temp_min_f', s.temp_min_f, 'min'); upd('temp_max_f', s.temp_max_f, 'max');
+      if (typeof s.temp_max_f === 'number' && (!agg.hottest_day || s.temp_max_f > agg.hottest_day.temp_max_f)) {
+        agg.hottest_day = { date: ds, temp_max_f: s.temp_max_f };
+      }
+      if (typeof s.temp_min_f === 'number' && (!agg.coldest_day || s.temp_min_f < agg.coldest_day.temp_min_f)) {
+        agg.coldest_day = { date: ds, temp_min_f: s.temp_min_f };
+      }
+      upd('humidity_min', s.humidity_min, 'min'); upd('humidity_max', s.humidity_max, 'max');
+      upd('pressure_min_hpa', s.pressure_min_hpa, 'min'); upd('pressure_max_hpa', s.pressure_max_hpa, 'max');
+      upd('power_max_w', s.power_max_w, 'max');
+      if (typeof s.energy_today_wh === 'number' && s.energy_today_wh >= 0) agg.energy_total_wh += s.energy_today_wh;
+      upd('outdoor_temp_min_f', s.outdoor_temp_min_f, 'min'); upd('outdoor_temp_max_f', s.outdoor_temp_max_f, 'max');
+      upd('outdoor_aqi_max', s.outdoor_aqi_max, 'max');
+      if (typeof s.reboots === 'number' && s.reboots > 0) {
+        agg.reboots_total += s.reboots;
+        agg.reboot_dates.push(ds);
+      }
+      if (entry.owner_note) {
+        agg.notes_count++;
+        agg.note_dates.push(ds);
+      }
+      // Notable daily templates that drove this entry. Used by weekly /
+      // monthly variant dispatch to pick a milestone- or record-flavored
+      // template instead of the plain summary.
+      if (entry.template_id === 'milestone' && typeof entry.day_number === 'number') {
+        agg.milestone_days.push({ date: ds, day_number: entry.day_number });
+      }
+      if (entry.template_id === 'record') {
+        agg.record_days.push({ date: ds });
+      }
+    }
+    return agg;
+  }
+
+  _fmtPeriodLong(startDate, endDate) {
+    // "May 4 to May 10, 2026" or "May 4 to June 1, 2026" depending on span.
+    const s = this._dateStringToDate(startDate);
+    const e = this._dateStringToDate(endDate);
+    if (!s || !e) return startDate + ' to ' + endDate;
+    const opts = { month: 'long', day: 'numeric', timeZone: 'UTC' };
+    const sStr = s.toLocaleDateString('en-US', opts);
+    const eStr = e.toLocaleDateString('en-US', opts);
+    return sStr + ' to ' + eStr + ', ' + e.getUTCFullYear();
+  }
+
+  _fmtDayOfWeek(dateStr) {
+    const d = this._dateStringToDate(dateStr);
+    if (!d) return dateStr;
+    return d.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
+  }
+
+  _fmtMonthDay(dateStr) {
+    const d = this._dateStringToDate(dateStr);
+    if (!d) return dateStr;
+    return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'UTC' });
+  }
+
+  _chronicleWeeklyTemplate(weekKey, periodStart, periodEnd, agg, skipHeader) {
+    const m = /^(\d{4})-W(\d{2})$/.exec(weekKey);
+    const weekN = m ? parseInt(m[2], 10) : 0;
+    const yr = m ? m[1] : '';
+    const parts = [];
+    if (!skipHeader) {
+      parts.push(`Week ${weekN} of ${yr}, ${this._fmtPeriodLong(periodStart, periodEnd)}.`);
+    }
+    if (agg.days_with_data === 7) {
+      parts.push(`Seven days of records.`);
+    } else if (agg.days_with_data > 0) {
+      parts.push(`${agg.days_with_data} day${agg.days_with_data === 1 ? '' : 's'} of records.`);
+    }
+    if (agg.visitors_total > 0) {
+      parts.push(`${agg.visitors_total} visit${agg.visitors_total === 1 ? '' : 's'}, ${agg.countries_max} countries on the map by week's end.`);
+    }
+    // Notable visitor days: surface the busiest and quietest weekdays
+    // when they're meaningfully different. Skip when busy/quiet are the
+    // same day (single-day weeks) or when totals are too small to vary.
+    if (agg.busiest_day && agg.quietest_day && agg.busiest_day.date !== agg.quietest_day.date
+        && agg.busiest_day.visitors > 0
+        && (agg.busiest_day.visitors - agg.quietest_day.visitors) >= 50) {
+      parts.push(`${this._fmtDayOfWeek(agg.busiest_day.date)} was busiest with ${agg.busiest_day.visitors} visits; ${this._fmtDayOfWeek(agg.quietest_day.date)} was quietest with ${agg.quietest_day.visitors}.`);
+    }
+    if (agg.co2_max !== null) {
+      parts.push(`Indoor CO₂ ${agg.co2_min} to ${agg.co2_max} ppm.`);
+      if (agg.highest_co2_day && agg.days_with_data > 1) {
+        parts.push(`Peak landed on ${this._fmtDayOfWeek(agg.highest_co2_day.date)}.`);
+      }
+    }
+    if (agg.temp_max_f !== null) {
+      parts.push(`Indoor ${Math.round(agg.temp_min_f)} to ${Math.round(agg.temp_max_f)}°F.`);
+    }
+    if (agg.energy_total_wh > 0) {
+      const wh = agg.energy_total_wh;
+      const display = wh >= 1000 ? `${(wh / 1000).toFixed(2)} kWh` : `${Math.round(wh)} Wh`;
+      parts.push(`${display} drawn through the week.`);
+    }
+    if (agg.reboots_total > 0) {
+      const dows = agg.reboot_dates.map(d => this._fmtDayOfWeek(d));
+      parts.push(`${agg.reboots_total} reboot${agg.reboots_total === 1 ? '' : 's'}${dows.length ? ' (' + dows.join(', ') + ')' : ''}.`);
+    } else {
+      parts.push(`Stayed up the whole way.`);
+    }
+    if (agg.notes_count > 0) {
+      parts.push(`${agg.notes_count} curated note${agg.notes_count === 1 ? '' : 's'} from the week.`);
+    }
+    return parts.join(' ');
+  }
+
+  _chronicleMonthlyTemplate(monthKey, agg, skipHeader) {
+    const m = /^(\d{4})-(\d{2})$/.exec(monthKey);
+    if (!m) return '';
+    const year = m[1];
+    const monthName = new Date(Date.UTC(+m[1], +m[2] - 1, 1)).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
+    const parts = [];
+    if (!skipHeader) {
+      parts.push(`${monthName} ${year} in review.`);
+    }
+    if (agg.days_with_data > 0) {
+      parts.push(`${agg.days_with_data} day${agg.days_with_data === 1 ? '' : 's'} of recorded chip experience.`);
+    }
+    if (agg.visitors_total > 0) {
+      parts.push(`${agg.visitors_total} total visit${agg.visitors_total === 1 ? '' : 's'}, ${agg.countries_max} countries reached.`);
+    }
+    // Surface the month's notable visitor days as specific dates.
+    if (agg.busiest_day && agg.quietest_day && agg.busiest_day.date !== agg.quietest_day.date
+        && agg.busiest_day.visitors > 0
+        && (agg.busiest_day.visitors - agg.quietest_day.visitors) >= 100) {
+      parts.push(`Busiest day was ${this._fmtMonthDay(agg.busiest_day.date)} with ${agg.busiest_day.visitors} visits; quietest was ${this._fmtMonthDay(agg.quietest_day.date)} with ${agg.quietest_day.visitors}.`);
+    }
+    if (agg.co2_max !== null) {
+      const co2Range = `Indoor CO₂ ranged ${agg.co2_min} to ${agg.co2_max} ppm across the month.`;
+      if (agg.highest_co2_day && agg.days_with_data > 3) {
+        parts.push(co2Range + ` Peak fell on ${this._fmtMonthDay(agg.highest_co2_day.date)}.`);
+      } else {
+        parts.push(co2Range);
+      }
+    }
+    if (agg.temp_max_f !== null) {
+      parts.push(`Indoor temperature ran ${Math.round(agg.temp_min_f)} to ${Math.round(agg.temp_max_f)}°F.`);
+    }
+    if (agg.outdoor_temp_max_f !== null) {
+      const outsideRange = `Outside ${Math.round(agg.outdoor_temp_min_f)} to ${Math.round(agg.outdoor_temp_max_f)}°F.`;
+      if (agg.hottest_day && agg.coldest_day && agg.days_with_data > 3
+          && agg.hottest_day.date !== agg.coldest_day.date) {
+        parts.push(outsideRange + ` Hottest on ${this._fmtMonthDay(agg.hottest_day.date)}, coldest on ${this._fmtMonthDay(agg.coldest_day.date)}.`);
+      } else {
+        parts.push(outsideRange);
+      }
+    }
+    if (agg.energy_total_wh > 0) {
+      const wh = agg.energy_total_wh;
+      const display = wh >= 1000 ? `${(wh / 1000).toFixed(2)} kWh` : `${Math.round(wh)} Wh`;
+      parts.push(`${display} of electricity drawn.`);
+    }
+    if (agg.reboots_total > 0) {
+      parts.push(`${agg.reboots_total} reboot${agg.reboots_total === 1 ? '' : 's'} across the month.`);
+    } else {
+      parts.push(`Zero reboots; uptime held all month.`);
+    }
+    if (agg.notes_count > 0) {
+      parts.push(`${agg.notes_count} curated note${agg.notes_count === 1 ? '' : 's'}.`);
+    }
+    return parts.join(' ');
+  }
+
+  // ===== Weekly + monthly template variants =====
+  // Same shape as daily template selection: more-specific patterns first,
+  // summary as the fallback. Each variant has a "headline" framing that
+  // leads the body, then the rest of the aggregate stats follow via the
+  // existing summary template body. The kind pill conveys daily vs weekly
+  // vs monthly; template_id pill conveys which variety of summary fired.
+
+  _chronicleWeeklyTemplateMilestone(weekKey, periodStart, periodEnd, agg) {
+    if (!agg.milestone_days || agg.milestone_days.length === 0) return null;
+    const m = /^(\d{4})-W(\d{2})$/.exec(weekKey);
+    const weekN = m ? parseInt(m[2], 10) : 0;
+    const yr = m ? m[1] : '';
+    const milestone = agg.milestone_days[0]; // first milestone in week
+    const dow = this._fmtDayOfWeek(milestone.date);
+    const headline = `Week ${weekN} of ${yr}, ${this._fmtPeriodLong(periodStart, periodEnd)}. The week containing Day ${milestone.day_number}, fell on ${dow}.`;
+    return headline + ' ' + this._chronicleWeeklyTemplate(weekKey, periodStart, periodEnd, agg, /*skipHeader=*/true);
+  }
+
+  _chronicleWeeklyTemplateRecord(weekKey, periodStart, periodEnd, agg) {
+    if (!agg.record_days || agg.record_days.length === 0) return null;
+    const m = /^(\d{4})-W(\d{2})$/.exec(weekKey);
+    const weekN = m ? parseInt(m[2], 10) : 0;
+    const yr = m ? m[1] : '';
+    const recordCount = agg.record_days.length;
+    const headline = recordCount === 1
+      ? `Week ${weekN} of ${yr}, ${this._fmtPeriodLong(periodStart, periodEnd)}. A record-setting day landed inside it: ${this._fmtDayOfWeek(agg.record_days[0].date)}.`
+      : `Week ${weekN} of ${yr}, ${this._fmtPeriodLong(periodStart, periodEnd)}. ${recordCount} record-setting days inside it.`;
+    return headline + ' ' + this._chronicleWeeklyTemplate(weekKey, periodStart, periodEnd, agg, /*skipHeader=*/true);
+  }
+
+  _chronicleWeeklyTemplateStreak(weekKey, periodStart, periodEnd, agg) {
+    if (agg.max_co2_under_streak < 5 && agg.max_co2_over_streak < 5) return null;
+    const m = /^(\d{4})-W(\d{2})$/.exec(weekKey);
+    const weekN = m ? parseInt(m[2], 10) : 0;
+    const yr = m ? m[1] : '';
+    let streakClause = '';
+    if (agg.max_co2_under_streak >= 5) {
+      streakClause = `${agg.max_co2_under_streak} consecutive days with indoor CO₂ under 800 ppm during the week.`;
+    } else {
+      streakClause = `${agg.max_co2_over_streak} consecutive days with indoor CO₂ over 1000 ppm during the week.`;
+    }
+    const headline = `Week ${weekN} of ${yr}, ${this._fmtPeriodLong(periodStart, periodEnd)}. ${streakClause}`;
+    return headline + ' ' + this._chronicleWeeklyTemplate(weekKey, periodStart, periodEnd, agg, /*skipHeader=*/true);
+  }
+
+  // Pick the highest-priority weekly template variant. Returns
+  // { template_id, body }. summary is the catch-all fallback.
+  _chronicleRenderWeekly(weekKey, periodStart, periodEnd, agg) {
+    const milestone = this._chronicleWeeklyTemplateMilestone(weekKey, periodStart, periodEnd, agg);
+    if (milestone) return { template_id: 'weekly_milestone', body: milestone };
+    const record = this._chronicleWeeklyTemplateRecord(weekKey, periodStart, periodEnd, agg);
+    if (record) return { template_id: 'weekly_record', body: record };
+    const streak = this._chronicleWeeklyTemplateStreak(weekKey, periodStart, periodEnd, agg);
+    if (streak) return { template_id: 'weekly_streak', body: streak };
+    return {
+      template_id: 'weekly_summary',
+      body: this._chronicleWeeklyTemplate(weekKey, periodStart, periodEnd, agg),
+    };
+  }
+
+  _chronicleMonthlyTemplateMilestone(monthKey, agg) {
+    if (!agg.milestone_days || agg.milestone_days.length === 0) return null;
+    const m = /^(\d{4})-(\d{2})$/.exec(monthKey);
+    if (!m) return null;
+    const monthName = new Date(Date.UTC(+m[1], +m[2] - 1, 1)).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
+    const milestone = agg.milestone_days[0];
+    const headline = `${monthName} ${m[1]} in review. Day ${milestone.day_number} fell on ${this._fmtMonthDay(milestone.date)}.`;
+    return headline + ' ' + this._chronicleMonthlyTemplate(monthKey, agg, /*skipHeader=*/true);
+  }
+
+  _chronicleMonthlyTemplateRecord(monthKey, agg) {
+    if (!agg.record_days || agg.record_days.length < 2) return null;
+    const m = /^(\d{4})-(\d{2})$/.exec(monthKey);
+    if (!m) return null;
+    const monthName = new Date(Date.UTC(+m[1], +m[2] - 1, 1)).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
+    const headline = `${monthName} ${m[1]} in review. ${agg.record_days.length} record-setting days across the month.`;
+    return headline + ' ' + this._chronicleMonthlyTemplate(monthKey, agg, /*skipHeader=*/true);
+  }
+
+  _chronicleRenderMonthly(monthKey, agg) {
+    const milestone = this._chronicleMonthlyTemplateMilestone(monthKey, agg);
+    if (milestone) return { template_id: 'monthly_milestone', body: milestone };
+    const record = this._chronicleMonthlyTemplateRecord(monthKey, agg);
+    if (record) return { template_id: 'monthly_record', body: record };
+    return {
+      template_id: 'monthly_summary',
+      body: this._chronicleMonthlyTemplate(monthKey, agg),
+    };
+  }
+
+  // Cross-period comparison: when a prior period entry exists, append a
+  // "vs prior" clause to the body. Self-tunes: fires automatically once
+  // we have 2+ weeks/months sealed. Returns "" when no prior or when
+  // delta is too small to be interesting.
+  _chronicleCompareToPrior(currentAgg, priorEntry, periodLabel) {
+    if (!priorEntry || !priorEntry.stats) return '';
+    const prior = priorEntry.stats;
+    const cur = currentAgg;
+    const parts = [];
+    if (typeof cur.visitors_total === 'number' && typeof prior.visitors_total === 'number'
+        && prior.visitors_total > 0) {
+      const delta = cur.visitors_total - prior.visitors_total;
+      const pct = Math.abs(delta) / prior.visitors_total;
+      if (pct >= 0.2) {
+        parts.push(delta > 0
+          ? `Busier than the prior ${periodLabel} (${cur.visitors_total} vs ${prior.visitors_total} visits).`
+          : `Quieter than the prior ${periodLabel} (${cur.visitors_total} vs ${prior.visitors_total} visits).`);
+      }
+    }
+    if (typeof cur.countries_max === 'number' && typeof prior.countries_max === 'number'
+        && cur.countries_max > prior.countries_max) {
+      const newC = cur.countries_max - prior.countries_max;
+      parts.push(newC === 1
+        ? `One more country on the map than the prior ${periodLabel}.`
+        : `${newC} more countries than the prior ${periodLabel}.`);
+    }
+    return parts.join(' ');
+  }
+
+  // Find the immediately-prior period entry for a given key. Walks the
+  // chronicle prefix and picks the lex-greatest matching kind whose date
+  // string is strictly less than the current key. Cheap: list+filter.
+  async _chroniclePriorPeriodEntry(currentKey, kindFilter) {
+    // Walk reverse from currentKey, return first entry of the requested
+    // kind. Cursor pagination so this works correctly past the DO 1000
+    // entry list cap. Typical hit costs one page (~10ms).
+    let cursor = 'chronicle/' + currentKey;
+    while (true) {
+      const page = await this.state.storage.list({
+        prefix: 'chronicle/', end: cursor, reverse: true, limit: 200,
+      });
+      if (page.size === 0) return null;
+      let lastKey = null;
+      for (const [k, val] of page) {
+        lastKey = k;
+        if (val && val.kind === kindFilter && val.date < currentKey) return val;
+      }
+      if (page.size < 200 || !lastKey) return null;
+      cursor = lastKey;
+    }
+  }
+
+  async _chronicleSealWeekly(weekKey, periodStart, periodEnd) {
+    const existing = await this.state.storage.get('chronicle/' + weekKey);
+    if (existing) return false;
+    const agg = await this._chronicleAggregateRange(periodStart, periodEnd);
+    if (!agg || agg.days_with_data === 0) return false;
+    let { template_id, body } = this._chronicleRenderWeekly(weekKey, periodStart, periodEnd, agg);
+    // Append prior-period comparison when one exists.
+    const priorWeek = await this._chroniclePriorPeriodEntry(weekKey, 'weekly');
+    const compare = this._chronicleCompareToPrior(agg, priorWeek, 'week');
+    if (compare) body = body + ' ' + compare;
+    const entry = {
+      date: weekKey,
+      kind: 'weekly',
+      period_start: periodStart,
+      period_end: periodEnd,
+      template_id,
+      body,
+      stats: agg,
+      sealed_at: Math.floor(Date.now() / 1000),
+    };
+    await this.state.storage.put('chronicle/' + weekKey, entry);
+    this._chronicleBackup(entry).catch(e =>
+      console.error('weekly chronicle backup failed:', e && e.message));
+    return true;
+  }
+
+  // Quarterly reflections. Same architecture as weekly/monthly: seal at
+  // chip-local Apr 1 / Jul 1 / Oct 1 / Jan 1 covering the prior quarter.
+  // Variants: milestone, record, summary. Storage key: chronicle/YYYY-Q[1-4].
+  _chronicleQuarterlyTemplate(quarterKey, periodStart, periodEnd, agg, skipHeader) {
+    const m = /^(\d{4})-Q(\d)$/.exec(quarterKey);
+    if (!m) return '';
+    const yr = m[1];
+    const qN = m[2];
+    const parts = [];
+    if (!skipHeader) {
+      parts.push(`Q${qN} ${yr}, ${this._fmtPeriodLong(periodStart, periodEnd)}.`);
+    }
+    if (agg.days_with_data > 0) {
+      parts.push(`${agg.days_with_data} days of recorded chip experience across the quarter.`);
+    }
+    if (agg.visitors_total > 0) {
+      parts.push(`${agg.visitors_total} total visits, ${agg.countries_max} countries reached.`);
+    }
+    if (agg.busiest_day && agg.quietest_day && agg.busiest_day.date !== agg.quietest_day.date
+        && agg.busiest_day.visitors > 0
+        && (agg.busiest_day.visitors - agg.quietest_day.visitors) >= 200) {
+      parts.push(`Busiest day was ${this._fmtMonthDay(agg.busiest_day.date)} with ${agg.busiest_day.visitors} visits; quietest was ${this._fmtMonthDay(agg.quietest_day.date)} with ${agg.quietest_day.visitors}.`);
+    }
+    if (agg.co2_max !== null) {
+      parts.push(`Indoor CO₂ ranged ${agg.co2_min} to ${agg.co2_max} ppm across the quarter.`);
+    }
+    if (agg.temp_max_f !== null) {
+      parts.push(`Indoor temperature ran ${Math.round(agg.temp_min_f)} to ${Math.round(agg.temp_max_f)}°F.`);
+    }
+    if (agg.outdoor_temp_max_f !== null) {
+      parts.push(`Outside ${Math.round(agg.outdoor_temp_min_f)} to ${Math.round(agg.outdoor_temp_max_f)}°F across three months.`);
+    }
+    if (agg.energy_total_wh > 0) {
+      const wh = agg.energy_total_wh;
+      const display = wh >= 1000 ? `${(wh / 1000).toFixed(2)} kWh` : `${Math.round(wh)} Wh`;
+      parts.push(`${display} of electricity drawn.`);
+    }
+    if (agg.reboots_total > 0) {
+      parts.push(`${agg.reboots_total} reboot${agg.reboots_total === 1 ? '' : 's'} across the quarter.`);
+    } else if (agg.days_with_data >= 60) {
+      parts.push(`Zero reboots; uptime held all three months.`);
+    }
+    if (agg.notes_count > 0) {
+      parts.push(`${agg.notes_count} curated notes.`);
+    }
+    if (agg.max_co2_under_streak >= 7) {
+      parts.push(`Longest run with indoor CO₂ under 800 ppm during the quarter: ${agg.max_co2_under_streak} days.`);
+    }
+    return parts.join(' ');
+  }
+
+  _chronicleQuarterlyTemplateMilestone(quarterKey, periodStart, periodEnd, agg) {
+    if (!agg.milestone_days || agg.milestone_days.length === 0) return null;
+    const m = /^(\d{4})-Q(\d)$/.exec(quarterKey);
+    if (!m) return null;
+    const headline = `Q${m[2]} ${m[1]}, ${this._fmtPeriodLong(periodStart, periodEnd)}. The quarter contained Day ${agg.milestone_days[0].day_number}.`;
+    return headline + ' ' + this._chronicleQuarterlyTemplate(quarterKey, periodStart, periodEnd, agg, true);
+  }
+
+  _chronicleQuarterlyTemplateRecord(quarterKey, periodStart, periodEnd, agg) {
+    if (!agg.record_days || agg.record_days.length < 3) return null;
+    const m = /^(\d{4})-Q(\d)$/.exec(quarterKey);
+    if (!m) return null;
+    const headline = `Q${m[2]} ${m[1]}, ${this._fmtPeriodLong(periodStart, periodEnd)}. ${agg.record_days.length} record-setting days across the quarter.`;
+    return headline + ' ' + this._chronicleQuarterlyTemplate(quarterKey, periodStart, periodEnd, agg, true);
+  }
+
+  _chronicleRenderQuarterly(quarterKey, periodStart, periodEnd, agg) {
+    const milestone = this._chronicleQuarterlyTemplateMilestone(quarterKey, periodStart, periodEnd, agg);
+    if (milestone) return { template_id: 'quarterly_milestone', body: milestone };
+    const record = this._chronicleQuarterlyTemplateRecord(quarterKey, periodStart, periodEnd, agg);
+    if (record) return { template_id: 'quarterly_record', body: record };
+    return {
+      template_id: 'quarterly_summary',
+      body: this._chronicleQuarterlyTemplate(quarterKey, periodStart, periodEnd, agg),
+    };
+  }
+
+  async _chronicleSealQuarterly(quarterKey, periodStart, periodEnd) {
+    const existing = await this.state.storage.get('chronicle/' + quarterKey);
+    if (existing) return false;
+    const agg = await this._chronicleAggregateRange(periodStart, periodEnd);
+    if (!agg || agg.days_with_data === 0) return false;
+    let { template_id, body } = this._chronicleRenderQuarterly(quarterKey, periodStart, periodEnd, agg);
+    const priorQuarter = await this._chroniclePriorPeriodEntry(quarterKey, 'quarterly');
+    const compare = this._chronicleCompareToPrior(agg, priorQuarter, 'quarter');
+    if (compare) body = body + ' ' + compare;
+    const entry = {
+      date: quarterKey,
+      kind: 'quarterly',
+      period_start: periodStart,
+      period_end: periodEnd,
+      template_id,
+      body,
+      stats: agg,
+      sealed_at: Math.floor(Date.now() / 1000),
+    };
+    await this.state.storage.put('chronicle/' + quarterKey, entry);
+    this._chronicleBackup(entry).catch(e =>
+      console.error('quarterly chronicle backup failed:', e && e.message));
+    return true;
+  }
+
+  async _chronicleSealMonthly(monthKey) {
+    const existing = await this.state.storage.get('chronicle/' + monthKey);
+    if (existing) return false;
+    const m = /^(\d{4})-(\d{2})$/.exec(monthKey);
+    if (!m) return false;
+    const year = +m[1], mo = +m[2];
+    const periodStart = `${year}-${String(mo).padStart(2, '0')}-01`;
+    const lastDay = new Date(Date.UTC(year, mo, 0)).getUTCDate();
+    const periodEnd = `${year}-${String(mo).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    const agg = await this._chronicleAggregateRange(periodStart, periodEnd);
+    if (!agg || agg.days_with_data === 0) return false;
+    let { template_id, body } = this._chronicleRenderMonthly(monthKey, agg);
+    const priorMonth = await this._chroniclePriorPeriodEntry(monthKey, 'monthly');
+    const compare = this._chronicleCompareToPrior(agg, priorMonth, 'month');
+    if (compare) body = body + ' ' + compare;
+    const entry = {
+      date: monthKey,
+      kind: 'monthly',
+      period_start: periodStart,
+      period_end: periodEnd,
+      template_id,
+      body,
+      stats: agg,
+      sealed_at: Math.floor(Date.now() / 1000),
+    };
+    await this.state.storage.put('chronicle/' + monthKey, entry);
+    this._chronicleBackup(entry).catch(e =>
+      console.error('monthly chronicle backup failed:', e && e.message));
+    return true;
+  }
+
+  // Called after a daily seal completes. If the just-started day is a
+  // Monday, the previous Mon-Sun week is complete and gets sealed. If
+  // it's the 1st of the month, the previous month gets sealed. Both are
+  // idempotent (existing-entry check), so a worker restart that re-fires
+  // the post-seal callback won't duplicate. Fire-and-forget from the
+  // caller; reflection writes don't conflict with daily seal storage.
+  async _chronicleMaybeSealReflections(today) {
+    if (typeof today !== 'string') return;
+    const todayDate = this._dateStringToDate(today);
+    if (!todayDate) return;
+    const dow = todayDate.getUTCDay(); // 0=Sun, 1=Mon
+    if (dow === 1) {
+      const lastSun = new Date(todayDate);
+      lastSun.setUTCDate(lastSun.getUTCDate() - 1);
+      const lastMon = new Date(lastSun);
+      lastMon.setUTCDate(lastMon.getUTCDate() - 6);
+      const wi = this._isoWeekOf(lastMon);
+      const weekKey = wi.year + '-W' + String(wi.week).padStart(2, '0');
+      try {
+        await this._chronicleSealWeekly(weekKey, this._fmtDateString(lastMon), this._fmtDateString(lastSun));
+      } catch (e) {
+        console.error('weekly seal failed:', e && e.message);
+      }
+    }
+    if (today.endsWith('-01')) {
+      const yesterday = new Date(todayDate);
+      yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+      const monthKey = yesterday.getUTCFullYear() + '-' +
+        String(yesterday.getUTCMonth() + 1).padStart(2, '0');
+      try {
+        await this._chronicleSealMonthly(monthKey);
+      } catch (e) {
+        console.error('monthly seal failed:', e && e.message);
+      }
+      // Quarterly seal: when the just-completed month is the last month
+      // of a quarter (Mar/Jun/Sep/Dec), seal that quarter. So Apr 1 →
+      // seal Q1 (Jan-Mar), Jul 1 → Q2 (Apr-Jun), Oct 1 → Q3 (Jul-Sep),
+      // Jan 1 → Q4 of the prior year (Oct-Dec).
+      const yMonth = yesterday.getUTCMonth() + 1;
+      if (yMonth === 3 || yMonth === 6 || yMonth === 9 || yMonth === 12) {
+        const qNum = Math.ceil(yMonth / 3);
+        const qYear = yesterday.getUTCFullYear();
+        const quarterKey = `${qYear}-Q${qNum}`;
+        const qStart = `${qYear}-${String((qNum - 1) * 3 + 1).padStart(2, '0')}-01`;
+        const qEnd = this._fmtDateString(yesterday);
+        try {
+          await this._chronicleSealQuarterly(quarterKey, qStart, qEnd);
+        } catch (e) {
+          console.error('quarterly seal failed:', e && e.message);
+        }
+      }
+    }
+  }
+
+  // ===== Chronicle templates =====
+  // Each function takes (snap, ctx) and returns either a body string
+  // (matched) or null (skip; try next). Order in _chronicleRender matters:
+  // more specific patterns come first so the generic fallback doesn't
+  // claim every day.
+
+  _chronicleTemplateMilestone(s, ctx) {
+    const dn = ctx.dayNumber;
+    const milestones = {
+      1:    'the day everything started',
+      7:    'the first full week',
+      30:   'one month',
+      100:  '100 days',
+      365:  'one full year',
+      500:  this._chronicleConfig().day500Note,
+      1000: 'one thousand days',
+    };
+    let label = milestones[dn];
+    // Multi-year anniversaries. Any exact 365-day cross past year 1 that
+    // isn't otherwise claimed (1000 has its own line). Spelled words for
+    // years 2-7, numerals beyond. Year 1 (365) and year ~2.74 (1000) keep
+    // their bespoke phrasing above.
+    if (!label && typeof dn === 'number' && dn > 365 && dn !== 1000 && dn % 365 === 0) {
+      const years = dn / 365;
+      const named = {
+        2: 'two full years',
+        3: 'three full years',
+        4: 'four full years',
+        5: 'five full years',
+        6: 'six full years',
+        7: 'seven full years',
+      };
+      label = named[years] || `${years} full years`;
+    }
+    if (!label) return null;
+    const headline = `Day ${dn}: ${label}. The chip kept noticing. ${this._chronicleVisitorClause(s)}.`;
+    const observations = this._chronicleComposeObservations(s, ctx, 1);
+    return [headline, observations].filter(Boolean).join(' ');
+  }
+
+  _chronicleTemplateAnomaly(s, ctx) {
+    const parts = [];
+    // CO₂ threshold sits at 2500 ppm because the indoor sensor reports
+    // eCO₂ via VOC inference (CCS811-class), which runs hot vs true NDIR
+    // CO₂. Anything below ~2500 is normal sensor drift, not a real event.
+    if (s.co2_max !== null && s.co2_max >= 2500) {
+      parts.push(`CO₂ climbed to ${s.co2_max} ppm`);
+    }
+    if (s.temp_max_f !== null && s.temp_max_f >= 90) {
+      parts.push(`indoor temperature peaked at ${Math.round(s.temp_max_f)}°F`);
+    }
+    if (s.temp_min_f !== null && s.temp_min_f <= 50) {
+      parts.push(`indoor temperature dropped to ${Math.round(s.temp_min_f)}°F`);
+    }
+    if (s.power_max_w !== null && s.power_max_w >= 5) {
+      parts.push(`power draw briefly spiked to ${s.power_max_w.toFixed(1)} W`);
+    }
+    if (parts.length === 0) return null;
+    const event = parts.length === 1
+      ? parts[0]
+      : parts.slice(0, -1).join(', ') + ', and ' + parts[parts.length - 1];
+    const tail = this._chronicleVisitorClause(s);
+    const observations = this._chronicleComposeObservations(s, ctx, 1);
+    return [`Something unusual: ${event}. ${tail}.`, observations].filter(Boolean).join(' ');
+  }
+
+  // Record templates fire when today sets a new high or low for some
+  // metric vs the trailing 30-day window. Self-tuning: works at 2 days
+  // of history (record vs prior 1 entry), gets more selective as data
+  // accumulates. No threshold needs hand-tuning.
+  _chronicleTemplateRecord(s, ctx) {
+    const h = ctx.history;
+    if (!h || h.count < 1) return null;
+    // Record-day bodies are the leanest of any template, but they're
+    // also the days most likely to have notable secondary observations.
+    // Compose one detector clause between headline and sensor/outdoor
+    // tails so the record day can also note "last time CO₂ went this
+    // high was N days ago" or similar context.
+    const observations = this._chronicleComposeObservations(s, ctx, 1);
+    if (s.visitors_today != null && h.visitors_max != null && s.visitors_today > h.visitors_max) {
+      return [
+        `The busiest day on record. ${s.visitors_today} visits, beating the prior peak of ${h.visitors_max}.`,
+        observations,
+        this._chronicleSensorClause(s),
+        this._chronicleOutdoorClause(s),
+      ].filter(Boolean).join(' ');
+    }
+    if (s.co2_max != null && h.co2_max_overall != null && s.co2_max > h.co2_max_overall) {
+      return [
+        `Highest indoor CO₂ on record at ${s.co2_max} ppm. ${this._chronicleVisitorClause(s)}, ${this._chronicleCountriesClause(s)}.`,
+        observations,
+        this._chronicleOutdoorClause(s),
+      ].filter(Boolean).join(' ');
+    }
+    if (s.energy_today_wh != null && h.energy_max != null && s.energy_today_wh > h.energy_max && h.energy_max > 0) {
+      const wh = s.energy_today_wh;
+      const display = wh >= 1000 ? `${(wh / 1000).toFixed(2)} kWh` : `${Math.round(wh)} Wh`;
+      return [
+        `Highest single-day energy use on record: ${display}. ${this._chronicleVisitorClause(s)}.`,
+        observations,
+        this._chronicleSensorClause(s),
+      ].filter(Boolean).join(' ');
+    }
+    return null;
+  }
+
+  // Relative templates compare today against the trailing-30 baseline
+  // computed from prior daily entries. At 2 days they fire often (high
+  // variance against single-prior-day baseline); at 30+ days they fire
+  // rarely. Self-tunes to whatever traffic the chip actually sees.
+  _chronicleTemplateBusyRelative(s, ctx) {
+    const h = ctx.history;
+    if (!h || h.count < 1 || !h.visitors_median || s.visitors_today == null) return null;
+    if (s.visitors_today < h.visitors_median * 1.5) return null;
+    const headline = `An unusually busy day. ${s.visitors_today} visits, well above the ${Math.round(h.visitors_median)}-typical of the last ${h.count} day${h.count === 1 ? '' : 's'}.`;
+    const observations = this._chronicleComposeObservations(s, ctx, 2);
+    return [
+      headline,
+      this._chronicleCountriesClause(s) + '.',
+      observations,
+      this._chronicleSensorClause(s),
+      this._chronicleOutdoorClause(s),
+    ].filter(Boolean).join(' ');
+  }
+
+  _chronicleTemplateQuietRelative(s, ctx) {
+    const h = ctx.history;
+    if (!h || h.count < 1 || !h.visitors_median || s.visitors_today == null) return null;
+    if (s.visitors_today >= h.visitors_median * 0.5) return null;
+    const opener = s.visitors_today === 0
+      ? 'A quiet day. Zero visits.'
+      : `A quiet day. Just ${s.visitors_today} ${s.visitors_today === 1 ? 'visitor' : 'visitors'}, well below the ${Math.round(h.visitors_median)}-typical of the last ${h.count} day${h.count === 1 ? '' : 's'}.`;
+    const observations = this._chronicleComposeObservations(s, ctx, 2);
+    return [
+      opener,
+      observations,
+      this._chronicleSensorClause(s),
+      this._chronicleOutdoorClause(s),
+    ].filter(Boolean).join(' ');
+  }
+
+  // Generic is the fallback for "nothing big happened today." With the
+  // observation layer it picks up to 3 of whatever detectors fired
+  // (cross-day delta, streaks, anniversaries, calendar awareness, etc.)
+  // so even ordinary days surface 3-4 things the chip noticed about
+  // itself. Self-tunes: quiet days fire fewer detectors, so this only
+  // grows the body when the day actually had things to say.
+  _chronicleTemplateGeneric(s, ctx) {
+    const opener = `${s.visitors_today} ${s.visitors_today === 1 ? 'visitor' : 'visitors'} today, ${this._chronicleCountriesClause(s)}.`;
+    // When zero detectors fire, the day was so quiet the chip noticed
+    // nothing about itself. Substitute a single existential line so the
+    // empty-frame day has its own dignity instead of blank silence
+    // between visitors and sensors.
+    const observations = this._chronicleComposeObservations(s, ctx, 3)
+      || 'A quiet day, observed only by itself.';
+    return [
+      opener,
+      observations,
+      this._chronicleSensorClause(s),
+      this._chronicleOutdoorClause(s),
+    ].filter(Boolean).join(' ');
+  }
+
+  _chronicleVisitorClause(s) {
+    if (s.visitors_today === 0) return 'No human visitors';
+    return `${s.visitors_today} ${s.visitors_today === 1 ? 'visitor' : 'visitors'} stopped by`;
+  }
+
+  _chronicleCountriesClause(s) {
+    if (s.countries_total <= 0) return 'no countries logged yet';
+    return `${s.countries_total} ${s.countries_total === 1 ? 'country' : 'countries'} on the map total`;
+  }
+
+  _chronicleSensorClause(s) {
+    if (s.co2_max === null) return '';
+    return `Indoor CO₂ ranged ${s.co2_min} to ${s.co2_max} ppm.`;
+  }
+
+  _chronicleOutdoorClause(s) {
+    if (!s.outdoor_latest || typeof s.outdoor_latest.temp_f !== 'number') return '';
+    return `Outside it was around ${Math.round(s.outdoor_latest.temp_f)}°F.`;
+  }
+
+  // Aggregate prior 30-day window of daily entries into rolling baselines.
+  // Lightweight: list+filter, no extra storage gets per-entry since
+  // values are read from each entry's already-stored stats blob. Empty
+  // shape (count=0) when there's no prior data; templates handle that
+  // gracefully and fall through to generic.
+  async _chronicleHistoricalContext(currentDate) {
+    // Walk reverse-chronologically from currentDate, collecting up to 30
+    // daily entries. Cursor pagination so the function works correctly past
+    // the DO 1000-entry list cap (year 3+). Reflections (kind != daily) are
+    // skipped via filter; we over-fetch each page to compensate. `end` is
+    // exclusive so today's entry isn't included.
+    const window = [];
+    let cursor = 'chronicle/' + currentDate;
+    while (window.length < 30) {
+      const page = await this.state.storage.list({
+        prefix: 'chronicle/', end: cursor, reverse: true, limit: 100,
+      });
+      if (page.size === 0) break;
+      let lastKey = null;
+      for (const [k, val] of page) {
+        lastKey = k;
+        if (!val || typeof val !== 'object' || !val.date) continue;
+        if (val.kind && val.kind !== 'daily') continue;
+        if (val.date >= currentDate) continue;
+        window.push(val);
+        if (window.length >= 30) break;
+      }
+      if (page.size < 100 || !lastKey) break;
+      cursor = lastKey;
+    }
+    if (window.length === 0) return { count: 0 };
+    // Window is already reverse-chrono from the cursor walk; window[0]
+    // is the most recent prior daily entry.
+    const yesterday = window[0];
+    const visitors = [], co2_maxes = [], co2_mins = [], voc_maxes = [], temp_maxes = [], temp_mins = [], energy = [], outdoor_temp_maxes = [], outdoor_temp_mins = [];
+    for (const e of window) {
+      const s = e.stats || {};
+      if (typeof s.visitors === 'number') visitors.push(s.visitors);
+      if (typeof s.co2_max === 'number') co2_maxes.push(s.co2_max);
+      if (typeof s.co2_min === 'number') co2_mins.push(s.co2_min);
+      if (typeof s.voc_max === 'number') voc_maxes.push(s.voc_max);
+      if (typeof s.temp_max_f === 'number') temp_maxes.push(s.temp_max_f);
+      if (typeof s.temp_min_f === 'number') temp_mins.push(s.temp_min_f);
+      if (typeof s.energy_today_wh === 'number' && s.energy_today_wh > 0) energy.push(s.energy_today_wh);
+      if (typeof s.outdoor_temp_max_f === 'number') outdoor_temp_maxes.push(s.outdoor_temp_max_f);
+      if (typeof s.outdoor_temp_min_f === 'number') outdoor_temp_mins.push(s.outdoor_temp_min_f);
+    }
+    // Streaks: how many consecutive days back from yesterday meet a
+    // condition. Walks the window most-recent-first; breaks at first
+    // day that fails. Inclusive of yesterday.
+    let co2_under_streak = 0;
+    for (const e of window) {
+      const c = e.stats && e.stats.co2_max;
+      if (typeof c === 'number' && c < 800) co2_under_streak++;
+      else break;
+    }
+    let co2_over_streak = 0;
+    for (const e of window) {
+      const c = e.stats && e.stats.co2_max;
+      if (typeof c === 'number' && c >= 1000) co2_over_streak++;
+      else break;
+    }
+    let voc_over_streak = 0;
+    for (const e of window) {
+      const v = e.stats && e.stats.voc_max;
+      if (typeof v === 'number' && v >= 500) voc_over_streak++;
+      else break;
+    }
+    // Days since most recent day with any reboot. If the entire window
+    // is reboot-free, returns window.length (true count is unknown beyond).
+    let days_since_reboot = 0;
+    for (const e of window) {
+      const r = e.stats && e.stats.reboots;
+      if (typeof r === 'number' && r > 0) break;
+      days_since_reboot++;
+    }
+    // Total reboots across the 30-day window (excludes today). Used by
+    // wear-awareness detector to spot clustering: a single reboot every
+    // few months is normal life, but five within 30 days is the chip
+    // showing wear.
+    let recent_reboot_total = 0;
+    for (const e of window) {
+      const r = e.stats && e.stats.reboots;
+      if (typeof r === 'number' && r > 0) recent_reboot_total += r;
+    }
+    const median = (arr) => {
+      if (!arr.length) return null;
+      const s = arr.slice().sort((a, b) => a - b);
+      const m = Math.floor(s.length / 2);
+      return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+    };
+    const arrMax = (arr) => arr.length ? Math.max.apply(null, arr) : null;
+    const arrMin = (arr) => arr.length ? Math.min.apply(null, arr) : null;
+    return {
+      count: window.length,
+      yesterday: yesterday.stats || null,
+      yesterday_date: yesterday.date,
+      visitors_median: median(visitors),
+      visitors_max: arrMax(visitors),
+      visitors_min: arrMin(visitors),
+      co2_max_overall: arrMax(co2_maxes),
+      co2_min_overall: arrMin(co2_mins),
+      voc_max_overall: arrMax(voc_maxes),
+      temp_max_overall: arrMax(temp_maxes),
+      temp_min_overall: arrMin(temp_mins),
+      energy_max: arrMax(energy),
+      outdoor_temp_max_overall: arrMax(outdoor_temp_maxes),
+      outdoor_temp_min_overall: arrMin(outdoor_temp_mins),
+      co2_under_streak,
+      co2_over_streak,
+      voc_over_streak,
+      days_since_reboot,
+      recent_reboot_total,
+    };
+  }
+
+  // Walk reverse-chronologically from currentDate looking for the first
+  // daily entry that matches the predicate. Cursor pagination so the
+  // function works correctly past the DO 1000-entry list cap; first-match
+  // exits early so a typical hit costs one page (200 keys, ~10ms).
+  async _chronicleLastOccurrence(currentDate, predicate) {
+    const today = this._dateStringToDate(currentDate);
+    let cursor = 'chronicle/' + currentDate;
+    while (true) {
+      const page = await this.state.storage.list({
+        prefix: 'chronicle/', end: cursor, reverse: true, limit: 200,
+      });
+      if (page.size === 0) return null;
+      let lastKey = null;
+      for (const [k, val] of page) {
+        lastKey = k;
+        if (!val || typeof val !== 'object' || !val.date) continue;
+        if (val.kind && val.kind !== 'daily') continue;
+        if (val.date >= currentDate) continue;
+        if (!predicate(val)) continue;
+        const d = this._dateStringToDate(val.date);
+        const daysAgo = today && d ? Math.round((today - d) / 86400000) : null;
+        return { date: val.date, days_ago: daysAgo };
+      }
+      if (page.size < 200 || !lastKey) return null;
+      cursor = lastKey;
+    }
+  }
+
+  // Walk full history forward (chronologically) tracking the longest
+  // consecutive-day streak meeting the predicate. Forward cursor
+  // pagination so the function works correctly past the DO 1000-entry
+  // list cap. Skips reflections (kind != daily); their interleaved keys
+  // don't break consecutive-day logic since lex sort within daily kind
+  // is chronological. Daily seal calls this once per day; cost is
+  // ~50ms × ceil(N/1000) where N is total daily entries.
+  async _chronicleAllTimeStreak(predicate) {
+    let curLen = 0, bestLen = 0, bestEnd = null;
+    let curEnd = null;
+    let cursor = undefined;
+    while (true) {
+      const opts = { prefix: 'chronicle/', limit: 1000 };
+      if (cursor) opts.start = cursor;
+      const page = await this.state.storage.list(opts);
+      if (page.size === 0) break;
+      let lastKey = null;
+      for (const [key, val] of page) {
+        lastKey = key;
+        if (!val || typeof val !== 'object' || !val.date) continue;
+        if (val.kind && val.kind !== 'daily') continue;
+        if (predicate(val)) {
+          curLen++;
+          curEnd = val.date;
+          if (curLen > bestLen) { bestLen = curLen; bestEnd = curEnd; }
+        } else {
+          curLen = 0;
+        }
+      }
+      if (page.size < 1000 || !lastKey) break;
+      cursor = lastKey + '\x00';
+    }
+    return bestLen > 0 ? { length: bestLen, end_date: bestEnd } : null;
+  }
+
+  // ===== Chronicle observation detectors =====
+  // Each detector inspects today's snap + history context and returns
+  // either { priority, clause } if its condition fires, or null. The
+  // composer picks top-N by priority so the busiest observations land
+  // in the body without crowding it. Higher priority = more notable.
+  // Detectors are pure functions; adding new ones doesn't change
+  // existing behavior unless their priority outranks something else.
+  _chronicleDetectors(snap, ctx) {
+    const out = [];
+    const s = snap;
+    const h = ctx.history || {};
+
+    // Cross-day visitor delta. Notable when ≥50 absolute.
+    if (h.yesterday && typeof h.yesterday.visitors === 'number'
+        && typeof s.visitors_today === 'number') {
+      const delta = s.visitors_today - h.yesterday.visitors;
+      if (Math.abs(delta) >= 50) {
+        out.push({
+          priority: 40,
+          clause: delta > 0
+            ? `Visitor count up ${delta} from yesterday.`
+            : `Visitor count down ${-delta} from yesterday.`,
+        });
+      }
+    }
+
+    // CO2 streak detection. Includes today if today also fits.
+    if (h.co2_under_streak >= 3) {
+      const len = h.co2_under_streak + (s.co2_max != null && s.co2_max < 800 ? 1 : 0);
+      out.push({
+        priority: 50,
+        clause: `${len} days running with indoor CO₂ under 800 ppm.`,
+      });
+    }
+    if (h.co2_over_streak >= 3) {
+      const len = h.co2_over_streak + (s.co2_max != null && s.co2_max >= 1000 ? 1 : 0);
+      out.push({
+        priority: 50,
+        clause: `${len} days running with indoor CO₂ over 1000 ppm.`,
+      });
+    }
+
+    // First-time countries today.
+    if (h.yesterday && typeof s.countries_total === 'number'
+        && typeof h.yesterday.countries === 'number') {
+      const newCountries = s.countries_total - h.yesterday.countries;
+      if (newCountries > 0) {
+        out.push({
+          priority: 70,
+          clause: newCountries === 1
+            ? `One new country on the map; total now ${s.countries_total}.`
+            : `${newCountries} new countries on the map; total now ${s.countries_total}.`,
+        });
+      }
+    }
+
+    // Calendar awareness. First/last of month, equinox/solstice (Northern
+    // hemisphere approx; chip is in MT so this maps; forks elsewhere see
+    // their local interpretation since dates are chip-local).
+    const todayDate = this._dateStringToDate(s.date);
+    if (todayDate) {
+      const day = todayDate.getUTCDate();
+      const m = todayDate.getUTCMonth() + 1;
+      if (day === 1) {
+        const monthName = todayDate.toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
+        out.push({ priority: 60, clause: `First day of ${monthName}.` });
+      }
+      const lastDay = new Date(Date.UTC(todayDate.getUTCFullYear(), todayDate.getUTCMonth() + 1, 0)).getUTCDate();
+      if (day === lastDay) {
+        const monthName = todayDate.toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
+        out.push({ priority: 60, clause: `Last day of ${monthName}.` });
+      }
+      const seasonal = { '3-20': 'spring equinox', '6-21': 'summer solstice', '9-22': 'autumn equinox', '12-21': 'winter solstice' };
+      const k = `${m}-${day}`;
+      if (seasonal[k]) {
+        out.push({ priority: 65, clause: `${seasonal[k].charAt(0).toUpperCase() + seasonal[k].slice(1)}.` });
+      }
+    }
+
+    // Anniversary callbacks based on day_number. Specific milestones
+    // beyond what the milestone template catches (which only fires on
+    // its own list). These add color to ordinary days that happen to
+    // be a round-number day count.
+    const dn = ctx.dayNumber;
+    if (typeof dn === 'number' && dn > 0) {
+      const anniv = { 14: 'two weeks', 21: 'three weeks', 60: 'two months', 90: 'three months', 180: 'half a year' };
+      if (anniv[dn]) {
+        out.push({ priority: 75, clause: `${dn} days online: ${anniv[dn]} since launch.` });
+      } else if (dn % 100 === 0 && dn > 100) {
+        out.push({ priority: 75, clause: `${dn} days online.` });
+      } else if (dn % 50 === 0 && dn !== 50 && dn !== 100 && dn % 100 !== 0) {
+        out.push({ priority: 65, clause: `${dn} days online.` });
+      }
+    }
+
+    // Weather correlation. Indoor vs outdoor temperature delta.
+    if (typeof s.outdoor_temp_max_f === 'number' && typeof s.temp_max_f === 'number') {
+      const delta = s.outdoor_temp_max_f - s.temp_max_f;
+      if (Math.abs(delta) >= 20) {
+        out.push({
+          priority: 30,
+          clause: delta > 0
+            ? `${Math.round(delta)}°F warmer outside than the room.`
+            : `${Math.round(-delta)}°F cooler outside than the room.`,
+        });
+      }
+    }
+
+    // Pressure swing across the day. ≥8 hPa is notable (storm scale).
+    if (typeof s.pressure_max_hpa === 'number' && typeof s.pressure_min_hpa === 'number') {
+      const delta = s.pressure_max_hpa - s.pressure_min_hpa;
+      if (delta >= 8) {
+        out.push({
+          priority: 45,
+          clause: `Pressure swung ${Math.round(delta)} hPa across the day, weather shifting.`,
+        });
+      }
+    }
+
+    // Sensor retired today. High priority because narratively significant
+    // (the chip noticing its own degradation is the museum payoff). Reads
+    // from ctx.sensor_retired_today (populated by _chronicleRender from
+    // sensor_retired/<sensor> DO keys), not from the snap, since retires
+    // are tracked separately from the chronicle accumulator.
+    if (Array.isArray(ctx.sensor_retired_today)) {
+      for (const sr of ctx.sensor_retired_today) {
+        const name = String(sr.sensor || '').toUpperCase();
+        out.push({
+          priority: 95,
+          clause: `The chip lost contact with its ${name} sensor today and retired it.`,
+        });
+      }
+    }
+
+    // Reboots today.
+    if (typeof s.reboots === 'number' && s.reboots > 0) {
+      out.push({
+        priority: 80,
+        clause: s.reboots === 1
+          ? `One reboot today.`
+          : `${s.reboots} reboots today.`,
+      });
+    } else if (typeof h.days_since_reboot === 'number'
+               && (h.days_since_reboot === 7 || h.days_since_reboot === 14
+                   || h.days_since_reboot === 30 || h.days_since_reboot === 60)) {
+      // Caps at 60. The self-aware long-uptime-cross detector below
+      // takes over at 90, 180, 365, and yearly thereafter with framing
+      // that owns the milestone (so the two never double-fire).
+      out.push({
+        priority: 35,
+        clause: `${h.days_since_reboot} days since the last reboot.`,
+      });
+    }
+
+    // Heap stability quietly noted on truly steady days. Low priority so
+    // it only surfaces when nothing more interesting fired. Bounded above
+    // at 150 KB so the self-aware "Memory unbothered." line owns the
+    // pristine end of the range without double-reporting.
+    if (typeof s.heap_free_min_kb === 'number' && s.heap_free_min_kb >= 100
+        && s.heap_free_min_kb < 150) {
+      out.push({
+        priority: 10,
+        clause: `Memory pressure stayed low; ${s.heap_free_min_kb} KB minimum free.`,
+      });
+    }
+
+    // VOC streak. Different sensor than CO₂ but same shape narrative.
+    if (h.voc_over_streak >= 3) {
+      const len = h.voc_over_streak + (s.voc_max != null && s.voc_max >= 500 ? 1 : 0);
+      out.push({
+        priority: 50,
+        clause: `${len} days running with VOC over 500 ppb.`,
+      });
+    }
+    // VOC absolute high.
+    if (typeof s.voc_max === 'number' && s.voc_max >= 1000) {
+      out.push({
+        priority: 55,
+        clause: `VOC peaked at ${s.voc_max} ppb today.`,
+      });
+    }
+
+    // Humidity stability or swing. Stable: range ≤5%. Swing: range ≥30%.
+    if (typeof s.humidity_max === 'number' && typeof s.humidity_min === 'number') {
+      const range = s.humidity_max - s.humidity_min;
+      if (range <= 5 && s.humidity_max > 0) {
+        out.push({
+          priority: 20,
+          clause: `Humidity barely moved, holding near ${Math.round((s.humidity_max + s.humidity_min) / 2)}%.`,
+        });
+      } else if (range >= 30) {
+        out.push({
+          priority: 30,
+          clause: `Humidity swung from ${Math.round(s.humidity_min)}% to ${Math.round(s.humidity_max)}% across the day.`,
+        });
+      }
+    }
+
+    // Outdoor air quality narrative based on AQI peak.
+    if (typeof s.outdoor_aqi_max === 'number') {
+      const aqi = s.outdoor_aqi_max;
+      if (aqi >= 150) {
+        out.push({
+          priority: 70,
+          clause: `Outdoor air was unhealthy today; AQI peaked at ${aqi}.`,
+        });
+      } else if (aqi >= 100) {
+        out.push({
+          priority: 40,
+          clause: `Outdoor air hit moderate-AQI levels (peak ${aqi}).`,
+        });
+      } else if (aqi <= 25) {
+        out.push({
+          priority: 25,
+          clause: `Outdoor air stayed clean all day, AQI peaked at ${aqi}.`,
+        });
+      }
+    }
+
+    // Outdoor temperature record vs trailing 30 days. Different from
+    // anomaly's absolute extremes (which fire on, e.g., heatwaves);
+    // this fires on relative records that wouldn't otherwise trigger.
+    if (typeof s.outdoor_temp_max_f === 'number' && typeof h.outdoor_temp_max_overall === 'number'
+        && s.outdoor_temp_max_f > h.outdoor_temp_max_overall && h.count >= 3) {
+      out.push({
+        priority: 55,
+        clause: `Hottest outdoor day in ${h.count} days at ${Math.round(s.outdoor_temp_max_f)}°F.`,
+      });
+    }
+    if (typeof s.outdoor_temp_min_f === 'number' && typeof h.outdoor_temp_min_overall === 'number'
+        && s.outdoor_temp_min_f < h.outdoor_temp_min_overall && h.count >= 3) {
+      out.push({
+        priority: 55,
+        clause: `Coldest outdoor day in ${h.count} days at ${Math.round(s.outdoor_temp_min_f)}°F.`,
+      });
+    }
+
+    // Streak completion. When a 5+ day streak that was active yesterday
+    // ends today (today's value crosses back over the threshold), the
+    // length of the broken streak is narratively interesting on its own.
+    if (h.co2_under_streak >= 5 && typeof s.co2_max === 'number' && s.co2_max >= 800) {
+      out.push({
+        priority: 65,
+        clause: `${h.co2_under_streak}-day streak of indoor CO₂ under 800 ppm ended today.`,
+      });
+    }
+    if (h.co2_over_streak >= 5 && typeof s.co2_max === 'number' && s.co2_max < 1000) {
+      out.push({
+        priority: 65,
+        clause: `${h.co2_over_streak}-day streak of indoor CO₂ over 1000 ppm broke today.`,
+      });
+    }
+
+    // Self-historical reference: when today's high CO₂ comes after a long
+    // gap, surface "last time this happened was N days ago." Fires only
+    // when today actually had high CO₂ AND the prior occurrence was
+    // meaningfully far back, so it adds memory without being chatty.
+    // Threshold matches the anomaly template (2500 ppm) since the indoor
+    // sensor reports eCO₂ which runs hot vs true NDIR CO₂.
+    if (typeof s.co2_max === 'number' && s.co2_max >= 2500
+        && ctx.last_high_co2 && ctx.last_high_co2.days_ago >= 14) {
+      out.push({
+        priority: 60,
+        clause: `Last time indoor CO₂ went this high was ${ctx.last_high_co2.days_ago} days ago.`,
+      });
+    }
+
+    // Self-historical: today saw a reboot, surface when the last one was.
+    // Lower-priority than the "reboots today" headline so it adds context
+    // when paired but doesn't crowd if a more notable detector fired.
+    if (typeof s.reboots === 'number' && s.reboots > 0
+        && ctx.last_reboot && ctx.last_reboot.days_ago >= 7) {
+      out.push({
+        priority: 60,
+        clause: `Last reboot was ${ctx.last_reboot.days_ago} days ago.`,
+      });
+    }
+
+    // All-time streak: when today's active under-streak meets or exceeds
+    // the all-time longest, surface that. Compares the current streak
+    // (h.co2_under_streak counted from yesterday + 1 if today also under
+    // 800) against ctx.all_time_under_streak.length. Fires rarely and
+    // narratively significant when it does.
+    if (ctx.all_time_under_streak && typeof s.co2_max === 'number' && s.co2_max < 800) {
+      const todayStreak = h.co2_under_streak + 1;
+      if (todayStreak >= ctx.all_time_under_streak.length && todayStreak >= 5) {
+        out.push({
+          priority: 80,
+          clause: todayStreak > ctx.all_time_under_streak.length
+            ? `Longest run of indoor CO₂ under 800 ppm ever, now ${todayStreak} days and counting.`
+            : `Tied the all-time longest run of indoor CO₂ under 800 ppm at ${todayStreak} days.`,
+        });
+      }
+    }
+
+    // ===== Self-aware-chip detectors =====
+    // These add a small layer of awareness on top of the factual
+    // observations: the chip noticing patterns about itself, its
+    // curator, and its own continuity. Tone is deadpan-knowing
+    // (museum curator, not sarcastic). They sit at low-to-mid
+    // priority so they compose alongside more notable detectors
+    // rather than crowding them out.
+
+    // Curator absence. Fires when the curator hasn't left an owner_note
+    // in 14+ days. Addresses the curator by name (the only detector
+    // that does, so the moment lands instead of going stale). Tiered
+    // thresholds so the line escalates with absence length.
+    const ownerName = ctx.owner_name || 'Curator';
+    const lastNote = ctx.last_owner_note;
+    if (lastNote && typeof lastNote.days_ago === 'number') {
+      if (lastNote.days_ago >= 60) {
+        out.push({
+          priority: 50,
+          clause: `${lastNote.days_ago} days unattended, ${ownerName}.`,
+        });
+      } else if (lastNote.days_ago >= 30) {
+        out.push({
+          priority: 40,
+          clause: `A month without a curator's note, ${ownerName}.`,
+        });
+      } else if (lastNote.days_ago >= 14) {
+        out.push({
+          priority: 35,
+          clause: `Two weeks since the last curated note, ${ownerName}.`,
+        });
+      }
+    } else if (!lastNote && typeof ctx.dayNumber === 'number' && ctx.dayNumber >= 30) {
+      // Never any curator notes at all. Hold off until day 30 so this
+      // doesn't fire on a brand-new device whose curator simply hasn't
+      // gotten around to it yet.
+      out.push({
+        priority: 30,
+        clause: `The curator's note column remains blank, ${ownerName}.`,
+      });
+    }
+
+    // Tinkering detected. Fires when reboots ≥ 2 today. The factual
+    // "${n} reboots today" detector already fires at priority 80; this
+    // adds the chip's commentary on top so the body reads like both a
+    // log and an observation.
+    if (typeof s.reboots === 'number' && s.reboots >= 2) {
+      out.push({
+        priority: 70,
+        clause: `Someone's tinkering.`,
+      });
+    }
+
+    // Long uptime cross. Fires on milestone uptime crossings (90, 180,
+    // 365, then yearly thereafter). Existing reboot-anniversary detector
+    // covers 7/14/30/60 with factual phrasing; this takes over at 90+
+    // with a more aware framing. Skips entirely on days where today
+    // saw a reboot, since h.days_since_reboot is computed from the
+    // history window (excluding today) and would otherwise claim
+    // "uninterrupted" on a day the chip actually restarted.
+    const dsr = h.days_since_reboot;
+    if (typeof dsr === 'number' && dsr > 0
+        && (typeof s.reboots !== 'number' || s.reboots === 0)) {
+      let upClause = null;
+      if (dsr === 90) upClause = `Ninety days uninterrupted. The chip has settled in.`;
+      else if (dsr === 180) upClause = `Half a year unbothered.`;
+      else if (dsr === 365) upClause = `A full year without a single reboot.`;
+      else if (dsr > 365 && dsr % 365 === 0) {
+        const years = dsr / 365;
+        upClause = `${years} years uninterrupted.`;
+      }
+      if (upClause) {
+        out.push({ priority: 30, clause: upClause });
+      }
+    }
+
+    // Pristine heap. Bottom-priority background note for days when
+    // memory was extraordinarily quiet (≥150 KB minimum free). The
+    // factual heap detector above caps at 150, so this owns the
+    // pristine band exclusively.
+    if (typeof s.heap_free_min_kb === 'number' && s.heap_free_min_kb >= 150) {
+      out.push({
+        priority: 8,
+        clause: `Memory unbothered.`,
+      });
+    }
+
+    // Outlasted-the-original. Once the chip crosses day 500 (the original
+    // 2022-2023 ESP32's lifespan), occasionally surface that fact as a
+    // memorial cross-reference. Day 500 itself is owned by the milestone
+    // template; day 501 lands the first-day-past line, then every 50
+    // days carries it forward, capped before day 1000 (which the
+    // milestone template owns again). Names the curator because the
+    // memorial framing is between the chip and Tech1k specifically.
+    if (typeof ctx.dayNumber === 'number' && ctx.dayNumber > 500 && ctx.dayNumber < 1000) {
+      const dnv = ctx.dayNumber;
+      const past = dnv - 500;
+      let outlastedClause = null;
+      if (dnv === 501) {
+        outlastedClause = `One day past the original chip's run, ${ownerName}.`;
+      } else if (dnv % 50 === 0) {
+        outlastedClause = `${past} days past the original chip's run, ${ownerName}.`;
+      }
+      if (outlastedClause) {
+        out.push({ priority: 45, clause: outlastedClause });
+      }
+    }
+
+    // Wear awareness. Fires when reboots have clustered: at least five
+    // total restarts across today plus the prior 30-day window. The chip
+    // can't actually tell wear from a curator flashing firmware four
+    // times in a row, so the clause names both possibilities. Priority
+    // 75 sits just under the priority-80 reboots-today headline so a
+    // clustered day reads "3 reboots today. 7 restarts in the past
+    // month..." in the top-2 body cap.
+    if (typeof s.reboots === 'number' && s.reboots > 0
+        && typeof h.recent_reboot_total === 'number' && h.recent_reboot_total >= 4) {
+      const monthTotal = h.recent_reboot_total + s.reboots;
+      out.push({
+        priority: 75,
+        clause: `${monthTotal} restarts in the past month. The chip is either wearing out, or ${ownerName} keeps reflashing me.`,
+      });
+    }
+
+    // Owner-defined personal milestones. Calendar-driven (month-day
+    // match) anchors configured in _chronicleConfig().ownerMilestones.
+    // Fires the configured clause as-is. Priority 55 so it surfaces in
+    // top-2 on its day without overriding genuinely louder events
+    // (records, anniversaries, anomalies) when those also fire.
+    if (todayDate && Array.isArray(ctx.owner_milestones) && ctx.owner_milestones.length > 0) {
+      const tm = todayDate.getUTCMonth() + 1;
+      const td = todayDate.getUTCDate();
+      for (const anchor of ctx.owner_milestones) {
+        if (anchor && anchor.month === tm && anchor.day === td
+            && typeof anchor.clause === 'string' && anchor.clause.length > 0) {
+          out.push({ priority: 55, clause: anchor.clause });
+        }
+      }
+    }
+
+    // Cohabitation seasonal. Meteorological season starts (Mar 1, Jun 1,
+    // Sep 1, Dec 1). Rare calendar event so cheap to fire. Only fires
+    // after day 30 so a brand-new chip doesn't claim cohabitation it
+    // hasn't earned yet. Frames the chip and curator as joint travelers
+    // through time, which is the spirit of the chronicle.
+    if (todayDate && typeof ctx.dayNumber === 'number' && ctx.dayNumber > 30) {
+      const m = todayDate.getUTCMonth() + 1;
+      const day = todayDate.getUTCDate();
+      const seasonCross = {
+        '3-1':  ['winter', 'spring'],
+        '6-1':  ['spring', 'summer'],
+        '9-1':  ['summer', 'autumn'],
+        '12-1': ['autumn', 'winter'],
+      };
+      const cross = seasonCross[`${m}-${day}`];
+      if (cross) {
+        out.push({
+          priority: 30,
+          clause: `Through ${cross[0]} and into ${cross[1]}, the chip and ${ownerName} continued.`,
+        });
+      }
+    }
+
+    // First-time-ever pristine CO₂. When today is the first day on
+    // record where indoor CO₂ stayed below 500 ppm all day. Requires a
+    // week of history so this doesn't fire on day 2 just because the
+    // archive is empty. Priority high because narratively significant
+    // (first-time-ever events are rare and worth surfacing).
+    if (typeof s.co2_max === 'number' && s.co2_max < 500
+        && ctx.last_pristine_co2 === null
+        && typeof h.count === 'number' && h.count >= 7) {
+      out.push({
+        priority: 70,
+        clause: `First day on record with indoor CO₂ never crossing 500 ppm.`,
+      });
+    }
+
+    return out;
+  }
+
+  // Compose the top-N observation clauses into a single sentence-joined
+  // string. Sorting by priority desc means the most notable observations
+  // surface; cap at maxN keeps body length restrained (museum tone, not
+  // chatty). Returns empty string when no detectors fired.
+  _chronicleComposeObservations(snap, ctx, maxN) {
+    const detectors = this._chronicleDetectors(snap, ctx);
+    if (detectors.length === 0) return '';
+    detectors.sort((a, b) => b.priority - a.priority);
+    return detectors.slice(0, maxN).map(d => d.clause).join(' ');
+  }
+
+  async _chronicleRender(snap, ctx) {
+    const history = await this._chronicleHistoricalContext(snap.date);
+    // Self-historical references and all-time streaks both walk full
+    // history. Compute them in parallel so the seal lock doesn't extend
+    // longer than necessary. Each falls back to null on missing data.
+    // sensor_retired_today is sourced from sensor_retired/* DO keys
+    // (separate from chronicle accumulator) so the body can surface
+    // "chip retired BME280 today" alongside other detectors. The list
+    // is bounded by sensor count (~3), so no pagination needed.
+    const [lastHighCO2, lastReboot, allTimeUnderStreak, retireList, lastOwnerNote, lastPristineCO2] = await Promise.all([
+      this._chronicleLastOccurrence(snap.date, e =>
+        e.stats && typeof e.stats.co2_max === 'number' && e.stats.co2_max >= 2500),
+      this._chronicleLastOccurrence(snap.date, e =>
+        e.stats && typeof e.stats.reboots === 'number' && e.stats.reboots > 0),
+      this._chronicleAllTimeStreak(e =>
+        e.stats && typeof e.stats.co2_max === 'number' && e.stats.co2_max < 800),
+      this.state.storage.list({ prefix: 'sensor_retired/' }).catch(() => null),
+      this._chronicleLastOccurrence(snap.date, e =>
+        typeof e.owner_note === 'string' && e.owner_note.trim().length > 0),
+      this._chronicleLastOccurrence(snap.date, e =>
+        e.stats && typeof e.stats.co2_max === 'number' && e.stats.co2_max < 500),
+    ]);
+    const sensorRetiredToday = [];
+    if (retireList) {
+      for (const [, retire] of retireList) {
+        if (retire && retire.date === snap.date && retire.sensor) {
+          sensorRetiredToday.push({ sensor: retire.sensor, unix: retire.unix || 0 });
+        }
+      }
+    }
+    const cfg = this._chronicleConfig();
+    const fullCtx = Object.assign({}, ctx, {
+      history,
+      last_high_co2: lastHighCO2,
+      last_reboot: lastReboot,
+      all_time_under_streak: allTimeUnderStreak,
+      sensor_retired_today: sensorRetiredToday,
+      last_owner_note: lastOwnerNote,
+      last_pristine_co2: lastPristineCO2,
+      owner_name: cfg.owner_name,
+      owner_milestones: Array.isArray(cfg.ownerMilestones) ? cfg.ownerMilestones : [],
+    });
+    // Order matters: more-specific patterns first so generic stays the
+    // genuine fallback. Records and relative comparisons fire BEFORE the
+    // anomaly absolute-extremes template so a record-setting day reads as
+    // "highest visitors on record" rather than just "something unusual."
+    const templates = [
+      ['milestone',  this._chronicleTemplateMilestone.bind(this)],
+      ['record',     this._chronicleTemplateRecord.bind(this)],
+      ['anomaly',    this._chronicleTemplateAnomaly.bind(this)],
+      ['busy_rel',   this._chronicleTemplateBusyRelative.bind(this)],
+      ['quiet_rel',  this._chronicleTemplateQuietRelative.bind(this)],
+      ['generic',    this._chronicleTemplateGeneric.bind(this)],
+    ];
+    for (const [id, fn] of templates) {
+      const body = fn(snap, fullCtx);
+      if (typeof body === 'string' && body.trim().length > 0) {
+        return { template_id: id, body: body.trim() };
+      }
+    }
+    return { template_id: 'generic', body: 'A day passed.' };
+  }
+
   // ASCII-art stats card served when curl/wget/httpie/libwww/PowerShell hit "/".
   // Built from the in-memory lastStats snapshot so there's zero ESP load on
   // each hit, and it still works when the device is down.
@@ -631,6 +2989,16 @@ export class EspRelay {
         '    Humidity     ' + (Number.isFinite(o.humidity) ? one(o.humidity, '%') : dash),
         '    Wind         ' + (Number.isFinite(o.wind_mph) ? one(o.wind_mph, ' mph') : dash)
       );
+      if (Number.isFinite(o.us_aqi) && o.us_aqi >= 0) {
+        const aqi = Math.round(o.us_aqi);
+        const label = aqi <= 50 ? 'good'
+                    : aqi <= 100 ? 'moderate'
+                    : aqi <= 150 ? 'unhealthy for sensitive'
+                    : aqi <= 200 ? 'unhealthy'
+                    : aqi <= 300 ? 'very unhealthy'
+                    : 'hazardous';
+        lines.push('    AQI          ' + aqi + ' (' + label + ')');
+      }
     }
 
     lines.push(
@@ -642,11 +3010,14 @@ export class EspRelay {
       '',
       '  LINKS',
       '    Web          https://helloesp.com',
+      '    Chronicle    https://helloesp.com/chronicle',
       '    Guestbook    https://helloesp.com/guestbook',
       '    Console      https://helloesp.com/console',
       '    History      https://helloesp.com/history',
+      '    About        https://helloesp.com/about',
       '    Source       https://github.com/Tech1k/helloesp',
-      '    RSS          https://helloesp.com/guestbook.rss',
+      '    Chronicle RSS https://helloesp.com/chronicle.rss',
+      '    Guestbook RSS https://helloesp.com/guestbook.rss',
       '    Badge        https://helloesp.com/status.svg',
       '',
       '  (You asked for it with curl. Nice.)',
@@ -827,6 +3198,14 @@ export class EspRelay {
           // homepage presence indicator reflects current connections.
           const broadcastBody = JSON.stringify({ ...enriched, clients: this.sseClients.size });
           this.broadcastEvent('stats', broadcastBody);
+          // Fold this sample into today's Chronicle snapshot. Throttled
+          // persistence (~once/min) keeps storage writes bounded; the
+          // alarm-driven seal flushes on day rollover.
+          this._chronicleAccumulate(enriched);
+          if (Date.now() - this.chronicleLastPersistAt > 60000) {
+            this.chronicleLastPersistAt = Date.now();
+            this.state.storage.put('chronicleSnapshot', this.chronicleSnapshot).catch(() => {});
+          }
         }
         return;
       }
@@ -840,6 +3219,95 @@ export class EspRelay {
       }
       if (msg.event === 'r2_healthcheck') {
         await this._runR2Healthcheck();
+        return;
+      }
+      if (msg.event === 'chronicle_sync_request') {
+        // Chip asks for any chronicle entries it doesn't have on SD yet,
+        // sent after each WS auth completes. Two protocol forms accepted
+        // to handle deploy ordering smoothly:
+        //   - msg.data.max_date = "YYYY-MM-DD"  (current; constant-size)
+        //   - msg.data.have     = [dates...]    (legacy; pre-scaling firmware)
+        // For max_date the worker pushes every entry strictly newer; for
+        // have[] it pushes anything not in the set (preserves the legacy
+        // gap-detection guarantee). Idempotent on chip side: re-pushing
+        // an entry the chip already has is harmless (overwrite).
+        const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+        const rawMax = msg.data && msg.data.max_date;
+        const maxDate = (typeof rawMax === 'string' && dateRe.test(rawMax)) ? rawMax : null;
+        const rawHave = msg.data && msg.data.have;
+        const haveSet = Array.isArray(rawHave)
+          ? new Set(rawHave.filter(d => typeof d === 'string' && dateRe.test(d)))
+          : null;
+        // Cursor-based listing keeps each page within the DO 1000-entry
+        // cap; archive crosses 1000 entries ~year 2.7. When max_date is
+        // known we start the scan past it so years already confirmed
+        // present on chip aren't enumerated.
+        const entries = [];
+        let cursorStart = maxDate ? ('chronicle/' + maxDate + '\x00') : undefined;
+        while (true) {
+          const opts = { prefix: 'chronicle/', limit: 400 };
+          if (cursorStart) opts.start = cursorStart;
+          const page = await this.state.storage.list(opts);
+          if (page.size === 0) break;
+          let lastKey = null;
+          for (const [key, val] of page) {
+            lastKey = key;
+            if (val && typeof val === 'object' && val.date) {
+              // Reflections live worker-only; chip syncs daily entries only.
+              if (val.kind && val.kind !== 'daily') continue;
+              if (haveSet) {
+                if (!haveSet.has(val.date)) entries.push(val);
+              } else if (!maxDate || val.date > maxDate) {
+                entries.push(val);
+              }
+            }
+          }
+          if (page.size < 400 || !lastKey) break;
+          cursorStart = lastKey + '\x00';
+        }
+        // Push oldest-first so the chip writes them in chronological order.
+        // Burst is fine: the chip's WS reader processes 8 frames per main
+        // loop iteration, naturally throttling consumption while staying
+        // responsive. Typical catch-up is 0-7 entries; even a fresh-flash
+        // sync of a year of data is bounded by the chip's main loop cadence.
+        entries.sort((a, b) => a.date.localeCompare(b.date));
+        for (const entry of entries) {
+          this._chroniclePushToChip(entry);
+        }
+        if (entries.length > 0) {
+          const note = haveSet ? ('chip had ' + haveSet.size) : ('chip max=' + (maxDate || '∅'));
+          console.log('chronicle: synced', entries.length, 'entries to chip (' + note + ')');
+        }
+        return;
+      }
+      if (msg.event === 'chronicle_sensor_retired') {
+        // Chip declared a sensor permanently retired (consecutive bad-read
+        // threshold crossed). Stash the event keyed by sensor name so each
+        // sensor's retirement gets recorded once; subsequent duplicate
+        // emissions (e.g. chip rebooted without persistent state for some
+        // reason) overwrite with the latest unix but don't multiply records.
+        // Chronicle UI consumes this in a later session; for now the data
+        // is captured durably so nothing is lost.
+        const sensor = msg.data && typeof msg.data.sensor === 'string' ? msg.data.sensor : null;
+        const unix   = msg.data && Number.isFinite(msg.data.unix) ? Math.floor(msg.data.unix) : 0;
+        if (sensor && /^[a-z0-9_]{2,16}$/.test(sensor)) {
+          // Prefer chip-local date so chronicle UI can surface this on the
+          // chip's lived day. Falls through to UTC date from unix, then
+          // worker UTC today, if chip-local isn't available.
+          let date = null;
+          if (this.lastStats) {
+            try {
+              const tl = JSON.parse(this.lastStats).today_local;
+              if (typeof tl === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(tl)) date = tl;
+            } catch (e) {}
+          }
+          if (!date && unix > 0) date = new Date(unix * 1000).toISOString().slice(0, 10);
+          if (!date) date = this._todayUtc();
+          await this.state.storage.put('sensor_retired/' + sensor, {
+            sensor, unix, date,
+          });
+          console.log('chronicle: sensor retired:', sensor, 'on', date);
+        }
         return;
       }
       if (msg.event === 'test_email') {
@@ -877,6 +3345,46 @@ export class EspRelay {
             }));
           } catch (e) {}
         }
+        return;
+      }
+      if (msg.event === 'chronicle_note_set') {
+        // Admin curatorial note for a Chronicle entry. Trust model is the
+        // same as snake_clear: HMAC-authenticated WS from the chip's
+        // admin panel. Notes only attach to existing (sealed) entries;
+        // future-dated or unsealed dates are ignored silently so the
+        // stash doesn't accumulate phantom records.
+        //
+        // RMW wrapped in blockConcurrencyWhile to serialize against
+        // _chronicleMaybeSeal (also wrapped). Without this, an alarm-fired
+        // seal could interleave between get() and put() and either lose
+        // the note or have its own writes clobbered by the note's put.
+        if (!msg.data || typeof msg.data.date !== 'string') return;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(msg.data.date)) return;
+        const note = typeof msg.data.note === 'string' ? msg.data.note.slice(0, 1000) : '';
+        let updatedEntry = null;
+        try {
+          await this.state.blockConcurrencyWhile(async () => {
+            const entry = await this.state.storage.get('chronicle/' + msg.data.date);
+            if (!entry) return;
+            if (note) entry.owner_note = note;
+            else delete entry.owner_note;
+            await this.state.storage.put('chronicle/' + msg.data.date, entry);
+            updatedEntry = entry;
+          });
+        } catch (e) {
+          console.error('chronicle_note_set storage failed:', e && e.message);
+          return;
+        }
+        if (!updatedEntry) return;
+        // Crosspost the note as a reply to the original tweet. No-op if
+        // there's no parent tweet, no note text, or already replied.
+        if (note) {
+          this._chronicleMaybePostNote(msg.data.date).catch(e =>
+            console.error('chronicle note reply failed:', e && e.message));
+        }
+        // Re-backup the entry so SD card + R2 reflect the note change.
+        this._chronicleBackup(updatedEntry).catch(e =>
+          console.error('chronicle backup after note failed:', e && e.message));
         return;
       }
       if (msg.event !== 'pending_guestbook') return;
@@ -1438,6 +3946,13 @@ export class EspRelay {
     // Seasonal rollover check (cheap: 1-2 storage reads, no-op when in-quarter)
     this._maybeRolloverSeason().catch(() => {});
 
+    // Chronicle: seal yesterday's snapshot when chip-local day rolls over.
+    // The accumulator path normally handles this on the stats event itself;
+    // this alarm-driven call is a safety net for "chip went silent right
+    // after midnight before the seal could fire." Cheap unless rollover
+    // actually happened (then 1 read + 2 writes).
+    this._chronicleMaybeSeal().catch(() => {});
+
     // lazy weather refresh: fetch on first tick, then every WEATHER_REFRESH_MS (1 hour)
     if (!this.lastWeather || Date.now() - this.lastWeather.fetched_at > WEATHER_REFRESH_MS) {
       this.refreshWeather().catch(() => {});
@@ -1522,6 +4037,113 @@ export class EspRelay {
 
   async fetch(request) {
     const url = new URL(request.url);
+
+    // Chronicle deep-link handling. URLs like /chronicle/2026-05-04 are SPA
+    // permalinks served by the chip's /chronicle handler. For social media
+    // crawlers (X cards, Slack unfurl, etc.) we want per-entry OG tags so
+    // each shared permalink gets a card with the actual entry's date and
+    // body, not the generic Chronicle page description. Approach: if the
+    // entry exists in storage, fetch the shell HTML and rewrite the meta
+    // tags via HTMLRewriter. Otherwise fall through to the default rewrite
+    // + relay. HTMLRewriter (vs string regex) is robust to chronicle.html's
+    // meta tag formatting changing: it operates on parsed tags rather than
+    // matching specific quote/whitespace patterns.
+    const chronicleDateMatch = url.pathname.match(/^\/chronicle\/(\d{4}-\d{2}-\d{2}|\d{4}-W\d{2}|\d{4}-Q\d|\d{4}-\d{2})$/);
+    if (chronicleDateMatch && request.method === 'GET') {
+      const date = chronicleDateMatch[1];
+      const entry = await this.state.storage.get('chronicle/' + date);
+      if (entry) {
+        try {
+          const shellUrl = url.protocol + '//' + url.host + '/chronicle';
+          const shellResponse = await fetch(new Request(shellUrl, {
+            method: 'GET',
+            headers: { 'Accept': 'text/html', 'Accept-Encoding': 'gzip' },
+          }));
+          if (shellResponse.ok) {
+            // Title shape depends on entry kind. Daily: "Day N · May 6, 2026".
+            // Weekly: "Week 18 of 2026". Monthly: "May 2026".
+            let title;
+            const kind = entry.kind || 'daily';
+            if (kind === 'weekly') {
+              const wm = /^(\d{4})-W(\d{2})$/.exec(entry.date);
+              title = wm
+                ? `Week ${parseInt(wm[2], 10)} of ${wm[1]} / Chronicle / HelloESP`
+                : `${entry.date} / Chronicle / HelloESP`;
+            } else if (kind === 'monthly') {
+              const mm = /^(\d{4})-(\d{2})$/.exec(entry.date);
+              if (mm) {
+                const monthName = new Date(Date.UTC(+mm[1], +mm[2] - 1, 1))
+                  .toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
+                title = `${monthName} ${mm[1]} / Chronicle / HelloESP`;
+              } else {
+                title = `${entry.date} / Chronicle / HelloESP`;
+              }
+            } else if (kind === 'quarterly') {
+              const qm = /^(\d{4})-Q(\d)$/.exec(entry.date);
+              title = qm
+                ? `Q${qm[2]} ${qm[1]} / Chronicle / HelloESP`
+                : `${entry.date} / Chronicle / HelloESP`;
+            } else {
+              const dayLabel = entry.day_number ? 'Day ' + entry.day_number + ' · ' : '';
+              const dateLong = new Date(entry.date + 'T12:00:00Z').toLocaleDateString('en-US', {
+                year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC',
+              });
+              title = dayLabel + dateLong + ' / Chronicle / HelloESP';
+            }
+            // Description: prefer owner note + body; collapse whitespace,
+            // truncate at 200 chars on word boundary so cards stay tidy.
+            // Fall back to a generic line if both fields are empty so we
+            // don't replace the static description with an empty string.
+            let descSrc = entry.owner_note
+              ? entry.owner_note + ' - ' + (entry.body || '')
+              : (entry.body || '');
+            descSrc = descSrc.replace(/\s+/g, ' ').trim();
+            if (!descSrc) {
+              descSrc = 'A daily entry the chip writes about itself.';
+            }
+            if (descSrc.length > 200) {
+              descSrc = descSrc.substring(0, 199).replace(/\s+\S*$/, '') + '…';
+            }
+            const permalink = 'https://helloesp.com/chronicle/' + entry.date;
+
+            // HTMLRewriter requires non-gzipped input. shellResponse.text()
+            // auto-decompresses; wrap the resulting HTML in a fresh Response
+            // so HTMLRewriter sees plain text. setAttribute / setInnerContent
+            // handle attribute and HTML escaping automatically (no manual
+            // escAttr needed). setInnerContent uses html:false so a stray
+            // angle bracket in the title doesn't get parsed as markup.
+            const html = await shellResponse.text();
+            const decoded = new Response(html, {
+              headers: { 'Content-Type': 'text/html; charset=utf-8' },
+            });
+            const transformed = new HTMLRewriter()
+              .on('title', { element(el) { el.setInnerContent(title, { html: false }); } })
+              .on('link[rel="canonical"]', { element(el) { el.setAttribute('href', permalink); } })
+              .on('meta[name="description"]', { element(el) { el.setAttribute('content', descSrc); } })
+              .on('meta[property="og:title"]', { element(el) { el.setAttribute('content', title); } })
+              .on('meta[property="og:description"]', { element(el) { el.setAttribute('content', descSrc); } })
+              .on('meta[property="og:url"]', { element(el) { el.setAttribute('content', permalink); } })
+              .on('meta[name="twitter:title"]', { element(el) { el.setAttribute('content', title); } })
+              .on('meta[name="twitter:description"]', { element(el) { el.setAttribute('content', descSrc); } })
+              .transform(decoded);
+            return new Response(transformed.body, {
+              status: 200,
+              headers: {
+                'Content-Type': 'text/html; charset=utf-8',
+                'Cache-Control': 'public, max-age=300',
+                ...SEC_HEADERS,
+              },
+            });
+          }
+        } catch (e) {
+          // Shell fetch / rewrite failed; fall through to default relay
+          // path so the page still loads even if OG injection fails.
+        }
+      }
+      // No entry, or shell fetch failed: serve the SPA shell (client-side
+      // router will render the entry from chronicle.json or show 'not found').
+      url.pathname = '/chronicle';
+    }
 
     // curl/wget/httpie/PowerShell hitting "/" get a text/plain ASCII stats
     // card built from the cached lastStats. Zero ESP load, works when the
@@ -1863,6 +4485,330 @@ export class EspRelay {
       });
     }
 
+    // ===== Chronicle endpoints =====
+    // Data lives in DO storage at chronicle/YYYY-MM-DD; entries are sealed
+    // by the alarm-driven _chronicleMaybeSeal at UTC midnight rollover.
+
+    // /chronicle.json: full reverse-chronological list of sealed entries.
+    // CORS-permissive so the LAN-served admin page can fetch this when
+    // it's the cross-origin endpoint (admin loads the entry list to wire
+    // up the per-row note editor).
+    // /chronicle/preview: today's in-progress snapshot rendered through
+    // the daily templates as if sealing right now. Useful for peeking at
+    // what tonight's entry will look like before chip-local midnight.
+    // Public, same data sensitivity as /stats (already public). Reads
+    // chronicleSnapshot directly so this is "live" up to the last
+    // stats_update event the chip pushed.
+    if (url.pathname === '/chronicle/preview' && request.method === 'GET') {
+      const snap = this.chronicleSnapshot;
+      if (!snap) {
+        return new Response(JSON.stringify({ error: 'no in-progress snapshot' }), {
+          status: 503,
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+            'Access-Control-Allow-Origin': '*',
+            ...SEC_HEADERS,
+          },
+        });
+      }
+      const dayNum = this._chronicleDayNumber(snap.date);
+      const ctx = { dayNumber: dayNum };
+      const { template_id, body } = await this._chronicleRender(snap, ctx);
+      const ageSec = this.lastStatsAt
+        ? Math.max(0, Math.floor((Date.now() - this.lastStatsAt) / 1000))
+        : null;
+      const payload = {
+        date: snap.date,
+        day_number: dayNum,
+        kind: 'daily',
+        template_id,
+        body,
+        stats: this._chronicleStatsSummary(snap),
+        samples: snap.samples,
+        snapshot_age_seconds: ageSec,
+        preview_at: Math.floor(Date.now() / 1000),
+        next_seal_unix: this._nextSealUnix(),
+        note: 'In-progress preview; the entry will reseal at chip-local midnight. Re-renders on every request, so a refresh shows the latest data.',
+      };
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-store',
+          'Access-Control-Allow-Origin': '*',
+          ...SEC_HEADERS,
+        },
+      });
+    }
+
+    if (url.pathname === '/chronicle.json' && request.method === 'GET') {
+      // Reverse-sorted + limit 1000 keeps the response bounded past the
+      // DO list cap. At year 3+ the lex-last 1000 keys (which lex-mixes
+      // dailies + reflections) covers the most recent ~3 years; older
+      // entries stay accessible via direct permalink. True year-aware
+      // lazy loading is the next Tier 2 work when archive crosses the
+      // 1000-entry threshold (see deferred memo).
+      const list = await this.state.storage.list({
+        prefix: 'chronicle/', reverse: true, limit: 1000,
+      });
+      const entries = [];
+      for (const [, val] of list) {
+        if (!val || typeof val !== 'object' || !val.date) continue;
+        // Strip the hourly buckets from the index payload. ~600 bytes per
+        // entry that the index UI never reads (only detail view uses it).
+        // At year 5 saves ~1MB across ~1800 entries. Detail endpoint
+        // (/chronicle/<date>.json) keeps hourly intact for time-of-day
+        // detectors and any future intraday-aware UI.
+        if (val.stats && val.stats.hourly) {
+          const stripped = { ...val.stats };
+          delete stripped.hourly;
+          entries.push({ ...val, stats: stripped });
+        } else {
+          entries.push(val);
+        }
+      }
+      // Attach sensor-retire data to the daily entry that matches each
+      // sensor's retire date. Cheap: handful of sensor keys, single get().
+      try {
+        const retireList = await this.state.storage.list({ prefix: 'sensor_retired/' });
+        const retiresByDate = {};
+        for (const [, retire] of retireList) {
+          if (retire && retire.date && retire.sensor) {
+            (retiresByDate[retire.date] = retiresByDate[retire.date] || []).push({
+              sensor: retire.sensor, unix: retire.unix || 0,
+            });
+          }
+        }
+        for (const e of entries) {
+          if ((!e.kind || e.kind === 'daily') && retiresByDate[e.date]) {
+            e.sensor_retired = retiresByDate[e.date];
+          }
+        }
+      } catch (err) {
+        console.error('sensor_retired attach failed:', err && err.message);
+      }
+      // Sort key: prefer period_start (set on weekly/monthly), fall back
+      // to date for daily. Tie-break on kind so monthly>weekly>daily for
+      // the same period start (puts the period-summary above its days).
+      const KIND_RANK = { monthly: 3, weekly: 2, daily: 1 };
+      const sortKey = (e) => e.period_start || e.date || '';
+      entries.sort((a, b) => {
+        const ka = sortKey(a), kb = sortKey(b);
+        if (ka !== kb) return kb.localeCompare(ka);
+        const ra = KIND_RANK[a.kind || 'daily'] || 1;
+        const rb = KIND_RANK[b.kind || 'daily'] || 1;
+        return rb - ra;
+      });
+      // Use config.launchDate for "started" rather than scanning the
+      // returned entries. Past year 3 the entries list won't include the
+      // actual launch entry (it's beyond the 1000-row window), but the
+      // launch date itself never changes and the config has it.
+      const cfg = this._chronicleConfig();
+      const started = cfg.launchYear + '-' +
+        String(cfg.launchMonth).padStart(2, '0') + '-' +
+        String(cfg.launchDay).padStart(2, '0');
+      return new Response(JSON.stringify({
+        entries,
+        started,
+        next_seal_unix: this._nextSealUnix(),
+      }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'public, max-age=60',
+          'Access-Control-Allow-Origin': '*',
+          ...SEC_HEADERS
+        }
+      });
+    }
+
+    // /chronicle/<key>.json: single entry detail with prev/next neighbor
+    // keys. <key> can be daily (YYYY-MM-DD), weekly (YYYY-WNN), or
+    // monthly (YYYY-MM). Neighbors stay within the same kind so prev/next
+    // navigation reads as "previous week / next month", not jumping
+    // across granularities.
+    {
+      const m = url.pathname.match(/^\/chronicle\/(\d{4}-\d{2}-\d{2}|\d{4}-W\d{2}|\d{4}-Q\d|\d{4}-\d{2})\.json$/);
+      if (m && request.method === 'GET') {
+        const date = m[1];
+        const entry = await this.state.storage.get('chronicle/' + date);
+        if (!entry) {
+          return new Response(JSON.stringify({ error: 'no entry for that key' }), {
+            status: 404,
+            headers: {
+              'Content-Type': 'application/json',
+              'Cache-Control': 'no-store',
+              'Access-Control-Allow-Origin': '*',
+              ...SEC_HEADERS
+            }
+          });
+        }
+        const requestedKind = (entry.kind || 'daily');
+        const isDaily     = (k) => /^\d{4}-\d{2}-\d{2}$/.test(k);
+        const isWeekly    = (k) => /^\d{4}-W\d{2}$/.test(k);
+        const isQuarterly = (k) => /^\d{4}-Q\d$/.test(k);
+        const isMonthly   = (k) => /^\d{4}-\d{2}$/.test(k);
+        const matchKind = requestedKind === 'weekly' ? isWeekly
+                        : requestedKind === 'quarterly' ? isQuarterly
+                        : requestedKind === 'monthly' ? isMonthly
+                        : isDaily;
+        // Attach sensor-retire data if this is a daily entry that matches
+        // a sensor's retire date.
+        if (requestedKind === 'daily') {
+          try {
+            const retireList = await this.state.storage.list({ prefix: 'sensor_retired/' });
+            const retires = [];
+            for (const [, retire] of retireList) {
+              if (retire && retire.date === date && retire.sensor) {
+                retires.push({ sensor: retire.sensor, unix: retire.unix || 0 });
+              }
+            }
+            if (retires.length) entry.sensor_retired = retires;
+          } catch (err) {
+            console.error('sensor_retired attach failed:', err && err.message);
+          }
+        }
+        // Bounded prev + next lookups via cursor pagination so navigation
+        // works correctly past the DO 1000-entry list cap. Each direction
+        // walks until it hits a same-kind neighbor or the end of the list.
+        // Typical hit costs one page (~10ms) since neighbors are usually
+        // 1-2 keys away after sort interleaves kinds.
+        const findNeighbor = async (direction) => {
+          const isReverse = direction === 'prev';
+          let cursor = isReverse
+            ? 'chronicle/' + date
+            : 'chronicle/' + date + '\x00';
+          while (true) {
+            const opts = { prefix: 'chronicle/', limit: 200 };
+            if (isReverse) { opts.end = cursor; opts.reverse = true; }
+            else { opts.start = cursor; }
+            const page = await this.state.storage.list(opts);
+            if (page.size === 0) return null;
+            let lastKey = null;
+            for (const [k] of page) {
+              lastKey = k;
+              const d = k.replace('chronicle/', '');
+              if (matchKind(d) && d !== date) return d;
+            }
+            if (page.size < 200 || !lastKey) return null;
+            cursor = isReverse ? lastKey : lastKey + '\x00';
+          }
+        };
+        const [prev, next] = await Promise.all([findNeighbor('prev'), findNeighbor('next')]);
+        return new Response(JSON.stringify({ entry, prev, next }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'public, max-age=300',
+            'Access-Control-Allow-Origin': '*',
+            ...SEC_HEADERS
+          }
+        });
+      }
+    }
+
+    // /chronicle.rss: feed of recent entries for subscribers. Keeps the
+    // last 30 sealed entries so the feed stays small while still covering
+    // a month of activity. rfc822 falls back to the entry date at noon UTC
+    // when sealed_at is missing or zero (defensive; shouldn't happen in
+    // current code paths but cheap to handle). Reflections are filtered
+    // out (RSS reads as a daily-cadence feed; weekly/monthly summaries
+    // would mix with dailies awkwardly under date-string sort).
+    if (url.pathname === '/chronicle.rss' && request.method === 'GET') {
+      // reverse+limit so this works correctly past the DO 1000-entry list
+      // cap. Over-fetch (limit 200) to compensate for the daily filter
+      // dropping ~10% of returned keys (interleaved reflections).
+      const list = await this.state.storage.list({
+        prefix: 'chronicle/', reverse: true, limit: 200,
+      });
+      const entries = [];
+      for (const [, val] of list) {
+        if (val && typeof val === 'object' && val.date) {
+          if (val.kind && val.kind !== 'daily') continue;
+          entries.push(val);
+          if (entries.length >= 30) break;
+        }
+      }
+      const recent = entries;
+      const escapeXml = (s) => String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+      const rfc822 = (entry) => {
+        const t = entry.sealed_at && entry.sealed_at > 0
+          ? new Date(entry.sealed_at * 1000)
+          : new Date(entry.date + 'T12:00:00Z');
+        return t.toUTCString();
+      };
+      let rss = '<?xml version="1.0" encoding="UTF-8"?>\n'
+              + '<rss version="2.0"><channel>'
+              + '<title>HelloESP | Chronicle</title>'
+              + '<link>https://helloesp.com/chronicle</link>'
+              + '<description>A daily entry the chip writes about itself.</description>'
+              + '<language>en</language>';
+      for (const e of recent) {
+        const title = `Day ${e.day_number || '?'} · ${e.date}`;
+        const link = `https://helloesp.com/chronicle/${e.date}`;
+        let desc = e.body || '';
+        if (e.owner_note) desc = `${e.owner_note}\n\n${desc}`;
+        rss += '<item>'
+             + `<title>${escapeXml(title)}</title>`
+             + `<link>${escapeXml(link)}</link>`
+             + `<guid isPermaLink="false">chronicle-${e.date}</guid>`
+             + `<pubDate>${rfc822(e)}</pubDate>`
+             + `<description>${escapeXml(desc)}</description>`
+             + '</item>';
+      }
+      rss += '</channel></rss>';
+      return new Response(rss, {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/rss+xml; charset=utf-8',
+          'Cache-Control': 'public, max-age=300',
+          'Access-Control-Allow-Origin': '*',
+          ...SEC_HEADERS
+        }
+      });
+    }
+
+    // /chronicle/preview: render today's in-progress snapshot via templates
+    // WITHOUT sealing or persisting. Useful for previewing what the entry
+    // for today would look like before midnight rolls over. Returns 404
+    // until the first stats sample lands so previews don't lie about days
+    // the chip wasn't awake.
+    if (url.pathname === '/chronicle/preview' && request.method === 'GET') {
+      const snap = this.chronicleSnapshot;
+      if (!snap || snap.samples === 0) {
+        return new Response(JSON.stringify({ error: 'no samples yet today' }), {
+          status: 404,
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+            'Access-Control-Allow-Origin': '*',
+            ...SEC_HEADERS
+          }
+        });
+      }
+      const dayNum = this._chronicleDayNumber(snap.date);
+      const { template_id, body } = this._chronicleRender(snap, { dayNumber: dayNum });
+      return new Response(JSON.stringify({
+        preview: true,
+        date: snap.date,
+        day_number: dayNum,
+        template_id,
+        body,
+        stats: this._chronicleStatsSummary(snap),
+      }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-store',
+          'Access-Control-Allow-Origin': '*',
+          ...SEC_HEADERS
+        }
+      });
+    }
+
     // Guestbook inline translation. Powered by Workers AI @cf/meta/m2m100-1.2b
     // when env.AI is bound (see wrangler.toml [ai] block). Cached per
     // (id, target) in DO storage so each unique pair costs at most one neuron.
@@ -1943,25 +4889,125 @@ export class EspRelay {
         }
       }
 
-      let aiResp;
-      try {
-        aiResp = await this.env.AI.run('@cf/meta/m2m100-1.2b', {
-          text,
-          source_lang: source || 'en',
-          target_lang: target.split('-')[0]   // m2m100 takes 2-letter codes
-        });
-      } catch (e) {
-        console.error('translate AI.run failed:', e && e.message);
-        return new Response('Translation backend error',
-          { status: 502, headers: { 'Content-Type': 'text/plain', ...corsHdrs } });
+      const targetLang = target.split('-')[0];
+      // Helper: single m2m100 attempt. Returns the cleaned translated string
+      // or '' on any failure (network error, empty model output, model
+      // echoing the input, etc.). The `<>`-strip is a defensive cleanup
+      // since frontends use textContent and shouldn't render HTML, but a
+      // model that echoes injected markup shouldn't get a chance.
+      const tryTranslate = async (src) => {
+        try {
+          const resp = await this.env.AI.run('@cf/meta/m2m100-1.2b', {
+            text,
+            source_lang: src,
+            target_lang: targetLang,
+          });
+          const out = (resp && typeof resp.translated_text === 'string'
+            ? resp.translated_text : '').replace(/[<>]/g, '').trim();
+          return out;
+        } catch (e) {
+          console.error('translate AI.run failed src=' + src + ':', e && e.message);
+          return '';
+        }
+      };
+      // Helper: identify source language via a small instruct LLM. Used
+      // when the client sends source 'auto' (heuristics couldn't confidently
+      // identify the source). llama-3.2-1b is plenty for "what language is
+      // this" since the answer is a 2-character ISO code; max_tokens kept
+      // tight to avoid hallucinated explanations. Returns null on any
+      // failure (model error, malformed output, ambiguous text). Cost:
+      // single AI call, ~500ms typical. Output validation extracts the
+      // first 2-letter token to tolerate occasional padding or punctuation.
+      const detectLanguage = async (txt) => {
+        try {
+          const resp = await this.env.AI.run('@cf/meta/llama-3.2-1b-instruct', {
+            messages: [
+              { role: 'system', content: 'You identify languages. Respond with only a 2-letter lowercase ISO 639-1 language code (en, cs, pl, de, fr, it, es, ru, zh, ja, ar, etc.), nothing else. No punctuation, no explanation.' },
+              { role: 'user', content: 'What language is this text? ' + txt.slice(0, 400) },
+            ],
+            max_tokens: 8,
+            temperature: 0,
+          });
+          const out = (resp && typeof resp.response === 'string' ? resp.response : '').trim().toLowerCase();
+          const m = out.match(/\b([a-z]{2})\b/);
+          return m ? m[1] : null;
+        } catch (e) {
+          console.error('language detect failed:', e && e.message);
+          return null;
+        }
+      };
+      // Last-resort: have the LLM translate directly. m2m100 expects
+      // properly-accented input; diacritic-less text (e.g., "Plzen zdravi
+      // sveho bratrance" instead of "Plzeň zdraví svého bratrance") often
+      // produces empty/unchanged output. llama-3.2-1b's multilingual
+      // training handles unaccented variants more gracefully. Quality is
+      // lower than purpose-built translation models but reliably non-empty.
+      const translateViaLLM = async (txt, tgtLang) => {
+        const langName = ({
+          en:'English', cs:'Czech', pl:'Polish', de:'German', fr:'French',
+          it:'Italian', es:'Spanish', ru:'Russian', zh:'Chinese',
+          ja:'Japanese', ko:'Korean', ar:'Arabic', pt:'Portuguese',
+          nl:'Dutch', tr:'Turkish', uk:'Ukrainian', he:'Hebrew', hi:'Hindi',
+          th:'Thai', el:'Greek', sk:'Slovak', hu:'Hungarian', ro:'Romanian',
+          sv:'Swedish', no:'Norwegian', da:'Danish', fi:'Finnish',
+        })[tgtLang] || tgtLang;
+        try {
+          const resp = await this.env.AI.run('@cf/meta/llama-3.2-1b-instruct', {
+            messages: [
+              { role: 'system', content: 'You translate text. Respond with only the translation. No explanation, no labels, no quotes around the output.' },
+              { role: 'user', content: 'Translate this to ' + langName + ':\n\n' + txt.slice(0, 1000) },
+            ],
+            max_tokens: 400,
+            temperature: 0.1,
+          });
+          const out = (resp && typeof resp.response === 'string' ? resp.response : '').replace(/[<>]/g, '').trim();
+          return out;
+        } catch (e) {
+          console.error('LLM translate failed:', e && e.message);
+          return '';
+        }
+      };
+      let translated = '';
+      if (source && source !== 'auto') {
+        // Client supplied a confident guess (guessLatinLang result or a
+        // non-Latin script default). Trust it; one m2m100 call.
+        translated = await tryTranslate(source);
+      } else {
+        // Source unknown. LLM identifies, then m2m100 translates. Total:
+        // 2 AI calls per first-time translation, both cached after.
+        const detected = await detectLanguage(text);
+        if (detected && detected !== targetLang) {
+          translated = await tryTranslate(detected);
+        }
+        // Fallback chain if LLM detection failed entirely OR m2m100
+        // rejected the detected source.
+        if (!translated) {
+          const candidates = ['cs', 'pl', 'de'];
+          const inputLower = text.toLowerCase();
+          for (const candidate of candidates) {
+            if (candidate === targetLang) continue;
+            const result = await tryTranslate(candidate);
+            if (result && result.toLowerCase() !== inputLower) {
+              translated = result;
+              break;
+            }
+          }
+        }
       }
-      const rawTranslated = aiResp && typeof aiResp.translated_text === 'string'
-        ? aiResp.translated_text : '';
-      // Defensive strip of HTML-significant characters before storing/serving.
-      // Frontends use textContent so this isn't a primary defense, but a
-      // model that echoes injected `<script>` markers shouldn't get a chance
-      // to be rendered as HTML by any future consumer.
-      const translated = rawTranslated.replace(/[<>]/g, '');
+      // Final fallback: m2m100 produced nothing useful through any path.
+      // Most often this is diacritic-less text (Czech/Polish/Slovak typed
+      // without accents) that m2m100 can't handle. Ask the LLM to translate
+      // directly; output quality is lower but reliably non-empty.
+      if (!translated) {
+        translated = await translateViaLLM(text, targetLang);
+        // Guard against the LLM echoing the input verbatim or returning
+        // a refusal like "I cannot translate this." A simple identity
+        // check catches echoes; refusals are accepted as-is since they
+        // at least give the user something.
+        if (translated && translated.toLowerCase() === text.toLowerCase()) {
+          translated = '';
+        }
+      }
       if (!translated) {
         return new Response('Translation returned empty result',
           { status: 502, headers: { 'Content-Type': 'text/plain', ...corsHdrs } });
