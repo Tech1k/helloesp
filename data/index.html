@@ -1028,13 +1028,13 @@
                 <span class="power-label">Total</span>
                 <span class="power-value" id="power-total">—</span>
             </span>
-            <span class="power-item" id="power-cost-wrap" style="display:none;">
+            <span class="power-item" id="power-cost-wrap">
                 <span class="power-label">Cost</span>
-                <span class="power-value" id="power-cost"></span>
+                <span class="power-value" id="power-cost">&hellip;</span>
             </span>
-            <span class="power-item" id="power-co2-wrap" style="display:none;">
+            <span class="power-item" id="power-co2-wrap">
                 <span class="power-label">CO<sub>2</sub></span>
-                <span class="power-value" id="power-co2"></span>
+                <span class="power-value" id="power-co2">&hellip;</span>
             </span>
         </div>
     </div>
@@ -1160,12 +1160,16 @@
     <div class="log">
         <div class="section-label"><i class="fa-solid fa-list"></i> Changelog <a class="section-rss" href="/changelog.rss" aria-label="Subscribe to changelog via RSS" title="Subscribe via RSS"><i class="fa-solid fa-rss"></i></a></div>
         <div class="log-entry">
+            <div class="log-date">May 8, 2026</div>
+            <div class="log-text"><a href="/chronicle">/chronicle</a> got a few quality-of-life updates. Today's in-progress entry shows above the archive, refreshing as the chip writes more of the day. Filter chips slice the archive to just milestones, records, anomalies, busy days, or quiet days. Each entry has a share button, and arrow keys step between days on entry pages. Guestbook translation got smarter too: better source-language detection so casual English no longer trips the translate button, and previously-untranslatable diacritic-less Czech, Polish, and Italian now translate correctly.</div>
+        </div>
+        <div class="log-entry">
             <div class="log-date">May 6, 2026</div>
             <div class="log-text">Chronicle entries now align to the chip's local timezone instead of UTC, so each day's entry covers the chip's actual day from where it's running. The chip also notices when one of its sensors stops working, retires it, and writes a chronicle entry about the loss. Behind the scenes, archive folders moved to a year-grouped layout so the chip can run for decades without slowing down. Firmware 1.4 also drops the boot-time CSV migrations to free flash for future features; pre-1.3 installs need to flash 1.3 first.</div>
         </div>
         <div class="log-entry">
             <div class="log-date">May 4, 2026</div>
-            <div class="log-text">Added /chronicle: a daily entry the chip writes about itself. Auto-generated from sensor readings, visitors, and weather, archived from today onward. Each midnight the day's snapshot freezes into a permanent entry. Five starter templates pick the right shape for the day (busy, quiet, anomaly, milestone, generic), and there's a permalink for every entry. Each new entry also crossposts to X.</div>
+            <div class="log-text">Added <a href="/chronicle">/chronicle</a>: a daily entry the chip writes about itself. Auto-generated from sensor readings, visitors, and weather, archived from today onward. Each midnight the day's snapshot freezes into a permanent entry. Five starter templates pick the right shape for the day (busy, quiet, anomaly, milestone, generic), and there's a permalink for every entry. Each new entry also crossposts to X.</div>
         </div>
         <div class="log-entry">
             <div class="log-date">May 3, 2026</div>
@@ -1175,11 +1179,11 @@
             <div class="log-date">May 1, 2026</div>
             <div class="log-text">The site can now track its own electricity use with an optional smart plug. The homepage shows live wattage and lifetime energy, plus cost and CO&#x2082; if you set your grid rate. Outdoor weather card grew with air quality, UV index, atmospheric CO&#x2082;, dewpoint, and pressure trend, and the icons now match the time of day.</div>
         </div>
-        <div class="log-entry">
+        <div class="log-entry log-older hidden">
             <div class="log-date">Apr 29, 2026</div>
             <div class="log-text">Added a DS3231 real-time clock module on the breadboard. Boot logs and timestamps are correct right away instead of being wrong for a few seconds until NTP syncs. History page got a year-grouped collapsible layout that stays readable as archives pile up over time. New <a href="/about">/about</a> page with the short version of the project story for casual visitors.</div>
         </div>
-        <div class="log-entry">
+        <div class="log-entry log-older hidden">
             <div class="log-date">Apr 27, 2026</div>
             <div class="log-text">Snake now has a global leaderboard. Top 10 with 3-letter initials, shared across the 404, offline, and timeout pages. Anti-cheat is server-side: the worker hands out a seed at game start, you submit your move log on game over, and the worker replays it to confirm the score. Only way onto the board is actually playing.</div>
         </div>
@@ -1781,7 +1785,7 @@
                             costEl.textContent = '…';
                         }
                         if (costWrap) costWrap.style.display = '';
-                    } else if (costWrap) {
+                    } else if (costWrap && ratesLoaded) {
                         costWrap.style.display = 'none';
                     }
                     // Lifetime CO2 segment. Tiered: sub-1 kg shows in
@@ -1808,7 +1812,7 @@
                             co2El.textContent = '…';
                         }
                         if (co2Wrap) co2Wrap.style.display = '';
-                    } else if (co2Wrap) {
+                    } else if (co2Wrap && ratesLoaded) {
                         co2Wrap.style.display = 'none';
                     }
                     pb.classList.add('live');
@@ -2093,44 +2097,44 @@
     // when the rate is 0 (forker default) so we don't render orphan dots.
     var lifetimeCostPerKwh = 0;
     var lifetimeCo2PerKwh  = 0;
+    // ratesLoaded flips true after records.json returns (success or 404).
+    // Until it flips, the SSE handler must not hide the cost/CO2 wraps
+    // even when its local rate vars read 0, otherwise the inline "…"
+    // placeholder baked into the HTML would disappear before records.json
+    // has a chance to confirm whether rates are actually configured.
+    var ratesLoaded = false;
     // loadBestUptime fetches /records.json and populates: (1) the
     // lifetime cost + CO2 rates used by the homepage banner, (2) the
     // longest-uptime "Best" substat. Deferred ~1200ms post-load so it
     // doesn't pile onto the earlier on-load fetches.
+    // Resolve the cost/CO2 wrap state once records.json is in (or has
+    // failed). Wraps render with an inline "…" placeholder by default so
+    // visitors see them immediately on first paint; if rates aren't set
+    // we hide them here. On fetch failure we leave the placeholder in
+    // place rather than hide, since we don't know whether rates exist.
+    function resolveRateWraps() {
+        ratesLoaded = true;
+        if (lifetimeCostPerKwh <= 0) {
+            var costWrap = document.getElementById('power-cost-wrap');
+            if (costWrap) costWrap.style.display = 'none';
+        }
+        if (lifetimeCo2PerKwh <= 0) {
+            var co2Wrap = document.getElementById('power-co2-wrap');
+            if (co2Wrap) co2Wrap.style.display = 'none';
+        }
+    }
     setTimeout(function loadBestUptime() {
         fetch('/records.json').then(function(r) {
             return r.ok ? r.json() : null;
         }).then(function(data) {
-            if (!data) return;
+            if (!data) { resolveRateWraps(); return; }
             if (Number.isFinite(data.cost_per_kwh) && data.cost_per_kwh > 0) {
                 lifetimeCostPerKwh = data.cost_per_kwh;
             }
             if (Number.isFinite(data.co2_per_kwh) && data.co2_per_kwh > 0) {
                 lifetimeCo2PerKwh = data.co2_per_kwh;
             }
-            // Reveal cost/CO₂ wraps with a placeholder as soon as we know
-            // they're configured, so visitors see them even before the
-            // first /stats event fires (or when the chip is offline). The
-            // /stats render path overwrites the placeholder with the real
-            // value when energy_total_wh arrives. Without this, forks with
-            // rates configured still showed nothing for several seconds
-            // post-load while waiting for SSE; visitors mostly missed it.
-            if (lifetimeCostPerKwh > 0) {
-                var costWrap = document.getElementById('power-cost-wrap');
-                var costEl = document.getElementById('power-cost');
-                if (costWrap && costEl && !costEl.textContent) {
-                    costEl.textContent = '…';
-                    costWrap.style.display = '';
-                }
-            }
-            if (lifetimeCo2PerKwh > 0) {
-                var co2Wrap = document.getElementById('power-co2-wrap');
-                var co2El = document.getElementById('power-co2');
-                if (co2Wrap && co2El && !co2El.textContent) {
-                    co2El.textContent = '…';
-                    co2Wrap.style.display = '';
-                }
-            }
+            resolveRateWraps();
             var el = document.getElementById('uptime_sub');
             if (!el) return;
             var best = data.longest_uptime_d;

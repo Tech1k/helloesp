@@ -4576,6 +4576,8 @@ void setup() {
             rss += text;
             rss += "</description></item>";
         };
+        item("May 8, 2026", "Fri, 08 May 2026 12:00:00 GMT",
+             "/chronicle got a few quality-of-life updates. Today's in-progress entry shows above the archive, refreshing as the chip writes more of the day. Filter chips slice the archive to just milestones, records, anomalies, busy days, or quiet days. Each entry has a share button, and arrow keys step between days on entry pages. Guestbook translation got smarter too: better source-language detection so casual English no longer trips the translate button, and previously-untranslatable diacritic-less Czech, Polish, and Italian now translate correctly.");
         item("May 6, 2026", "Wed, 06 May 2026 12:00:00 GMT",
              "Chronicle entries now align to the chip's local timezone instead of UTC, so each day's entry covers the chip's actual day from where it's running. The chip also notices when one of its sensors stops working, retires it, and writes a chronicle entry about the loss. Behind the scenes, archive folders moved to a year-grouped layout so the chip can run for decades without slowing down. Firmware 1.4 also drops the boot-time CSV migrations to free flash for future features; pre-1.3 installs need to flash 1.3 first.");
         item("May 4, 2026", "Mon, 04 May 2026 12:00:00 GMT",

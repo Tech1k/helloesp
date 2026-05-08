@@ -894,6 +894,82 @@ export class EspRelay {
     this._chroniclePushToChip(entry);
   }
 
+  // Full DO storage snapshot to R2. Chronicle entries already get per-seal
+  // backups, but other DO state (snake leaderboard + season archives + replays,
+  // weather/AQ caches, operational flags) lives only in DO. A daily catch-all
+  // snapshot to R2 means DO loss (CF outage, bug-driven mass delete, accidental
+  // DO Explorer click) is recoverable from at most yesterday's state. Per-key
+  // backups would be more current but more invasive; daily JSON is the lowest-
+  // surface-area fix. Output: state/do-snapshot/YYYY-MM-DD.json with all keys.
+  async _doSnapshot() {
+    if (!this.env.BACKUP) return;
+    const today = this._todayUtc();
+    const allKeys = {};
+    let cursor;
+    // Cursor-paginate the DO list since the per-call cap is 1000. With ~100
+    // keys today this is one call; future-safe past year-3 chronicle scaling.
+    while (true) {
+      const opts = { limit: 1000 };
+      if (cursor) opts.start = cursor;
+      const page = await this.state.storage.list(opts);
+      if (page.size === 0) break;
+      let lastKey = null;
+      for (const [k, v] of page) {
+        lastKey = k;
+        allKeys[k] = v;
+      }
+      if (page.size < 1000 || !lastKey) break;
+      cursor = lastKey + '\x00';
+    }
+    const payload = {
+      snapshot_at: Math.floor(Date.now() / 1000),
+      snapshot_date: today,
+      key_count: Object.keys(allKeys).length,
+      data: allKeys,
+    };
+    try {
+      await this.env.BACKUP.put('state/do-snapshot/' + today + '.json',
+        JSON.stringify(payload),
+        { httpMetadata: { contentType: 'application/json' } });
+    } catch (e) {
+      console.error('do-snapshot R2 write failed:', e && e.message);
+      return;
+    }
+    await this.state.storage.put('lastDoSnapshotDate', today);
+    console.log('do-snapshot: wrote', today, 'with', payload.key_count, 'keys');
+    // Prune snapshots older than 30 days. R2 storage is cheap but unbounded
+    // growth is messy; 30 days is plenty of recovery window.
+    try {
+      const cutoff = new Date();
+      cutoff.setUTCDate(cutoff.getUTCDate() - 30);
+      const cutoffStr = cutoff.toISOString().slice(0, 10);
+      const list = await this.env.BACKUP.list({ prefix: 'state/do-snapshot/' });
+      const toDelete = [];
+      for (const obj of (list.objects || [])) {
+        const m = obj.key.match(/state\/do-snapshot\/(\d{4}-\d{2}-\d{2})\.json$/);
+        if (m && m[1] < cutoffStr) toDelete.push(obj.key);
+      }
+      if (toDelete.length) {
+        await this.env.BACKUP.delete(toDelete);
+        console.log('do-snapshot: pruned', toDelete.length, 'old snapshots');
+      }
+    } catch (e) {
+      console.error('do-snapshot prune failed:', e && e.message);
+      // Non-fatal: snapshot was written, prune is best-effort.
+    }
+  }
+
+  // Once-per-UTC-day gate on _doSnapshot. Called from alarm(), short-circuits
+  // most of the time after the first call each day. Storage check is cheap
+  // (single get), much cheaper than redundantly snapshotting on every alarm.
+  async _maybeDoSnapshot() {
+    if (!this.env.BACKUP) return;
+    const today = this._todayUtc();
+    const last = await this.state.storage.get('lastDoSnapshotDate');
+    if (last === today) return;
+    await this._doSnapshot();
+  }
+
   _chronicleNewSnapshot(date) {
     return {
       date,
@@ -3967,6 +4043,13 @@ export class EspRelay {
     // actually happened (then 1 read + 2 writes).
     this._chronicleMaybeSeal().catch(() => {});
 
+    // Daily DO storage snapshot to R2. Once-per-UTC-day catch-all so any
+    // non-chronicle DO state (snake leaderboards + seasons + replays,
+    // operational flags, caches) is recoverable from yesterday if DO ever
+    // gets wiped. Short-circuits cheaply after the first call each day.
+    this._maybeDoSnapshot().catch(e =>
+      console.error('do-snapshot alarm failed:', e && e.message));
+
     // lazy weather refresh: fetch on first tick, then every WEATHER_REFRESH_MS (1 hour)
     if (!this.lastWeather || Date.now() - this.lastWeather.fetched_at > WEATHER_REFRESH_MS) {
       this.refreshWeather().catch(() => {});
@@ -4821,6 +4904,79 @@ export class EspRelay {
           ...SEC_HEADERS
         }
       });
+    }
+
+    // DO Storage Explorer: read-only inspection plus delete-by-key for the
+    // worker's Durable Object storage. Used by the admin panel's DO Explorer
+    // section. Auth via Authorization: Bearer WORKER_SECRET header so the
+    // secret never appears in URLs (history, referrer, server logs). Same
+    // trust model as other admin tooling: LAN admin page reaches across
+    // origin to the worker, operator pastes secret once per browser session.
+    // Per-IP rate limit prevents a leaked secret from being used for bulk
+    // scraping. No write/put endpoint, only read + delete: editing arbitrary
+    // DO state from a UI is too easy to misuse and not needed for debugging.
+    if (url.pathname.startsWith('/admin/do/')) {
+      const corsHdrs = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Authorization',
+        'Access-Control-Max-Age': '600',
+      };
+      if (request.method === 'OPTIONS') {
+        return new Response(null, { status: 204, headers: corsHdrs });
+      }
+      const authHeader = request.headers.get('Authorization') || '';
+      const bm = authHeader.match(/^Bearer\s+(.+)$/);
+      const providedKey = bm ? bm[1] : '';
+      if (!providedKey || !timingSafeEqualStr(providedKey, this.env.WORKER_SECRET || '')) {
+        return new Response('Unauthorized', { status: 401, headers: corsHdrs });
+      }
+      // Per-IP rate limit. 30/min for DO ops; mirror /guestbook/translate
+      // pattern. Bulk scraping a 1000-key DO would still take ~30 minutes
+      // even with a leaked secret, giving time to rotate.
+      const dIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+      const dNow = Date.now();
+      let drl = this.rateLimits.get('doadmin:' + dIP);
+      if (!drl || dNow > drl.resetAt) {
+        drl = { count: 0, resetAt: dNow + 60000 };
+        this.rateLimits.set('doadmin:' + dIP, drl);
+      }
+      drl.count++;
+      if (drl.count > 30) {
+        return new Response('Rate limit exceeded; try again in a minute',
+          { status: 429, headers: corsHdrs });
+      }
+      const jsonHdrs = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...corsHdrs };
+      if (url.pathname === '/admin/do/list' && request.method === 'GET') {
+        const prefix = url.searchParams.get('prefix') || '';
+        const limit = Math.min(1000, Math.max(1, parseInt(url.searchParams.get('limit') || '500', 10)));
+        if (prefix.length > 100) return new Response('Bad prefix', { status: 400, headers: corsHdrs });
+        const opts = { limit };
+        if (prefix) opts.prefix = prefix;
+        const list = await this.state.storage.list(opts);
+        const items = [];
+        for (const [k, v] of list) {
+          let size = 0;
+          try { size = JSON.stringify(v).length; } catch (e) {}
+          items.push({ key: k, size });
+        }
+        return new Response(JSON.stringify({ items, count: items.length }), { status: 200, headers: jsonHdrs });
+      }
+      if (url.pathname === '/admin/do/get' && request.method === 'GET') {
+        const k = url.searchParams.get('k') || '';
+        if (!k || k.length > 200) return new Response('Bad key', { status: 400, headers: corsHdrs });
+        const val = await this.state.storage.get(k);
+        if (val === undefined) return new Response('Key not found', { status: 404, headers: corsHdrs });
+        return new Response(JSON.stringify({ key: k, value: val }), { status: 200, headers: jsonHdrs });
+      }
+      if (url.pathname === '/admin/do/delete' && request.method === 'DELETE') {
+        const k = url.searchParams.get('k') || '';
+        if (!k || k.length > 200) return new Response('Bad key', { status: 400, headers: corsHdrs });
+        const existed = await this.state.storage.delete(k);
+        console.log('do/delete:', k, 'existed=', existed);
+        return new Response(JSON.stringify({ deleted: k, existed: !!existed }), { status: 200, headers: jsonHdrs });
+      }
+      return new Response('Not found', { status: 404, headers: corsHdrs });
     }
 
     // Guestbook inline translation. Powered by Workers AI @cf/meta/m2m100-1.2b

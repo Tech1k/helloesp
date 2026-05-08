@@ -450,7 +450,10 @@
         <a href="#sec-errors">Errors</a>
         <a href="#sec-files">Files</a>
         <a href="#sec-backup">Backup</a>
+        <a href="#chronicle-preview-section">Today</a>
+        <a href="#chronicle-section">Chronicle Notes</a>
         <a href="#maintenance-section" id="toc-maintenance">Maintenance</a>
+        <a href="#do-section" class="danger">DO Explorer</a>
         <a href="#sec-firmware" class="danger">Firmware</a>
         <a href="#sec-data" class="danger">Data</a>
         <a href="#sec-device" class="danger">Device</a>
@@ -628,65 +631,6 @@
         </div>
     </div>
 
-    <!-- firmware (OTA + Recovery combined) -->
-    <div class="section" id="sec-firmware">
-        <div class="section-title">Firmware</div>
-        <div class="card">
-            <div style="font-weight:500;margin-bottom:8px;">Over-the-Air Update</div>
-            <div style="font-size:12px;color:var(--mid);margin-bottom:10px;">
-                Upload a .bin and flash directly. Best when the network is reliable;
-                use the SD-flash path below for flaky links.
-            </div>
-            <input type="file" id="ota-file" accept=".bin">
-            <button class="btn" id="ota-btn" onclick="uploadOTA()">Upload Firmware</button>
-            <div class="progress" id="ota-progress"><div class="progress-bar" id="ota-bar"></div></div>
-            <div class="status" id="ota-status"></div>
-        </div>
-        <div class="card">
-            <div style="font-weight:500;margin-bottom:8px;">Recovery / SD-Flash</div>
-            <div style="font-size:12px;color:var(--mid);margin-bottom:10px;">
-                Upload .bin files to <code>/fw/</code> via the file manager, then flash them from SD here.
-                More reliable than OTA over a flaky network (upload + flash are separate steps).
-            </div>
-            <div style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px;">
-                <button class="btn btn-small" onclick="loadFirmwareList()">Refresh list</button>
-                <button class="btn btn-small btn-danger" id="rollback-btn" onclick="rollbackFirmware()" disabled>Rollback to previous partition</button>
-            </div>
-            <div id="firmware-list" style="font-size:12px;"></div>
-            <div class="status" id="firmware-status"></div>
-        </div>
-    </div>
-
-    <!-- data management -->
-    <div class="section" id="sec-data">
-        <div class="section-title">Data Management</div>
-        <div class="card">
-            <div style="margin-bottom:16px;">
-                <a href="/admin/export" download="helloesp-state.json" class="btn btn-small">Export state (JSON)</a>
-            </div>
-            <div style="font-size:12px;color:var(--mid);margin-bottom:10px;">Reset counters (destructive, no undo):</div>
-            <div style="display:flex;flex-wrap:wrap;gap:8px;">
-                <button class="btn btn-small btn-danger" onclick="resetCounter('visitors')">Visitors</button>
-                <button class="btn btn-small btn-danger" onclick="resetCounter('countries')">Countries</button>
-                <button class="btn btn-small btn-danger" onclick="resetCounter('periods')">Periods</button>
-                <button class="btn btn-small btn-danger" onclick="resetCounter('all')">All</button>
-            </div>
-            <div class="status" id="reset-status"></div>
-            <div style="font-size:12px;color:var(--mid);margin:18px 0 10px;">Repair monthly/yearly counters from existing weekly archives. Use after a stats reset to recover lost month/year totals.</div>
-            <div style="display:flex;flex-wrap:wrap;gap:8px;">
-                <button class="btn btn-small" onclick="repairPeriods(this)">Repair from weekly archives</button>
-                <button class="btn btn-small" onclick="fixRecordTimestamps(this)">Fix truncated record timestamps</button>
-                <button class="btn btn-small" onclick="sanitizeCsvs(this)">Drop out-of-spec CSV rows</button>
-            </div>
-            <div class="status" id="repair-status"></div>
-            <div style="font-size:12px;color:var(--mid);margin:18px 0 10px;">Snake leaderboard (Worker-side, public top 10):</div>
-            <div style="display:flex;flex-wrap:wrap;gap:8px;">
-                <button class="btn btn-small btn-danger" onclick="clearSnakeLeaderboard()">Clear leaderboard</button>
-            </div>
-            <div class="status" id="snake-clear-status"></div>
-        </div>
-    </div>
-
     <!-- chronicle today preview -->
     <div class="section" id="chronicle-preview-section">
         <div class="section-title">Chronicle: Today (in progress)</div>
@@ -761,6 +705,114 @@
                    maxlength="200"
                    style="width:100%;padding:8px;font-family:inherit;font-size:12px;border:1px solid var(--faint);background:var(--bg);color:var(--ink);margin-bottom:4px;">
             <div class="status" id="maintenance-status"></div>
+        </div>
+    </div>
+
+    <!-- DO Storage Explorer -->
+    <div class="section" id="do-section">
+        <div class="section-title">DO Storage Explorer</div>
+        <div class="card">
+            <div style="font-size:12px;color:var(--mid);line-height:1.7;margin-bottom:14px;">
+                Inspect Durable Object storage keys directly. Read-only plus delete-by-key
+                for incident recovery. Requires the worker secret (the same key your chip
+                uses for WS auth). Cached in this browser session only; closing the tab
+                forgets it.
+            </div>
+            <div id="do-auth-row" style="display:flex;gap:8px;align-items:center;margin-bottom:0;">
+                <input type="password" id="do-secret" placeholder="Worker secret"
+                       autocomplete="off" spellcheck="false"
+                       style="flex:1;font-family:ui-monospace,monospace;font-size:12px;padding:6px 8px;background:transparent;color:var(--ink);border:1px solid var(--faint);border-radius:3px;">
+                <button type="button" class="btn" id="do-connect" style="font-size:11px;">Connect</button>
+            </div>
+            <div id="do-tools" style="display:none;">
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+                    <select id="do-prefix" style="font-size:12px;padding:5px 8px;background:transparent;color:var(--ink);border:1px solid var(--faint);border-radius:3px;">
+                        <option value="">(all keys)</option>
+                        <option value="chronicle/">chronicle/</option>
+                        <option value="sensor_retired/">sensor_retired/</option>
+                        <option value="snake/">snake/</option>
+                        <option value="translate:">translate:</option>
+                    </select>
+                    <input type="text" id="do-search" placeholder="filter keys (substring)"
+                           autocomplete="off" spellcheck="false"
+                           style="flex:1;min-width:140px;font-size:12px;padding:5px 8px;background:transparent;color:var(--ink);border:1px solid var(--faint);border-radius:3px;">
+                    <button type="button" class="btn" id="do-refresh" style="font-size:11px;">Refresh</button>
+                    <button type="button" class="btn" id="do-disconnect" style="font-size:11px;">Disconnect</button>
+                </div>
+                <div id="do-list" style="border:1px solid var(--faint);border-radius:3px;max-height:240px;overflow-y:auto;font-family:ui-monospace,monospace;font-size:12px;background:transparent;">
+                    <div style="padding:12px;color:var(--mid);font-style:italic;">Loading...</div>
+                </div>
+                <div id="do-detail" style="display:none;margin-top:14px;">
+                    <div style="font-size:11px;color:var(--mid);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:6px;font-family:ui-monospace,monospace;">
+                        <span id="do-detail-key"></span> <span id="do-detail-size"></span>
+                    </div>
+                    <pre id="do-detail-value" style="background:rgba(0,0,0,0.04);padding:10px;border-radius:3px;font-size:12px;max-height:400px;overflow:auto;white-space:pre-wrap;word-break:break-all;font-family:ui-monospace,monospace;color:var(--ink);"></pre>
+                    <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
+                        <button type="button" class="btn" id="do-delete-btn" style="font-size:11px;color:#b02030;border-color:#b02030;">Delete this key…</button>
+                        <span style="font-size:10px;color:var(--mid);">Type-to-confirm prompt before deletion.</span>
+                    </div>
+                </div>
+                <div id="do-status" style="font-size:11px;color:var(--mid);margin-top:10px;min-height:14px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- firmware (OTA + Recovery combined) -->
+    <div class="section" id="sec-firmware">
+        <div class="section-title">Firmware</div>
+        <div class="card">
+            <div style="font-weight:500;margin-bottom:8px;">Over-the-Air Update</div>
+            <div style="font-size:12px;color:var(--mid);margin-bottom:10px;">
+                Upload a .bin and flash directly. Best when the network is reliable;
+                use the SD-flash path below for flaky links.
+            </div>
+            <input type="file" id="ota-file" accept=".bin">
+            <button class="btn" id="ota-btn" onclick="uploadOTA()">Upload Firmware</button>
+            <div class="progress" id="ota-progress"><div class="progress-bar" id="ota-bar"></div></div>
+            <div class="status" id="ota-status"></div>
+        </div>
+        <div class="card">
+            <div style="font-weight:500;margin-bottom:8px;">Recovery / SD-Flash</div>
+            <div style="font-size:12px;color:var(--mid);margin-bottom:10px;">
+                Upload .bin files to <code>/fw/</code> via the file manager, then flash them from SD here.
+                More reliable than OTA over a flaky network (upload + flash are separate steps).
+            </div>
+            <div style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px;">
+                <button class="btn btn-small" onclick="loadFirmwareList()">Refresh list</button>
+                <button class="btn btn-small btn-danger" id="rollback-btn" onclick="rollbackFirmware()" disabled>Rollback to previous partition</button>
+            </div>
+            <div id="firmware-list" style="font-size:12px;"></div>
+            <div class="status" id="firmware-status"></div>
+        </div>
+    </div>
+
+    <!-- data management -->
+    <div class="section" id="sec-data">
+        <div class="section-title">Data Management</div>
+        <div class="card">
+            <div style="margin-bottom:16px;">
+                <a href="/admin/export" download="helloesp-state.json" class="btn btn-small">Export state (JSON)</a>
+            </div>
+            <div style="font-size:12px;color:var(--mid);margin-bottom:10px;">Reset counters (destructive, no undo):</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                <button class="btn btn-small btn-danger" onclick="resetCounter('visitors')">Visitors</button>
+                <button class="btn btn-small btn-danger" onclick="resetCounter('countries')">Countries</button>
+                <button class="btn btn-small btn-danger" onclick="resetCounter('periods')">Periods</button>
+                <button class="btn btn-small btn-danger" onclick="resetCounter('all')">All</button>
+            </div>
+            <div class="status" id="reset-status"></div>
+            <div style="font-size:12px;color:var(--mid);margin:18px 0 10px;">Repair monthly/yearly counters from existing weekly archives. Use after a stats reset to recover lost month/year totals.</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                <button class="btn btn-small" onclick="repairPeriods(this)">Repair from weekly archives</button>
+                <button class="btn btn-small" onclick="fixRecordTimestamps(this)">Fix truncated record timestamps</button>
+                <button class="btn btn-small" onclick="sanitizeCsvs(this)">Drop out-of-spec CSV rows</button>
+            </div>
+            <div class="status" id="repair-status"></div>
+            <div style="font-size:12px;color:var(--mid);margin:18px 0 10px;">Snake leaderboard (Worker-side, public top 10):</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                <button class="btn btn-small btn-danger" onclick="clearSnakeLeaderboard()">Clear leaderboard</button>
+            </div>
+            <div class="status" id="snake-clear-status"></div>
         </div>
     </div>
 
@@ -3595,6 +3647,12 @@
                     return;
                 }
                 var dayLabel = p.day_number ? 'Day ' + p.day_number + ' &middot; ' : '';
+                // Use unicode · directly (not the HTML entity &middot;) since
+                // ageStr is assigned via textContent below. Entities would
+                // render as literal characters there, and any HTML-stripping
+                // sanitization on the way out is both redundant and (per
+                // CodeQL) susceptible to nested-tag bypasses if ever migrated
+                // to innerHTML. Keeping the source clean is the right defense.
                 var ageStr = p.snapshot_age_seconds != null
                     ? ' · ' + p.snapshot_age_seconds + 's since last sample'
                     : '';
@@ -3625,6 +3683,9 @@
                   + '<div style="margin-top:8px;white-space:pre-line;">' + esc(p.body) + '</div>'
                   + statBar;
                 if (statusEl) {
+                    // textContent doesn't parse HTML, so no sanitization needed.
+                    // ageStr is built locally above with unicode · already, so
+                    // no entity-decoding pass is needed either.
                     statusEl.textContent = 'Updated' + ageStr;
                 }
             })
@@ -3635,6 +3696,231 @@
     }
     var chronicleRefreshBtn = document.getElementById('chronicle-preview-refresh');
     if (chronicleRefreshBtn) chronicleRefreshBtn.addEventListener('click', loadChronicleTodayPreview);
+
+    // DO Storage Explorer. Read-only inspection plus delete-by-key for the
+    // worker's Durable Object storage. Operator types WORKER_SECRET once,
+    // page caches in sessionStorage (cleared on tab close, never on disk).
+    // All worker calls use Authorization: Bearer header so the secret never
+    // appears in URLs (history, referrer headers, server logs). The worker
+    // proxy pattern (cross-origin from chip-served LAN admin to public worker
+    // endpoints) mirrors the existing /chronicle/translate flow used by the
+    // guestbook, so CORS handling is already in place worker-side.
+    (function () {
+        var sessionKey = 'do-explorer-secret';
+        var workerSecret = '';
+        try { workerSecret = sessionStorage.getItem(sessionKey) || ''; } catch (e) {}
+        var WORKER_BASE = (location.host === 'helloesp.com' || location.host === 'www.helloesp.com')
+            ? '' : 'https://helloesp.com';
+        var authRow = document.getElementById('do-auth-row');
+        var tools = document.getElementById('do-tools');
+        var secretInput = document.getElementById('do-secret');
+        var connectBtn = document.getElementById('do-connect');
+        var disconnectBtn = document.getElementById('do-disconnect');
+        var prefixSel = document.getElementById('do-prefix');
+        var searchInput = document.getElementById('do-search');
+        var refreshBtn = document.getElementById('do-refresh');
+        var listEl = document.getElementById('do-list');
+        var detailEl = document.getElementById('do-detail');
+        var detailKey = document.getElementById('do-detail-key');
+        var detailSize = document.getElementById('do-detail-size');
+        var detailValue = document.getElementById('do-detail-value');
+        var deleteBtn = document.getElementById('do-delete-btn');
+        var statusEl = document.getElementById('do-status');
+        var lastItems = [];
+        var selectedKey = null;
+        function setStatus(msg, isErr) {
+            if (!statusEl) return;
+            statusEl.textContent = msg || '';
+            statusEl.style.color = isErr ? '#b02030' : 'var(--mid)';
+        }
+        function showTools(show) {
+            if (authRow) authRow.style.display = show ? 'none' : 'flex';
+            if (tools) tools.style.display = show ? '' : 'none';
+            if (!show && detailEl) detailEl.style.display = 'none';
+        }
+        function fetchDO(path, method) {
+            method = method || 'GET';
+            return fetch(WORKER_BASE + path, {
+                method: method,
+                headers: { 'Authorization': 'Bearer ' + workerSecret },
+                cache: 'no-store',
+            }).then(function (r) {
+                if (r.status === 401) {
+                    workerSecret = '';
+                    try { sessionStorage.removeItem(sessionKey); } catch (e) {}
+                    showTools(false);
+                    setStatus('Unauthorized. Reconnect with the correct secret.', true);
+                    throw new Error('Unauthorized');
+                }
+                return r.text().then(function (txt) {
+                    var body = null;
+                    try { body = JSON.parse(txt); } catch (e) { body = txt; }
+                    return { ok: r.ok, status: r.status, body: body };
+                });
+            });
+        }
+        function fmtSize(n) {
+            if (n < 1024) return n + ' B';
+            if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+            return (n / (1024 * 1024)).toFixed(2) + ' MB';
+        }
+        function renderList(items, search) {
+            var filtered = search
+                ? items.filter(function (it) { return it.key.toLowerCase().indexOf(search) >= 0; })
+                : items;
+            if (!filtered.length) {
+                listEl.textContent = '';
+                var empty = document.createElement('div');
+                empty.style.cssText = 'padding:12px;color:var(--mid);font-style:italic;';
+                empty.textContent = 'No keys match.';
+                listEl.appendChild(empty);
+                return;
+            }
+            // Build via DOM nodes (not innerHTML) so DO key strings can't
+            // inject HTML even in the unlikely event they contain markup.
+            listEl.textContent = '';
+            for (var i = 0; i < filtered.length; i++) {
+                var it = filtered[i];
+                var row = document.createElement('div');
+                row.className = 'do-row';
+                row.setAttribute('data-key', it.key);
+                row.style.cssText = 'display:flex;justify-content:space-between;padding:6px 12px;cursor:pointer;border-bottom:1px solid var(--faint);';
+                var keySpan = document.createElement('span');
+                keySpan.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+                keySpan.textContent = it.key;
+                var sizeSpan = document.createElement('span');
+                sizeSpan.style.cssText = 'color:var(--mid);font-size:10px;flex-shrink:0;margin-left:8px;';
+                sizeSpan.textContent = fmtSize(it.size);
+                row.appendChild(keySpan);
+                row.appendChild(sizeSpan);
+                listEl.appendChild(row);
+            }
+        }
+        function refreshList() {
+            if (!workerSecret) return;
+            var prefix = prefixSel.value;
+            var search = (searchInput.value || '').trim().toLowerCase();
+            setStatus('Loading...');
+            listEl.textContent = '';
+            var loading = document.createElement('div');
+            loading.style.cssText = 'padding:12px;color:var(--mid);font-style:italic;';
+            loading.textContent = 'Loading...';
+            listEl.appendChild(loading);
+            var qs = prefix ? '?prefix=' + encodeURIComponent(prefix) : '';
+            fetchDO('/admin/do/list' + qs)
+                .then(function (res) {
+                    if (!res.ok) {
+                        setStatus('List failed (HTTP ' + res.status + ')', true);
+                        listEl.textContent = '';
+                        var fail = document.createElement('div');
+                        fail.style.cssText = 'padding:12px;color:#b02030;';
+                        fail.textContent = 'List failed (HTTP ' + res.status + ').';
+                        listEl.appendChild(fail);
+                        return;
+                    }
+                    var items = (res.body && res.body.items) || [];
+                    lastItems = items;
+                    renderList(items, search);
+                    setStatus(items.length + ' keys');
+                })
+                .catch(function (e) {
+                    // The 401 path throws 'Unauthorized' which already
+                    // set its own status; surface anything else (network
+                    // error, CORS, DNS) instead of leaving the loading
+                    // indicator hanging.
+                    if (e && e.message !== 'Unauthorized') {
+                        setStatus('Network error: ' + (e.message || e), true);
+                        listEl.textContent = '';
+                        var failNet = document.createElement('div');
+                        failNet.style.cssText = 'padding:12px;color:#b02030;';
+                        failNet.textContent = 'Network error.';
+                        listEl.appendChild(failNet);
+                    }
+                });
+        }
+        function loadDetail(key) {
+            selectedKey = key;
+            detailKey.textContent = key;
+            detailSize.textContent = '';
+            detailValue.textContent = 'Loading...';
+            detailEl.style.display = '';
+            fetchDO('/admin/do/get?k=' + encodeURIComponent(key))
+                .then(function (res) {
+                    if (!res.ok) {
+                        detailValue.textContent = '(failed: HTTP ' + res.status + ')';
+                        return;
+                    }
+                    var val = res.body && res.body.value;
+                    var pretty;
+                    try { pretty = JSON.stringify(val, null, 2); }
+                    catch (e) { pretty = String(val); }
+                    detailValue.textContent = pretty;
+                    detailSize.textContent = fmtSize(pretty.length);
+                })
+                .catch(function (e) {
+                    if (e && e.message !== 'Unauthorized') {
+                        detailValue.textContent = '(network error: ' + (e.message || e) + ')';
+                    }
+                });
+        }
+        function tryDelete() {
+            if (!selectedKey) return;
+            var confirmed = window.prompt(
+                'Type the full key name to confirm deletion. This cannot be undone.\n\nKey: ' + selectedKey
+            );
+            if (confirmed !== selectedKey) {
+                setStatus('Deletion cancelled (key did not match).', true);
+                return;
+            }
+            setStatus('Deleting ' + selectedKey + '...');
+            fetchDO('/admin/do/delete?k=' + encodeURIComponent(selectedKey), 'DELETE')
+                .then(function (res) {
+                    if (!res.ok) {
+                        setStatus('Delete failed (HTTP ' + res.status + ').', true);
+                        return;
+                    }
+                    setStatus('Deleted ' + selectedKey);
+                    detailEl.style.display = 'none';
+                    selectedKey = null;
+                    refreshList();
+                })
+                .catch(function (e) {
+                    if (e && e.message !== 'Unauthorized') {
+                        setStatus('Delete error: ' + (e.message || e), true);
+                    }
+                });
+        }
+        if (connectBtn) connectBtn.addEventListener('click', function () {
+            var sec = (secretInput.value || '').trim();
+            if (!sec) { setStatus('Enter a secret first.', true); return; }
+            workerSecret = sec;
+            try { sessionStorage.setItem(sessionKey, sec); } catch (e) {}
+            secretInput.value = '';
+            showTools(true);
+            refreshList();
+        });
+        if (disconnectBtn) disconnectBtn.addEventListener('click', function () {
+            workerSecret = '';
+            try { sessionStorage.removeItem(sessionKey); } catch (e) {}
+            showTools(false);
+            setStatus('');
+        });
+        if (refreshBtn) refreshBtn.addEventListener('click', refreshList);
+        if (prefixSel) prefixSel.addEventListener('change', refreshList);
+        if (searchInput) searchInput.addEventListener('input', function () {
+            renderList(lastItems, (searchInput.value || '').trim().toLowerCase());
+        });
+        if (listEl) listEl.addEventListener('click', function (e) {
+            var row = e.target.closest && e.target.closest('.do-row');
+            if (!row) return;
+            loadDetail(row.getAttribute('data-key'));
+        });
+        if (deleteBtn) deleteBtn.addEventListener('click', tryDelete);
+        if (workerSecret) {
+            showTools(true);
+            refreshList();
+        }
+    })();
 
     // Init
     loadDeviceInfo();
