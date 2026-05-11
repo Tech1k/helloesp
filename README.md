@@ -12,7 +12,7 @@ A public website running entirely on a single ESP32 with 520 KB of RAM. Every pa
 
 **Live at [helloesp.com](https://helloesp.com)**
 
-![HelloESP in its display frame](.github/assets/hero.jpg)
+![HelloESP in its display frame](.github/assets/hero.jpg?v=2)
 
 ---
 

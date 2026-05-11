@@ -671,14 +671,14 @@
 
         .carousel-track {
             display: flex;
-            width: 500%;
+            width: 600%;
             height: 100%;
             transition: transform 0.4s ease;
         }
 
         .carousel-track img,
         .carousel-track video {
-            width: 20%;
+            width: calc(100% / 6);
             height: 100%;
             object-fit: cover;
             display: block;
@@ -1130,9 +1130,10 @@
         <div class="section-label"><i class="fa-regular fa-image"></i> Photos</div>
         <div class="carousel">
             <div class="carousel-track" id="track">
-                <img src="/helloesp-framed.jpg" alt="HelloESP in its display frame" loading="lazy">
-                <video id="boot-video" src="/helloesp-boot.mp4"
-                       poster="/helloesp-boot-poster.jpg"
+                <img src="/helloesp-framed.jpg?v=2" alt="HelloESP in its display frame, May 2026" loading="lazy">
+                <img src="/helloesp-framed-2026-04.jpg" alt="HelloESP in its display frame, April 2026" loading="lazy">
+                <video id="boot-video" src="/helloesp-boot.mp4?v=2"
+                       poster="/helloesp-boot-poster.jpg?v=2"
                        muted playsinline preload="none" controls
                        controlslist="nodownload noremoteplayback noplaybackrate"
                        disablepictureinpicture
@@ -1142,7 +1143,7 @@
                 <img src="/esp8266-webserver.jpg" alt="The original ESP8266 that started it all" loading="lazy">
             </div>
         </div>
-        <div class="carousel-caption" id="caption">HelloESP in its display frame, 4/18/2026</div>
+        <div class="carousel-caption" id="caption">HelloESP in its display frame, 5/9/2026</div>
         <div class="carousel-nav">
             <button class="carousel-btn" onclick="move(-1)" aria-label="Previous photo">&#8592;</button>
             <button class="carousel-btn" onclick="move(1)" aria-label="Next photo">&#8594;</button>
@@ -1152,6 +1153,7 @@
                 <div class="carousel-dot" onclick="go(2)"></div>
                 <div class="carousel-dot" onclick="go(3)"></div>
                 <div class="carousel-dot" onclick="go(4)"></div>
+                <div class="carousel-dot" onclick="go(5)"></div>
             </div>
         </div>
     </div>
@@ -1309,13 +1311,14 @@
 
     /* carousel */
     const captions = [
+        'HelloESP in its display frame, 5/9/2026',
         'HelloESP in its display frame, 4/18/2026',
-        'Boot sequence, 4/18/2026',
+        'Boot sequence, 5/9/2026',
         'The ESP32 that hosted the previous version of this site, 3/1/2023',
         'ESP32 with BME280 sensor, 7/5/2022',
         'The original ESP8266 that started it all, 6/27/2022'
     ];
-    const TOTAL = 5;
+    const TOTAL = 6;
     let cur = 0;
     let autoTimer = null;
 
@@ -1335,7 +1338,7 @@
             d.classList.toggle('active', i === cur);
         });
         var vid = document.getElementById('boot-video');
-        if (vid && cur !== 1) vid.pause();
+        if (vid && cur !== 2) vid.pause();
     }
     function move(dir) {
         go(cur + dir);

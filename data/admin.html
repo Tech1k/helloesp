@@ -3698,17 +3698,16 @@
     if (chronicleRefreshBtn) chronicleRefreshBtn.addEventListener('click', loadChronicleTodayPreview);
 
     // DO Storage Explorer. Read-only inspection plus delete-by-key for the
-    // worker's Durable Object storage. Operator types WORKER_SECRET once,
-    // page caches in sessionStorage (cleared on tab close, never on disk).
-    // All worker calls use Authorization: Bearer header so the secret never
-    // appears in URLs (history, referrer headers, server logs). The worker
-    // proxy pattern (cross-origin from chip-served LAN admin to public worker
-    // endpoints) mirrors the existing /chronicle/translate flow used by the
-    // guestbook, so CORS handling is already in place worker-side.
+    // worker's Durable Object storage. Operator types WORKER_SECRET each
+    // time the page is loaded; the secret lives in a closure variable only
+    // and is never persisted to sessionStorage/localStorage. All worker
+    // calls use Authorization: Bearer header so the secret never appears
+    // in URLs (history, referrer headers, server logs). The worker proxy
+    // pattern (cross-origin from chip-served LAN admin to public worker
+    // endpoints) mirrors the existing /chronicle/translate flow used by
+    // the guestbook, so CORS handling is already in place worker-side.
     (function () {
-        var sessionKey = 'do-explorer-secret';
         var workerSecret = '';
-        try { workerSecret = sessionStorage.getItem(sessionKey) || ''; } catch (e) {}
         var WORKER_BASE = (location.host === 'helloesp.com' || location.host === 'www.helloesp.com')
             ? '' : 'https://helloesp.com';
         var authRow = document.getElementById('do-auth-row');
@@ -3747,7 +3746,6 @@
             }).then(function (r) {
                 if (r.status === 401) {
                     workerSecret = '';
-                    try { sessionStorage.removeItem(sessionKey); } catch (e) {}
                     showTools(false);
                     setStatus('Unauthorized. Reconnect with the correct secret.', true);
                     throw new Error('Unauthorized');
@@ -3894,14 +3892,12 @@
             var sec = (secretInput.value || '').trim();
             if (!sec) { setStatus('Enter a secret first.', true); return; }
             workerSecret = sec;
-            try { sessionStorage.setItem(sessionKey, sec); } catch (e) {}
             secretInput.value = '';
             showTools(true);
             refreshList();
         });
         if (disconnectBtn) disconnectBtn.addEventListener('click', function () {
             workerSecret = '';
-            try { sessionStorage.removeItem(sessionKey); } catch (e) {}
             showTools(false);
             setStatus('');
         });
@@ -3916,10 +3912,6 @@
             loadDetail(row.getAttribute('data-key'));
         });
         if (deleteBtn) deleteBtn.addEventListener('click', tryDelete);
-        if (workerSecret) {
-            showTools(true);
-            refreshList();
-        }
     })();
 
     // Init

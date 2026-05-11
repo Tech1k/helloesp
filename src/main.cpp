@@ -1455,7 +1455,7 @@ static bool consoleShouldSkip(const String& url) {
     if (url == "/.well-known/security.txt") return true;
     // static assets
     if (url == "/favicon.png" || url == "/favicon.svg" || url == "/og-banner.jpg") return true;
-    if (url == "/helloesp-framed.jpg" || url == "/helloesp-boot.mp4" || url == "/helloesp-boot-poster.jpg") return true;
+    if (url == "/helloesp-framed.jpg" || url == "/helloesp-framed-2026-04.jpg" || url == "/helloesp-boot.mp4" || url == "/helloesp-boot-poster.jpg") return true;
     if (url == "/esp32-webserver.jpg" || url == "/esp32-webserver-bme280.jpg" || url == "/esp8266-webserver.jpg") return true;
     return false;
 }
@@ -4449,6 +4449,7 @@ void setup() {
         {"/esp32-webserver-bme280.jpg", "image/jpeg"},
         {"/esp8266-webserver.jpg", "image/jpeg"},
         {"/helloesp-framed.jpg", "image/jpeg"},
+        {"/helloesp-framed-2026-04.jpg", "image/jpeg"},
         {"/helloesp-boot.mp4", "video/mp4"},
         {"/helloesp-boot-poster.jpg", "image/jpeg"}
     };
