@@ -1162,6 +1162,10 @@
     <div class="log">
         <div class="section-label"><i class="fa-solid fa-list"></i> Changelog <a class="section-rss" href="/changelog.rss" aria-label="Subscribe to changelog via RSS" title="Subscribe via RSS"><i class="fa-solid fa-rss"></i></a></div>
         <div class="log-entry">
+            <div class="log-date">May 10, 2026</div>
+            <div class="log-text">Refreshed the photo carousel. The current framed shot now shows the device with the DS3231 and nameplate added over the past couple weeks, with the April 19 mounting-day shot kept as the second slide. New boot video too: sharper, tighter cut, no audio track. Hero image on the <a href="https://github.com/Tech1k/helloesp" target="_blank" rel="noopener">GitHub repo</a> got the same treatment.</div>
+        </div>
+        <div class="log-entry">
             <div class="log-date">May 8, 2026</div>
             <div class="log-text"><a href="/chronicle">/chronicle</a> got a few quality-of-life updates. Today's in-progress entry shows above the archive, refreshing as the chip writes more of the day. Filter chips slice the archive to just milestones, records, anomalies, busy days, or quiet days. Each entry has a share button, and arrow keys step between days on entry pages. Guestbook translation got smarter too: better source-language detection so casual English no longer trips the translate button, and previously-untranslatable diacritic-less Czech, Polish, and Italian now translate correctly.</div>
         </div>
@@ -1177,7 +1181,7 @@
             <div class="log-date">May 3, 2026</div>
             <div class="log-text">Snake got its own page. Same game, with two leaderboards now: today's top scores and the all-time top ten. Strong scores cross to all-time on their own. Each top entry has a watch button that plays back the actual game. Past quarters move to a Hall of Fame archive so the leaderboard stays fresh.</div>
         </div>
-        <div class="log-entry">
+        <div class="log-entry log-older hidden">
             <div class="log-date">May 1, 2026</div>
             <div class="log-text">The site can now track its own electricity use with an optional smart plug. The homepage shows live wattage and lifetime energy, plus cost and CO&#x2082; if you set your grid rate. Outdoor weather card grew with air quality, UV index, atmospheric CO&#x2082;, dewpoint, and pressure trend, and the icons now match the time of day.</div>
         </div>
@@ -1312,7 +1316,7 @@
     /* carousel */
     const captions = [
         'HelloESP in its display frame, 5/9/2026',
-        'HelloESP in its display frame, 4/18/2026',
+        'HelloESP in its display frame, 4/19/2026',
         'Boot sequence, 5/9/2026',
         'The ESP32 that hosted the previous version of this site, 3/1/2023',
         'ESP32 with BME280 sensor, 7/5/2022',

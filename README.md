@@ -393,6 +393,11 @@ handles this fine).
 - [Adafruit RTClib](https://github.com/adafruit/RTClib)
 - [Uptime Library](https://github.com/YiannisBourkelis/Uptime-Library)
 
+## Contact
+
+Bug reports and feature questions → [Issues](https://github.com/Tech1k/helloesp/issues).
+For press or anything else → hello@tech1k.com.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

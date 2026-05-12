@@ -4577,6 +4577,8 @@ void setup() {
             rss += text;
             rss += "</description></item>";
         };
+        item("May 10, 2026", "Sun, 10 May 2026 12:00:00 GMT",
+             "Refreshed the photo carousel. The current framed shot now shows the device with the DS3231 and nameplate added over the past couple weeks, with the April 19 mounting-day shot kept as the second slide. New boot video too: sharper, tighter cut, no audio track. Hero image on the GitHub repo got the same treatment.");
         item("May 8, 2026", "Fri, 08 May 2026 12:00:00 GMT",
              "/chronicle got a few quality-of-life updates. Today's in-progress entry shows above the archive, refreshing as the chip writes more of the day. Filter chips slice the archive to just milestones, records, anomalies, busy days, or quiet days. Each entry has a share button, and arrow keys step between days on entry pages. Guestbook translation got smarter too: better source-language detection so casual English no longer trips the translate button, and previously-untranslatable diacritic-less Czech, Polish, and Italian now translate correctly.");
         item("May 6, 2026", "Wed, 06 May 2026 12:00:00 GMT",
