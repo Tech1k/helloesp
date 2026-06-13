@@ -18,12 +18,6 @@
     <meta property="og:image:alt" content="HelloESP: a website running on an ESP32">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://helloesp.com/chronicle">
-    <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:site" content="@HelloESP32">
-    <meta name="twitter:title" content="The Chronicle / HelloESP">
-    <meta name="twitter:description" content="A daily entry HelloESP writes about itself: visitors, sensor extremes, weather, and milestones, archived from launch onward.">
-    <meta name="twitter:image" content="https://helloesp.com/og-banner.jpg">
-    <meta name="twitter:image:alt" content="HelloESP: a website running on an ESP32">
     <link rel="canonical" href="https://helloesp.com/chronicle">
     <link rel="alternate" type="application/rss+xml" title="HelloESP Chronicle" href="/chronicle.rss">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -113,8 +107,7 @@
             line-height: 1.1;
             margin-bottom: 16px;
         }
-        h1 .rss-link,
-        h1 .x-link {
+        h1 .rss-link {
             font-size: 0.4em;
             vertical-align: middle;
             margin-left: 8px;
@@ -123,7 +116,6 @@
             transition: color 0.15s;
         }
         h1 .rss-link:hover { color: #f26522; }
-        h1 .x-link:hover { color: var(--ink); }
 
         .desc {
             font-size: 13px;
@@ -726,9 +718,8 @@
         </ul>
     </nav>
 
-    <h1>The Chronicle<a class="rss-link" href="/chronicle.rss" aria-label="Subscribe to Chronicle via RSS" title="Subscribe via RSS"><i class="fa-solid fa-rss"></i></a><a class="x-link" href="https://x.com/HelloESP32" target="_blank" rel="noopener" aria-label="Follow Chronicle on X" title="Follow on X"><i class="fa-brands fa-x-twitter"></i></a></h1>
+    <h1>The Chronicle<a class="rss-link" href="/chronicle.rss" aria-label="Subscribe to Chronicle via RSS" title="Subscribe via RSS"><i class="fa-solid fa-rss"></i></a></h1>
     <p class="desc">A daily entry the chip writes about itself. Auto-generated from sensor readings, visitor counts, and weather, archived from launch onward.</p>
-    <p class="page-subhead">New entries also post to <a href="https://x.com/HelloESP32" target="_blank" rel="noopener">@HelloESP32</a> on X.</p>
 
     <div class="page-jump">
         <label for="chronicle-jump">Jump to date:</label>

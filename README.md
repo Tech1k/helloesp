@@ -104,7 +104,7 @@ These are all lessons from this build. A PCB respin would fix most of them at th
 - Outdoor weather + air quality context (via Cloudflare Worker proxy to Open-Meteo): conditions with day/night-aware icons, feels-like, dewpoint, wind direction, pressure trend, AQI + PM2.5, atmospheric CO₂, UV index
 - Guestbook with two-level reply threading, tombstone deletes, moderation queue, inline AI translation, rate limiting
 - Snake at /snake (also embedded on the 404 / offline / timeout pages) with two leaderboards (today's top scores + all-time top ten, top scores cross over automatically), replay viewer for top entries, quarterly Hall of Fame archive of past all-time boards, 3-letter initials with content blocklist, server-side replay verification, idle demo mode
-- `/chronicle`: a daily auto-generated diary the chip writes about itself, plus weekly, monthly, and quarterly reflection entries that aggregate prior periods. Around 30 observation detectors fold sensor extremes, visitor counts, weather, calendar events (equinoxes / first-of-month / season transitions), sensor-retire events, owner-defined personal anchors (birthdays, framing day), and self-aware-chip moments (curator absence, tinkering noticed, long-uptime milestones) into one of several narrative templates per cadence. Daily entries seal at chip-local midnight; weekly on Mondays; monthly on the 1st; quarterly at quarter starts. Permalinks for every entry, RSS feed, owner-curated notes that thread to X as replies, public today-in-progress preview card on the index, year/month accordion archive with template-id filter chips (milestones / records / anomalies / busy / quiet / reflections), keyboard navigation (←/→) on detail views, and per-entry share button.
+- `/chronicle`: a daily auto-generated diary the chip writes about itself, plus weekly, monthly, and quarterly reflection entries that aggregate prior periods. Around 30 observation detectors fold sensor extremes, visitor counts, weather, calendar events (equinoxes / first-of-month / season transitions), sensor-retire events, owner-defined personal anchors (birthdays, framing day), and self-aware-chip moments (curator absence, tinkering noticed, long-uptime milestones) into one of several narrative templates per cadence. Daily entries seal at chip-local midnight; weekly on Mondays; monthly on the 1st; quarterly at quarter starts. Permalinks for every entry, RSS feed, owner-curated notes, public today-in-progress preview card on the index, year/month accordion archive with template-id filter chips (milestones / records / anomalies / busy / quiet / reflections), keyboard navigation (←/→) on detail views, and per-entry share button.
 - Dark mode, responsive, SRI-pinned CDN scripts, no tracking
 
 **Firmware**
@@ -135,7 +135,6 @@ These are all lessons from this build. A PCB respin would fix most of them at th
 - Optional SMTP2GO integration for guestbook-pending alerts, dead-man's-switch (device silent >N hours), backup failures, and overdue-backup warnings
 - Optional daily off-site backups to Cloudflare R2 with GFS rotation (7 daily + 4 weekly + 12 monthly + yearly) and sha256 integrity manifests; Worker also writes a daily full Durable Object snapshot to `state/do-snapshot/YYYY-MM-DD.json` (30-day retention) so non-chronicle DO state (snake leaderboards + season archives + replays, caches) is recoverable independently if DO is ever wiped
 - Optional Shelly Gen 2+ smart plug integration for live power monitoring: live-wattage banner on homepage, power chart, energy column in CSV logs, per-period energy on `/history` cards, lifetime cost + CO₂ totals on homepage and `/about` (when grid rates are configured), admin observability panel + self-test entry
-- Optional X / Twitter auto-post: each sealed Chronicle entry crossposts once via the X API v2 (OAuth 1.0a HMAC-SHA1 signed in-Worker). Owner notes added later thread under as replies. Idempotent via `posted_to_x` and `note_x_tweet_id` flags so DO restarts and re-seals don't double-post. Silently skipped if any of the 4 secrets are unset
 - Security headers, no-cache list for dynamic endpoints
 - RSS feeds (`/changelog.rss`, `/guestbook.rss`, `/chronicle.rss`), `sitemap.xml`, `robots.txt`, `.well-known/security.txt`
 
@@ -301,25 +300,6 @@ The binding is declared in `wrangler.toml`. If the binding isn't present, the Wo
 6. Insert the SD card and boot.
 
 For single-file fixes, download one object from R2 and drop it in via the admin file manager. No full restore needed.
-
-### 8. X / Twitter auto-post (optional)
-
-Each Chronicle entry crossposts once to X. Useful as a launch smoke test (the seeded launch entry tweets on first deploy) and for ongoing reach. All 4 secrets must be set or the post path silently no-ops, so the seal flow is never blocked by missing creds.
-
-Create an X developer app with **read + write** permission, generate an access token, and:
-
-```bash
-wrangler secret put X_API_KEY        # consumer key
-wrangler secret put X_API_SECRET     # consumer secret
-wrangler secret put X_ACCESS_TOKEN   # access token
-wrangler secret put X_ACCESS_SECRET  # access token secret
-```
-
-Tweets carry a `Day N · {date}` header, the full entry body, and a permalink to `helloesp.com/chronicle/<date>`. The character budget defaults to 25,000 (X Premium's per-tweet ceiling) so weekly/monthly/quarterly reflections post in full; truncation at last-word-boundary still kicks in past that limit. Forks without Premium should drop the cap in `_chronicleFormatTweet` from 25000 to 280 (X's t.co counts URLs as 23 chars regardless of length, accounted for in the budget). Idempotency uses a `posted_to_x: true` flag stored on the entry itself, so DO eviction, isolate restarts, and same-day reseals can't double-post.
-
-**Owner notes thread under as replies.** Adding a note via the admin panel posts a reply tweet to the original Chronicle tweet, so the X timeline mirrors the website's structure (chip's voice + curatorial annotation). First non-empty note posts; subsequent edits don't re-post (X API v2 has no free tweet-edit). Tracked via `note_x_tweet_id`. Same silent-skip rules apply if creds are missing or the original tweet failed.
-
-OAuth 1.0a is signed in-Worker via `crypto.subtle.HMAC-SHA1`; no third-party libraries.
 
 ## Security
 

@@ -150,6 +150,13 @@ void wsSendText(WiFiClientSecure& client, const String& msg) {
         }
         if (client.write(chunk, chunkLen) != chunkLen) { wsConnected = false; return; }
         sent += chunkLen;
+        // Yield between 1KB TLS writes so the loopTask scheduler can run
+        // (sensor sampling, page rotation, WS poll). wsSendText is called
+        // from loopTask via handleWsRelay and from other loopTask paths;
+        // this is NOT what feeds async_tcp's WDT. The async_tcp wedge is
+        // caused by SD-scan handlers on the HTTP server task, fixed by
+        // esp_task_wdt_reset() calls in those handlers (see /guestbook/*).
+        if (sent < len) delay(1);
     }
 }
 
@@ -2976,6 +2983,123 @@ void buildAndSendBackup() {
     backupRunning = false;
 }
 
+// (tryDirectStaticServe removed 2026-06-12 to reclaim flash. Was added under
+// a since-disproven self-deadlock theory; handleWsRelay runs on loopTask, not
+// async_tcp, so the loopback HTTP path doesn't deadlock at the task level.
+// The real fix for the chronicle/guestbook crashes lives in the public
+// guestbook handlers: yield() + esp_task_wdt_reset() every 64 CSV rows.)
+#if 0
+static bool tryDirectStaticServe(int reqId, const char* method,
+                                  const char* path, const char* acceptEncoding) {
+    if (strcmp(method, "GET") != 0) return false;
+
+    // Strip query string before matching (chip's server.on() handlers also
+    // ignore query). Copy because path is shared with the caller.
+    char cleanPath[256];
+    strncpy(cleanPath, path, sizeof(cleanPath) - 1);
+    cleanPath[sizeof(cleanPath) - 1] = '\0';
+    char* q = strchr(cleanPath, '?');
+    if (q) *q = '\0';
+
+    struct StaticMap {
+        const char* url;
+        const char* file;
+        const char* type;
+        const char* cache;
+    };
+    // Mirrors the chip's server.on(...) handlers and staticFiles[] array.
+    // HTML shells use max-age=300 (worker overrides s-maxage for edge);
+    // binary assets get 24h browser cache same as the original handlers.
+    static const StaticMap STATICS[] = {
+        {"/",          "/index.html",      "text/html",     "public, max-age=300"},
+        {"/about",     "/about.html",      "text/html",     "public, max-age=300"},
+        {"/console",   "/console.html",    "text/html",     "public, max-age=300"},
+        {"/snake",     "/snake.html",      "text/html",     "public, max-age=300"},
+        {"/chronicle", "/chronicle.html",  "text/html",     "public, max-age=300"},
+        {"/history",   "/history.html",    "text/html",     "public, max-age=300"},
+        {"/guestbook", "/guestbook.html",  "text/html",     "public, max-age=300"},
+        {"/favicon.png",                 "/favicon.png",                 "image/png",     "public, max-age=86400"},
+        {"/favicon.svg",                 "/favicon.svg",                 "image/svg+xml", "public, max-age=86400"},
+        {"/og-banner.jpg",               "/og-banner.jpg",               "image/jpeg",    "public, max-age=86400"},
+        {"/esp32-webserver.jpg",         "/esp32-webserver.jpg",         "image/jpeg",    "public, max-age=86400"},
+        {"/esp32-webserver-bme280.jpg",  "/esp32-webserver-bme280.jpg",  "image/jpeg",    "public, max-age=86400"},
+        {"/esp8266-webserver.jpg",       "/esp8266-webserver.jpg",       "image/jpeg",    "public, max-age=86400"},
+        {"/helloesp-framed.jpg",         "/helloesp-framed.jpg",         "image/jpeg",    "public, max-age=86400"},
+        {"/helloesp-framed-2026-04.jpg", "/helloesp-framed-2026-04.jpg", "image/jpeg",    "public, max-age=86400"},
+        {"/helloesp-boot.mp4",           "/helloesp-boot.mp4",           "video/mp4",     "public, max-age=86400"},
+        {"/helloesp-boot-poster.jpg",    "/helloesp-boot-poster.jpg",    "image/jpeg",    "public, max-age=86400"},
+    };
+    const StaticMap* match = nullptr;
+    for (auto& s : STATICS) {
+        if (strcmp(cleanPath, s.url) == 0) { match = &s; break; }
+    }
+    if (!match) return false;
+
+    // Prefer .gz when the client accepts gzip and a gz variant exists on SD.
+    bool useGzip = (acceptEncoding && strstr(acceptEncoding, "gzip") != NULL);
+    String filePath = String(match->file);
+    if (useGzip) {
+        String gzPath = filePath + ".gz";
+        if (SD.exists(gzPath.c_str())) {
+            filePath = gzPath;
+        } else {
+            useGzip = false;
+        }
+    }
+
+    File f = SD.open(filePath.c_str(), FILE_READ);
+    if (!f) return false;  // missing on SD: fall through to loopback (will 404)
+
+    size_t len = f.size();
+
+    // Meta frame: same shape as the loopback path produces.
+    String meta = "{\"id\":";
+    meta += reqId;
+    meta += ",\"status\":200,\"ct\":\"";
+    meta += match->type;
+    meta += "\",\"cc\":\"";
+    meta += match->cache;
+    meta += "\"";
+    if (useGzip) meta += ",\"ce\":\"gzip\"";
+    meta += ",\"len\":";
+    meta += len;
+    meta += "}";
+    wsSendText(wsClient, meta);
+
+    // Stream body as base64-encoded text frames; same encoding as the
+    // loopback path so the worker decodes identically.
+    const char* b64c = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    uint8_t chunk[3072];
+    while (f.available()) {
+        int rd = f.read(chunk, sizeof(chunk));
+        if (rd > 0) {
+            String b64;
+            b64.reserve((rd * 4) / 3 + 4);
+            for (int i = 0; i < rd; i += 3) {
+                uint32_t n = ((uint32_t)chunk[i]) << 16;
+                if (i + 1 < rd) n |= ((uint32_t)chunk[i + 1]) << 8;
+                if (i + 2 < rd) n |= chunk[i + 2];
+                b64 += b64c[(n >> 18) & 0x3F];
+                b64 += b64c[(n >> 12) & 0x3F];
+                b64 += (i + 1 < rd) ? b64c[(n >> 6) & 0x3F] : '=';
+                b64 += (i + 2 < rd) ? b64c[n & 0x3F] : '=';
+            }
+            wsSendText(wsClient, b64);
+            // Yield between chunks. This runs on loopTask; the delay(1)
+            // lets sensor sampling / page rotation / async_tcp itself run
+            // between TLS writes. Not a wdt feed for async_tcp (different
+            // task), just cooperative scheduling.
+            delay(1);
+        }
+    }
+    f.close();
+
+    // End marker: empty text frame (matches loopback path's terminator).
+    wsSendText(wsClient, String(""));
+    return true;
+}
+#endif
+
 // handle incoming WebSocket message from Worker
 void handleWsRelay(String& data) {
     // Worker -> ESP events share this channel with relayed HTTP requests. Event branches
@@ -3409,6 +3533,13 @@ void handleWsRelay(String& data) {
                 b64 += (i + 2 < rd) ? b64c[n & 0x3F] : '=';
             }
             wsSendText(wsClient, b64);
+            // Yield between chunks. handleWsRelay runs on loopTask (called
+            // from the WS-drain loop in loop()), so this delay(1) is just
+            // letting other loopTask work run between TLS writes (sensor
+            // sampling, page rotation, the next wsRead). NOT a wdt feed for
+            // async_tcp; that task is reset via its own IDLE on the other
+            // core or via esp_task_wdt_reset() inside HTTP handler scans.
+            delay(1);
         }
     }
     // end marker: empty text frame
@@ -4584,7 +4715,7 @@ void setup() {
         item("May 6, 2026", "Wed, 06 May 2026 12:00:00 GMT",
              "Chronicle entries now align to the chip's local timezone instead of UTC, so each day's entry covers the chip's actual day from where it's running. The chip also notices when one of its sensors stops working, retires it, and writes a chronicle entry about the loss. Behind the scenes, archive folders moved to a year-grouped layout so the chip can run for decades without slowing down. Firmware 1.4 also drops the boot-time CSV migrations to free flash for future features; pre-1.3 installs need to flash 1.3 first.");
         item("May 4, 2026", "Mon, 04 May 2026 12:00:00 GMT",
-             "Added /chronicle: a daily entry the chip writes about itself. Auto-generated from sensor readings, visitors, and weather, archived from today onward. Each midnight the day's snapshot freezes into a permanent entry. Five starter templates pick the right shape for the day (busy, quiet, anomaly, milestone, generic), and there's a permalink for every entry. Each new entry also crossposts to X.");
+             "Added /chronicle: a daily entry the chip writes about itself. Auto-generated from sensor readings, visitors, and weather, archived from today onward. Each midnight the day's snapshot freezes into a permanent entry. Five starter templates pick the right shape for the day (busy, quiet, anomaly, milestone, generic), and there's a permalink for every entry.");
         item("May 3, 2026", "Sun, 03 May 2026 12:00:00 GMT",
              "Snake got its own page. Same game, with two leaderboards now: today's top scores and the all-time top ten. Strong scores cross to all-time on their own. Each top entry has a watch button that plays back the actual game. Past quarters move to a Hall of Fame archive so the leaderboard stays fresh.");
         item("May 1, 2026", "Fri, 01 May 2026 12:00:00 GMT",
@@ -4593,32 +4724,12 @@ void setup() {
              "Added a DS3231 real-time clock module on the breadboard. Boot logs and timestamps are correct right away instead of being wrong for a few seconds until NTP syncs. History page got a year-grouped collapsible layout that stays readable as archives pile up over time. New /about page with the short version of the project story for casual visitors.");
         item("Apr 27, 2026", "Mon, 27 Apr 2026 12:00:00 GMT",
              "Snake now has a global leaderboard. Top 10 with 3-letter initials, shared across the 404, offline, and timeout pages. Anti-cheat is server-side: the worker hands out a seed at game start, you submit your move log on game over, and the worker replays it to confirm the score. Only way onto the board is actually playing.");
-        item("Apr 26, 2026", "Sun, 26 Apr 2026 12:00:00 GMT",
-             "Snake added to the 404, offline, and timeout fallback pages. WebSocket reconnect path is simpler now and recovers faster from transient drops.");
-        item("Apr 25, 2026", "Sat, 25 Apr 2026 12:00:00 GMT",
-             "Live uptime's &quot;Best&quot; substat shows from the start instead of waiting a full day.");
-        item("Apr 24, 2026", "Fri, 24 Apr 2026 12:00:00 GMT",
-             "Homepage sections lazy-load now, so quick visitors don't fetch things they never scroll to. Inline one-tap translate on non-English guestbook entries via Cloudflare Workers AI. Reply forms got the same character counter as the main form. Console flag tooltips show the full country name on hover.");
-        item("Apr 23, 2026", "Thu, 23 Apr 2026 12:00:00 GMT",
-             "Guestbook got two-level reply threading with inline previews and per-message share/copy links. Pagination expanded with a jump-to-page input once past 10 pages. Moderation deletes now tombstone, so the reply chain stays intact with the original message blanked. HTML pages now serve pre-gzipped, cutting transfer size about 4&times; on every page load.");
-        item("Apr 21, 2026", "Tue, 21 Apr 2026 12:00:00 GMT",
-             "Fixed a URL quirk where &quot;//anything&quot; was leaking through as a page view. Visitors had discovered it and were &quot;chatting&quot; by putting messages in URLs that showed up on the console. Those now return a proper 404. Reboots switched to a deep-sleep wakeup so the device comes back cleanly after OTA updates, instead of needing a physical power cycle.");
         item("Apr 19, 2026", "Sun, 19 Apr 2026 12:00:00 GMT",
              "Public relaunch on a fresh ESP32. Full rebuild: air quality sensors, historical charts, guestbook with moderation, admin panel, OLED dashboard, daily off-site backups, and a Cloudflare Worker relay so it can live on WiFi without a tunnel.");
-        item("Nov 2023", "Wed, 15 Nov 2023 12:00:00 GMT",
-             "The original ESP32 burned out after a little over 500 days online. Site went into a read-only archive of stats, news, and photos until the relaunch.");
-        item("Jan 30, 2023", "Mon, 30 Jan 2023 12:00:00 GMT",
-             "Published the first &quot;final&quot; version of HelloESP.");
-        item("Jul 6, 2022", "Wed, 06 Jul 2022 12:00:00 GMT",
-             "Added a photo of the ESP32 with the BME280 attached.");
-        item("Jul 5, 2022", "Tue, 05 Jul 2022 12:00:00 GMT",
-             "Images now served from the ESP32 itself. Migrated to ESPAsyncWebServer.");
-        item("Jul 4, 2022", "Mon, 04 Jul 2022 12:00:00 GMT",
-             "Visitor counter now runs fully off the ESP32 via SPIFFS.");
-        item("Jul 2, 2022", "Sat, 02 Jul 2022 12:00:00 GMT",
-             "Added BME280 sensor readings: temperature, humidity, and altitude.");
-        item("Jun 27, 2022", "Mon, 27 Jun 2022 12:00:00 GMT",
-             "HelloESP launched. A little project showing what these tiny boards can do.");
+        // Older RSS entries (Apr 21-26, plus the 2022-2023 history) were
+        // dropped to fit OTA. The same content is in the changelog section on
+        // the homepage behind "show older", and the project's pre-relaunch
+        // history lives in /about and the README.
         rss += "</channel></rss>";
         AsyncWebServerResponse *r = request->beginResponse(200, "application/rss+xml", rss);
         r->addHeader("Cache-Control", "public, max-age=86400");
@@ -5084,8 +5195,14 @@ void setup() {
             uint16_t seenCountries[256];
             int seenCountryCount = 0;
             char line[400];
+            // SD scan loops on async_tcp need explicit wdt feeding every ~64
+            // rows. yield() alone doesn't reset the watchdog; this CSV grows
+            // unbounded and a >5s scan trips task_wdt on a busy chip. Mirrors
+            // the proven pattern at /admin/sanitize-csvs (line 7197).
+            int scanCount = 0;
             while (f.available()) {
                 int n = f.readBytesUntil('\n', line, sizeof(line) - 1);
+                if ((++scanCount & 0x3F) == 0) { yield(); esp_task_wdt_reset(); }
                 if (n <= 0) continue;
                 line[n] = '\0';
                 while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
@@ -5161,8 +5278,10 @@ void setup() {
             int matchingIdx = 0;
 
             f.seek(0);
+            scanCount = 0;
             while (f.available()) {
                 int n = f.readBytesUntil('\n', line, sizeof(line) - 1);
+                if ((++scanCount & 0x3F) == 0) { yield(); esp_task_wdt_reset(); }
                 if (n <= 0) continue;
                 line[n] = '\0';
                 while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
@@ -5226,9 +5345,11 @@ void setup() {
                 }
 
                 f.seek(0);
+                scanCount = 0;
                 while (f.available()) {
                     uint32_t rowStart = f.position();
                     int n = f.readBytesUntil('\n', line, sizeof(line) - 1);
+                    if ((++scanCount & 0x3F) == 0) { yield(); esp_task_wdt_reset(); }
                     if (n <= 0) continue;
                     line[n] = '\0';
                     while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
@@ -5412,8 +5533,12 @@ void setup() {
             char queryReplyTo[9] = {0};
             bool queryFound = false;
             char line[400];
+            // SD scan loops on async_tcp need explicit wdt feeding every ~64
+            // rows (see /guestbook/entries note above).
+            int scanCount = 0;
             while (f.available()) {
                 int n = f.readBytesUntil('\n', line, sizeof(line) - 1);
+                if ((++scanCount & 0x3F) == 0) { yield(); esp_task_wdt_reset(); }
                 if (n <= 0) continue;
                 line[n] = '\0';
                 while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
@@ -5451,8 +5576,10 @@ void setup() {
                 // tombstoned still resolves to the top-level thread.
                 f.seek(0);
                 bool parentFound = false;
+                scanCount = 0;
                 while (f.available()) {
                     int n = f.readBytesUntil('\n', line, sizeof(line) - 1);
+                    if ((++scanCount & 0x3F) == 0) { yield(); esp_task_wdt_reset(); }
                     if (n <= 0) continue;
                     line[n] = '\0';
                     while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
@@ -5496,8 +5623,10 @@ void setup() {
             int approvedIdx = 0;
             char matchedLine[400];
             int mc1 = -1, mc2 = -1, mc3 = -1, mc4 = -1, mc5 = -1;
+            scanCount = 0;
             while (f.available()) {
                 int n = f.readBytesUntil('\n', line, sizeof(line) - 1);
+                if ((++scanCount & 0x3F) == 0) { yield(); esp_task_wdt_reset(); }
                 if (n <= 0) continue;
                 line[n] = '\0';
                 while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
@@ -5601,9 +5730,13 @@ void setup() {
             int level1Count = 0;
 
             char line[400];
+            // SD scan loops on async_tcp need explicit wdt feeding every ~64
+            // rows (see /guestbook/entries note above).
+            int scanCount = 0;
             // Pass A.
             while (f.available()) {
                 int n = f.readBytesUntil('\n', line, sizeof(line) - 1);
+                if ((++scanCount & 0x3F) == 0) { yield(); esp_task_wdt_reset(); }
                 if (n <= 0) continue;
                 line[n] = '\0';
                 while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
@@ -5637,8 +5770,10 @@ void setup() {
 
             // Pass B: emit level-1 and level-2 rows chronologically.
             f.seek(0);
+            scanCount = 0;
             while (f.available()) {
                 int n = f.readBytesUntil('\n', line, sizeof(line) - 1);
+                if ((++scanCount & 0x3F) == 0) { yield(); esp_task_wdt_reset(); }
                 if (n <= 0) continue;
                 line[n] = '\0';
                 while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }
@@ -6218,8 +6353,13 @@ void setup() {
 
             char line[400];
             int idx = 0;
+            // Same wdt-feeding pattern as the public guestbook handlers: a
+            // large guestbook + an admin batch op could span more than 5s of
+            // SD work on async_tcp without this.
+            int scanCount = 0;
             while (f.available()) {
                 int n = f.readBytesUntil('\n', line, sizeof(line) - 1);
+                if ((++scanCount & 0x3F) == 0) { yield(); esp_task_wdt_reset(); }
                 if (n <= 0) continue;
                 line[n] = '\0';
                 while (n > 0 && (line[n-1] == '\r' || line[n-1] == ' ' || line[n-1] == '\t')) { line[--n] = '\0'; }

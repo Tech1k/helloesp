@@ -637,201 +637,6 @@ export class EspRelay {
     return Math.floor((target - launchUtc) / 86400000) + 1;
   }
 
-  // ===== X / Twitter auto-post =====
-  // Posts each sealed Chronicle entry to X. Skipped silently when the
-  // 4 OAuth 1.0a secrets are missing (X_API_KEY / X_API_SECRET /
-  // X_ACCESS_TOKEN / X_ACCESS_SECRET) so deploying without credentials
-  // doesn't break the seal path. Each entry is flagged posted_to_x:true
-  // after a successful tweet so re-seals + DO restarts don't double-post.
-
-  // RFC 3986 percent-encoding. Stricter than encodeURIComponent: also
-  // escapes !*'() per the OAuth 1.0a spec.
-  _rfc3986(s) {
-    return encodeURIComponent(String(s)).replace(/[!*'()]/g,
-      c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
-  }
-
-  // Build the OAuth 1.0a Authorization header for an X API request.
-  // Body params are NOT included in the signature for v2 JSON endpoints
-  // (only URL query params + oauth_* params get signed).
-  async _oauth1aHeader(method, url, queryParams) {
-    const env = this.env;
-    if (!env.X_API_KEY || !env.X_API_SECRET || !env.X_ACCESS_TOKEN || !env.X_ACCESS_SECRET) {
-      return null;
-    }
-    const oauth = {
-      oauth_consumer_key: env.X_API_KEY,
-      oauth_nonce: crypto.randomUUID().replace(/-/g, ''),
-      oauth_signature_method: 'HMAC-SHA1',
-      oauth_timestamp: String(Math.floor(Date.now() / 1000)),
-      oauth_token: env.X_ACCESS_TOKEN,
-      oauth_version: '1.0',
-    };
-    const all = { ...(queryParams || {}), ...oauth };
-    const sorted = Object.keys(all).sort();
-    const paramString = sorted
-      .map(k => this._rfc3986(k) + '=' + this._rfc3986(all[k]))
-      .join('&');
-    const baseString = [
-      method.toUpperCase(),
-      this._rfc3986(url),
-      this._rfc3986(paramString),
-    ].join('&');
-    const signingKey = this._rfc3986(env.X_API_SECRET) + '&' + this._rfc3986(env.X_ACCESS_SECRET);
-    const enc = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-      'raw', enc.encode(signingKey),
-      { name: 'HMAC', hash: 'SHA-1' },
-      false, ['sign']
-    );
-    const sig = await crypto.subtle.sign('HMAC', key, enc.encode(baseString));
-    const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sig)));
-    oauth.oauth_signature = sigB64;
-    return 'OAuth ' + Object.keys(oauth).sort()
-      .map(k => this._rfc3986(k) + '="' + this._rfc3986(oauth[k]) + '"')
-      .join(', ');
-  }
-
-  // Post a single tweet via X API v2. Returns {ok, id?, status?, error?}.
-  // opts.replyTo: post as a reply to this tweet ID (threads under the original).
-  async _xPostTweet(text, opts) {
-    const url = 'https://api.twitter.com/2/tweets';
-    const auth = await this._oauth1aHeader('POST', url, {});
-    if (!auth) return { ok: false, error: 'no_credentials' };
-    const payload = { text };
-    if (opts && opts.replyTo) {
-      payload.reply = { in_reply_to_tweet_id: String(opts.replyTo) };
-    }
-    let resp;
-    try {
-      resp = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': auth,
-          'Content-Type': 'application/json',
-          'User-Agent': 'HelloESP-Chronicle/1.0',
-        },
-        body: JSON.stringify(payload),
-      });
-    } catch (e) {
-      return { ok: false, error: 'fetch_failed: ' + (e && e.message) };
-    }
-    if (!resp.ok) {
-      const errText = await resp.text().catch(() => '');
-      return { ok: false, status: resp.status, error: errText.slice(0, 200) };
-    }
-    const data = await resp.json().catch(() => null);
-    return { ok: true, id: data && data.data && data.data.id };
-  }
-
-  // Build tweet text for a Chronicle entry. X's t.co shortener counts
-  // every URL as 23 chars regardless of actual length, so we budget for
-  // 23 + header + separators and truncate the body to fit. The 25000
-  // ceiling matches the X Premium per-tweet character limit; without
-  // Premium this would need to drop to 280 (and the truncation logic
-  // below kicks in at any cap). Most chronicle bodies sit under 500
-  // chars so truncation rarely fires; weekly/monthly summaries can run
-  // longer and Premium accommodates them in full.
-  _chronicleFormatTweet(entry) {
-    let dateLong = entry.date;
-    try {
-      dateLong = new Date(entry.date + 'T12:00:00Z').toLocaleDateString('en-US', {
-        year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC'
-      });
-    } catch (e) {}
-    const header = `Day ${entry.day_number || '?'} · ${dateLong}`;
-    const link   = `helloesp.com/chronicle/${entry.date}`;
-    const linkBudget = 23; // X t.co shortened length
-    const separators = 4;  // two "\n\n" pairs
-    const bodyMax = 25000 - header.length - linkBudget - separators;
-    let body = entry.body || '';
-    if (body.length > bodyMax) {
-      // Trim at last whitespace inside budget, then add ellipsis.
-      body = body.substring(0, bodyMax - 1).replace(/\s+\S*$/, '') + '…';
-    }
-    return header + '\n\n' + body + '\n\n' + link;
-  }
-
-  // Read entry, check posted flag, post, set flag on success. Idempotent
-  // and safe to call from any code path (won't double-post). The in-flight
-  // set is claimed synchronously before any await, so two concurrent calls
-  // for the same date can't both pass the check.
-  async _chronicleMaybePost(date) {
-    this.xPostInFlight = this.xPostInFlight || new Set();
-    if (this.xPostInFlight.has(date)) return;
-    this.xPostInFlight.add(date);
-    try {
-      const entry = await this.state.storage.get('chronicle/' + date);
-      if (!entry) return;
-      if (entry.posted_to_x) return;
-      const text = this._chronicleFormatTweet(entry);
-      const result = await this._xPostTweet(text);
-      if (result.ok) {
-        // Re-read entry: the X API call yielded, so admin note writes or
-        // other handlers may have modified the entry in the meantime. Writing
-        // our stale copy back would clobber those changes.
-        const fresh = await this.state.storage.get('chronicle/' + date);
-        if (!fresh || fresh.posted_to_x) return;
-        fresh.posted_to_x = true;
-        if (result.id) fresh.x_tweet_id = result.id;
-        await this.state.storage.put('chronicle/' + date, fresh);
-      } else if (result.error !== 'no_credentials') {
-        // Don't log the silent skip path; only real failures.
-        console.error('Chronicle X post failed:', result.status, result.error);
-      }
-    } finally {
-      this.xPostInFlight.delete(date);
-    }
-  }
-
-  // Format an owner-note as a reply tweet. No header (X threads it under
-  // the parent), permalink appended so long notes have a "see more" path.
-  // 25000 cap matches X Premium; without Premium this would need 280.
-  _chronicleFormatNoteReply(entry) {
-    const link = `helloesp.com/chronicle/${entry.date}`;
-    const linkBudget = 23;
-    const separator = 2; // one "\n\n"
-    const noteMax = 25000 - linkBudget - separator;
-    let note = entry.owner_note || '';
-    if (note.length > noteMax) {
-      note = note.substring(0, noteMax - 1).replace(/\s+\S*$/, '') + '…';
-    }
-    return note + '\n\n' + link;
-  }
-
-  // Post the owner_note as a reply to the entry's original tweet. Idempotent
-  // via note_x_tweet_id; first non-empty note posts, subsequent edits don't
-  // (X API v2 has no free tweet-edit). Skipped silently if there's no parent
-  // tweet to reply to or no note text. In-flight set is claimed synchronously
-  // before any await, so two rapid admin saves can't both pass the flag check
-  // and double-post.
-  async _chronicleMaybePostNote(date) {
-    this.notePostInFlight = this.notePostInFlight || new Set();
-    if (this.notePostInFlight.has(date)) return;
-    this.notePostInFlight.add(date);
-    try {
-      const entry = await this.state.storage.get('chronicle/' + date);
-      if (!entry) return;
-      if (!entry.x_tweet_id) return;       // original tweet never posted; nothing to reply to
-      if (!entry.owner_note) return;       // note cleared, or never set
-      if (entry.note_x_tweet_id) return;   // already replied
-      const text = this._chronicleFormatNoteReply(entry);
-      const result = await this._xPostTweet(text, { replyTo: entry.x_tweet_id });
-      if (result.ok) {
-        // Re-read to avoid clobbering any concurrent modifications during
-        // the X API call (e.g. another admin save changing the body).
-        const fresh = await this.state.storage.get('chronicle/' + date);
-        if (!fresh || fresh.note_x_tweet_id) return;
-        if (result.id) fresh.note_x_tweet_id = result.id;
-        await this.state.storage.put('chronicle/' + date, fresh);
-      } else if (result.error !== 'no_credentials') {
-        console.error('Chronicle note reply failed:', result.status, result.error);
-      }
-    } finally {
-      this.notePostInFlight.delete(date);
-    }
-  }
-
   // ===== Durability =====
   // DO storage is the live source of truth, but Chronicle is permanent
   // narrative data we don't want to depend on a single backend. Two
@@ -1228,9 +1033,7 @@ export class EspRelay {
   // days, the index honestly opens on the day archiving started. The
   // entry is locked: at UTC midnight the seal preserves this body but
   // fills in real stats from the day's accumulator. Idempotent: the entry
-  // write is skipped if it already exists, but the X post is always fired
-  // (gated by the posted_to_x flag) so a redeploy after creds-were-missing
-  // can still publish the launch tweet. To revise the prose, delete the
+  // write is skipped if it already exists. To revise the prose, delete the
   // chronicle/<firstEntryDate> key from DO storage and redeploy.
   async _chronicleBackfill() {
     const cfg = this._chronicleConfig();
@@ -1247,11 +1050,6 @@ export class EspRelay {
         locked: true,
       });
     }
-    // Always fire the post; _chronicleMaybePost is idempotent via the
-    // posted_to_x flag, so this is safe whether the entry was just written
-    // or already existed from a prior deploy that ran before X creds existed.
-    this._chronicleMaybePost(launchDate).catch(e =>
-      console.error('launch tweet failed:', e && e.message));
     // Backup to R2 + push to chip on every backfill run, not just first
     // write. Idempotent (R2 just overwrites the same key, chip overwrites
     // the SD file), and means a redeploy after the chip was offline at
@@ -1267,9 +1065,8 @@ export class EspRelay {
     // Wrapped in blockConcurrencyWhile so the entry RMW (get existing,
     // build merged entry, put) can't interleave with chronicle_note_set's
     // own RMW. Without this, an admin note arriving mid-seal could either
-    // lose its write or clobber the seal's writes. fire-and-forget post +
-    // backup live OUTSIDE the lock so they don't extend it through the
-    // ~500 ms X API call.
+    // lose its write or clobber the seal's writes. Backup runs as
+    // fire-and-forget OUTSIDE the lock so the R2 write doesn't extend it.
     const snap = this.chronicleSnapshot;
     if (!snap) return;
     // Require valid chip-local time. Without it (e.g., alarm fired right
@@ -1359,10 +1156,6 @@ export class EspRelay {
         // work). With blockConcurrencyWhile this is now belt-and-suspenders
         // since the note handler can't write between our get and put.
         ...(existing && existing.owner_note ? { owner_note: existing.owner_note } : {}),
-        // Preserve X-post idempotency flags so a reseal doesn't double-post.
-        ...(existing && existing.posted_to_x ? { posted_to_x: existing.posted_to_x } : {}),
-        ...(existing && existing.x_tweet_id ? { x_tweet_id: existing.x_tweet_id } : {}),
-        ...(existing && existing.note_x_tweet_id ? { note_x_tweet_id: existing.note_x_tweet_id } : {}),
         ...(isLocked ? { locked: true } : {}),
       };
       await this.state.storage.put('chronicle/' + snap.date, entry);
@@ -1373,8 +1166,6 @@ export class EspRelay {
       newToday = today;
     });
     if (didSeal && sealedEntry) {
-      this._chronicleMaybePost(sealedEntry.date).catch(e =>
-        console.error('chronicle tweet failed:', e && e.message));
       this._chronicleBackup(sealedEntry).catch(e =>
         console.error('chronicle backup failed:', e && e.message));
     }
@@ -2339,6 +2130,43 @@ export class EspRelay {
       if (typeof v === 'number' && v >= 500) voc_over_streak++;
       else break;
     }
+    // Multi-day outdoor weather streaks: consecutive prior days (inclusive
+    // of yesterday) that crossed each threshold. Detectors fold today in
+    // separately via the +1 trick when today also fits.
+    let outdoor_warm_streak = 0;
+    for (const e of window) {
+      const t = e.stats && e.stats.outdoor_temp_max_f;
+      if (typeof t === 'number' && t >= 80) outdoor_warm_streak++;
+      else break;
+    }
+    let outdoor_cold_streak = 0;
+    for (const e of window) {
+      const t = e.stats && e.stats.outdoor_temp_min_f;
+      if (typeof t === 'number' && t <= 32) outdoor_cold_streak++;
+      else break;
+    }
+    let outdoor_aqi_high_streak = 0;
+    for (const e of window) {
+      const a = e.stats && e.stats.outdoor_aqi_max;
+      if (typeof a === 'number' && a >= 100) outdoor_aqi_high_streak++;
+      else break;
+    }
+    // Day-of-week visitor pattern. For "today is Tuesday" comparisons, we
+    // group prior daily entries by DOW and collect their visitor counts so
+    // the detector can rank today against the same weekday in prior weeks.
+    // Date parsed as UTC noon to dodge timezone surprises. DOW 0-6 = Sun-Sat
+    // (JS getUTCDay).
+    const sameDowVisitors = [];
+    for (const e of window) {
+      if (!e.date || typeof (e.stats && e.stats.visitors) !== 'number') continue;
+      const d = this._dateStringToDate(e.date);
+      if (!d) continue;
+      sameDowVisitors.push({
+        dow:      d.getUTCDay(),
+        visitors: e.stats.visitors,
+        date:     e.date,
+      });
+    }
     // Days since most recent day with any reboot. If the entire window
     // is reboot-free, returns window.length (true count is unknown beyond).
     let days_since_reboot = 0;
@@ -2382,6 +2210,10 @@ export class EspRelay {
       co2_under_streak,
       co2_over_streak,
       voc_over_streak,
+      outdoor_warm_streak,
+      outdoor_cold_streak,
+      outdoor_aqi_high_streak,
+      same_dow_visitors: sameDowVisitors,
       days_since_reboot,
       recent_reboot_total,
     };
@@ -2473,6 +2305,37 @@ export class EspRelay {
             ? `Visitor count up ${delta} from yesterday.`
             : `Visitor count down ${-delta} from yesterday.`,
         });
+      }
+    }
+
+    // Day-of-week pattern. Compare today's visitor count against the same
+    // weekday in prior weeks (≥3 samples required so the median is stable).
+    // DOW 0-6 = Sun-Sat. Fires only on real shifts (≥30% above max prior
+    // same-DOW count, or below min) so it doesn't crowd the body with
+    // marginal "this Tuesday was 5% busier than the average Tuesday."
+    if (typeof s.visitors_today === 'number'
+        && Array.isArray(h.same_dow_visitors)) {
+      const todayDate = this._dateStringToDate(s.date);
+      if (todayDate) {
+        const todayDow = todayDate.getUTCDay();
+        const dowName = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][todayDow];
+        const sameDow = h.same_dow_visitors.filter(e => e.dow === todayDow);
+        if (sameDow.length >= 3) {
+          const counts = sameDow.map(e => e.visitors).sort((a, b) => a - b);
+          const priorMax = counts[counts.length - 1];
+          const priorMin = counts[0];
+          if (s.visitors_today > priorMax * 1.3) {
+            out.push({
+              priority: 50,
+              clause: `Busiest ${dowName} in ${sameDow.length} weeks.`,
+            });
+          } else if (priorMin > 0 && s.visitors_today < priorMin * 0.7) {
+            out.push({
+              priority: 45,
+              clause: `Quietest ${dowName} in ${sameDow.length} weeks.`,
+            });
+          }
+        }
       }
     }
 
@@ -2665,6 +2528,55 @@ export class EspRelay {
         out.push({
           priority: 25,
           clause: `Outdoor air stayed clean all day, AQI peaked at ${aqi}.`,
+        });
+      }
+    }
+
+    // Multi-day outdoor weather aggregation. Streaks of consecutive prior
+    // days at a threshold; today gets folded in via +1 if it also fits.
+    // Same shape as the existing CO₂/VOC streak detectors above.
+    if (h.outdoor_warm_streak >= 3) {
+      const len = h.outdoor_warm_streak +
+        (typeof s.outdoor_temp_max_f === 'number' && s.outdoor_temp_max_f >= 80 ? 1 : 0);
+      out.push({
+        priority: 50,
+        clause: `${len} days running with outdoor highs above 80°F.`,
+      });
+    }
+    if (h.outdoor_cold_streak >= 3) {
+      const len = h.outdoor_cold_streak +
+        (typeof s.outdoor_temp_min_f === 'number' && s.outdoor_temp_min_f <= 32 ? 1 : 0);
+      out.push({
+        priority: 50,
+        clause: `${len} nights running below freezing outside.`,
+      });
+    }
+    if (h.outdoor_aqi_high_streak >= 3) {
+      const len = h.outdoor_aqi_high_streak +
+        (typeof s.outdoor_aqi_max === 'number' && s.outdoor_aqi_max >= 100 ? 1 : 0);
+      out.push({
+        priority: 55,
+        clause: `${len} days running with outdoor AQI above 100.`,
+      });
+    }
+
+    // Hourly bucket: time-of-day CO₂ peak. Requires hourly data (added
+    // 2026-05-06; entries before then have null hourly buckets which
+    // typeof-check below handles cleanly).
+    if (snap.hourly && Array.isArray(snap.hourly.co2_max)) {
+      let peakHr = -1, peakVal = -Infinity;
+      for (let i = 0; i < 24; i++) {
+        const v = snap.hourly.co2_max[i];
+        if (typeof v === 'number' && v > peakVal) { peakVal = v; peakHr = i; }
+      }
+      if (peakHr >= 0 && peakVal >= 800) {
+        const period = peakHr < 6 ? 'pre-dawn'
+                     : peakHr < 12 ? 'morning'
+                     : peakHr < 18 ? 'afternoon'
+                     : 'evening';
+        out.push({
+          priority: 35,
+          clause: `Indoor CO₂ peaked in the ${period} at ${peakVal} ppm.`,
         });
       }
     }
@@ -3466,12 +3378,6 @@ export class EspRelay {
           return;
         }
         if (!updatedEntry) return;
-        // Crosspost the note as a reply to the original tweet. No-op if
-        // there's no parent tweet, no note text, or already replied.
-        if (note) {
-          this._chronicleMaybePostNote(msg.data.date).catch(e =>
-            console.error('chronicle note reply failed:', e && e.message));
-        }
         // Re-backup the entry so SD card + R2 reflect the note change.
         this._chronicleBackup(updatedEntry).catch(e =>
           console.error('chronicle backup after note failed:', e && e.message));
@@ -4145,100 +4051,21 @@ export class EspRelay {
     // + relay. HTMLRewriter (vs string regex) is robust to chronicle.html's
     // meta tag formatting changing: it operates on parsed tags rather than
     // matching specific quote/whitespace patterns.
+    // Chronicle permalinks (/chronicle/YYYY-MM-DD, /YYYY-WNN, /YYYY-MM,
+    // /YYYY-Qn) all route to the same SPA shell; the client-side router
+    // renders the entry from chronicle.json or shows 'not found'.
+    //
+    // Previous version did a recursive `fetch(shellUrl)` to /chronicle here
+    // so it could HTMLRewriter per-entry OG meta tags into the shell. That
+    // recursive fetch was a chip-load amplifier (every permalink load
+    // triggered a /chronicle relay) AND a self-deadlock hazard on the chip
+    // (handleWsRelay sync-loopback design vs. shared async_tcp task). The
+    // trade is: X/Slack/Discord share cards for chronicle permalinks now
+    // show the generic chronicle OG, not per-entry text. Acceptable cost
+    // for production stability; most chronicle traffic is direct, not
+    // unfurled.
     const chronicleDateMatch = url.pathname.match(/^\/chronicle\/(\d{4}-\d{2}-\d{2}|\d{4}-W\d{2}|\d{4}-Q\d|\d{4}-\d{2})$/);
     if (chronicleDateMatch && request.method === 'GET') {
-      const date = chronicleDateMatch[1];
-      const entry = await this.state.storage.get('chronicle/' + date);
-      if (entry) {
-        try {
-          const shellUrl = url.protocol + '//' + url.host + '/chronicle';
-          const shellResponse = await fetch(new Request(shellUrl, {
-            method: 'GET',
-            headers: { 'Accept': 'text/html', 'Accept-Encoding': 'gzip' },
-          }));
-          if (shellResponse.ok) {
-            // Title shape depends on entry kind. Daily: "Day N · May 6, 2026".
-            // Weekly: "Week 18 of 2026". Monthly: "May 2026".
-            let title;
-            const kind = entry.kind || 'daily';
-            if (kind === 'weekly') {
-              const wm = /^(\d{4})-W(\d{2})$/.exec(entry.date);
-              title = wm
-                ? `Week ${parseInt(wm[2], 10)} of ${wm[1]} / Chronicle / HelloESP`
-                : `${entry.date} / Chronicle / HelloESP`;
-            } else if (kind === 'monthly') {
-              const mm = /^(\d{4})-(\d{2})$/.exec(entry.date);
-              if (mm) {
-                const monthName = new Date(Date.UTC(+mm[1], +mm[2] - 1, 1))
-                  .toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
-                title = `${monthName} ${mm[1]} / Chronicle / HelloESP`;
-              } else {
-                title = `${entry.date} / Chronicle / HelloESP`;
-              }
-            } else if (kind === 'quarterly') {
-              const qm = /^(\d{4})-Q(\d)$/.exec(entry.date);
-              title = qm
-                ? `Q${qm[2]} ${qm[1]} / Chronicle / HelloESP`
-                : `${entry.date} / Chronicle / HelloESP`;
-            } else {
-              const dayLabel = entry.day_number ? 'Day ' + entry.day_number + ' · ' : '';
-              const dateLong = new Date(entry.date + 'T12:00:00Z').toLocaleDateString('en-US', {
-                year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC',
-              });
-              title = dayLabel + dateLong + ' / Chronicle / HelloESP';
-            }
-            // Description: prefer owner note + body; collapse whitespace,
-            // truncate at 200 chars on word boundary so cards stay tidy.
-            // Fall back to a generic line if both fields are empty so we
-            // don't replace the static description with an empty string.
-            let descSrc = entry.owner_note
-              ? entry.owner_note + ' - ' + (entry.body || '')
-              : (entry.body || '');
-            descSrc = descSrc.replace(/\s+/g, ' ').trim();
-            if (!descSrc) {
-              descSrc = 'A daily entry the chip writes about itself.';
-            }
-            if (descSrc.length > 200) {
-              descSrc = descSrc.substring(0, 199).replace(/\s+\S*$/, '') + '…';
-            }
-            const permalink = 'https://helloesp.com/chronicle/' + entry.date;
-
-            // HTMLRewriter requires non-gzipped input. shellResponse.text()
-            // auto-decompresses; wrap the resulting HTML in a fresh Response
-            // so HTMLRewriter sees plain text. setAttribute / setInnerContent
-            // handle attribute and HTML escaping automatically (no manual
-            // escAttr needed). setInnerContent uses html:false so a stray
-            // angle bracket in the title doesn't get parsed as markup.
-            const html = await shellResponse.text();
-            const decoded = new Response(html, {
-              headers: { 'Content-Type': 'text/html; charset=utf-8' },
-            });
-            const transformed = new HTMLRewriter()
-              .on('title', { element(el) { el.setInnerContent(title, { html: false }); } })
-              .on('link[rel="canonical"]', { element(el) { el.setAttribute('href', permalink); } })
-              .on('meta[name="description"]', { element(el) { el.setAttribute('content', descSrc); } })
-              .on('meta[property="og:title"]', { element(el) { el.setAttribute('content', title); } })
-              .on('meta[property="og:description"]', { element(el) { el.setAttribute('content', descSrc); } })
-              .on('meta[property="og:url"]', { element(el) { el.setAttribute('content', permalink); } })
-              .on('meta[name="twitter:title"]', { element(el) { el.setAttribute('content', title); } })
-              .on('meta[name="twitter:description"]', { element(el) { el.setAttribute('content', descSrc); } })
-              .transform(decoded);
-            return new Response(transformed.body, {
-              status: 200,
-              headers: {
-                'Content-Type': 'text/html; charset=utf-8',
-                'Cache-Control': 'public, max-age=300',
-                ...SEC_HEADERS,
-              },
-            });
-          }
-        } catch (e) {
-          // Shell fetch / rewrite failed; fall through to default relay
-          // path so the page still loads even if OG injection fails.
-        }
-      }
-      // No entry, or shell fetch failed: serve the SPA shell (client-side
-      // router will render the entry from chronicle.json or show 'not found').
       url.pathname = '/chronicle';
     }
 
@@ -5617,10 +5444,28 @@ const NO_CACHE_PREFIX = ['/logs', '/admin', '/_ws', '/_stream',
 const NO_CACHE_EXACT = new Set(['/console.json', '/snake/seed', '/snake/score',
   '/guestbook/translate']);
 
+// Static page shells that the chip serves with a short Cache-Control. Bumping
+// these to longer CF edge TTL collapses 90%+ of relay-bound traffic, which is
+// what was wedging async_tcp on the chip (handleWsRelay self-deadlock under
+// load). Browsers still see the chip's original max-age for freshness; CF
+// edge holds longer via s-maxage. Trade: stale content at the edge for up to
+// SHELL_EDGE_TTL after a chip-side change. /chronicle is on this list because
+// it's the SPA shell. The actual chronicle data comes from /chronicle.json
+// (worker-served, separate cache) so the SPA shell almost never changes.
+const STATIC_SHELL_PATHS = new Set([
+  '/chronicle', '/about', '/history', '/console', '/snake', '/guestbook',
+  '/404.html', '/offline.html', '/timeout.html',
+]);
+const SHELL_EDGE_TTL = 3600;  // 1 hour CF edge cache for shells
+
 function shouldCache(pathname) {
   if (pathname === '/stats') return false;
   if (NO_CACHE_EXACT.has(pathname)) return false;
   return !NO_CACHE_PREFIX.some(p => pathname.startsWith(p));
+}
+
+function isStaticShell(pathname) {
+  return STATIC_SHELL_PATHS.has(pathname);
 }
 
 // CLI clients on "/" bypass the edge cache so browsers don't get the ASCII
@@ -5662,7 +5507,15 @@ export default {
         const ce = response.headers.get('Content-Encoding');
         const body = await response.arrayBuffer();
         const headers = applySecHeaders(new Headers(response.headers));
-        headers.set('Cache-Control', cc);
+        // Override Cache-Control for static page shells: keep the chip's
+        // short max-age for browsers (so updates feel responsive) but bump
+        // s-maxage so CF edge holds the response much longer. Cuts chip
+        // relay frequency ~12x on these paths, which is the primary load
+        // pattern that was wedging async_tcp via handleWsRelay deadlocks.
+        const finalCc = isStaticShell(url.pathname)
+          ? `${cc}, s-maxage=${SHELL_EDGE_TTL}`
+          : cc;
+        headers.set('Cache-Control', finalCc);
 
         const cacheInit = ce
           ? { status: response.status, headers, encodeBody: 'manual' }
